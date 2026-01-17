@@ -1,15 +1,17 @@
-// background.js - Service worker for Silenced by the Algorithm
+// background.js - Service worker
+// Extension auto-runs on YouTube watch pages, no manual trigger needed
 
-// Listen for extension icon click
-chrome.action.onClicked.addListener((tab) => {
-  // Send message to content script to toggle overlay
-  chrome.tabs.sendMessage(tab.id, { action: 'toggle_overlay' })
-})
-
-// Optional: Listen for messages from content script
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === 'log') {
-    console.log('Content script:', request.message)
+// When extension icon is clicked, just open YouTube if not already there
+chrome.action.onClicked.addListener(async (tab) => {
+  if (tab.url?.includes('youtube.com/watch')) {
+    // Already on a YouTube video - the content script auto-runs
+    // Just log for debugging
+    console.log('Extension active on:', tab.url)
+  } else {
+    // Open YouTube
+    chrome.tabs.create({ url: 'https://www.youtube.com' })
   }
-  return true
 })
+
+// Log when extension loads
+console.log('Silenced by the Algorithm extension loaded')

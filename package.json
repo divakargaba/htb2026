@@ -1,0 +1,11 @@
+{
+  "name": "silenced-by-the-algorithm",
+  "version": "1.0.0",
+  "description": "Chrome extension to detect and mitigate YouTube recommendation bias",
+  "scripts": {
+    "watch": "echo 'Watching extension files... Press Ctrl+C to stop' && node watch.js"
+  },
+  "devDependencies": {
+    "chokidar": "^3.5.3"
+  }
+}
