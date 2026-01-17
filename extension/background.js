@@ -7,15 +7,19 @@
 const SCHEMA_VERSION = '3.1.0'
 const ENGINE_VERSION = 'v3.1'
 
-const YOUTUBE_API_KEY = 'AIzaSyAV_xT7shJvRyip9yCSpvx7ogZhiPpi2LY'
+const YOUTUBE_API_KEY = 'AIzaSyA_TCvrL72kC5xplism_FJDCtl8UshToHQ'
 const MAX_SUBSCRIBER_THRESHOLD = 100000 // Noise cancellation threshold
 const MONOPOLY_THRESHOLD = 1000000 // 1M subs = deafening noise
 const CACHE_TTL = 86400000 // 24 hours in ms
 const BIAS_RECEIPT_CACHE_TTL = 21600000 // 6 hours in ms
 
 // Feature flags
-const ENABLE_ML_FEATURES = false // Set to true to enable Gemini-powered explanations
-const GEMINI_API_KEY = '' // Add your Gemini API key here if ENABLE_ML_FEATURES is true
+const ENABLE_ML_FEATURES = true // Set to true to enable Gemini-powered features
+const GEMINI_API_KEY = 'AIzaSyCSjWYu0o5oAKlkxlrTSlpoQAEzgDT3yrM' // Add your Gemini API key here - REQUIRED for quality filtering
+
+// Quality thresholds
+const MIN_VIDEO_QUALITY_SCORE = 0.25 // Minimum quality score (0-1) to surface a video (lowered to avoid filtering all)
+const QUALITY_CACHE_TTL = 3600000 // 1 hour cache for quality scores
 
 // Quota costs
 const QUOTA_LIMIT = 10000
@@ -47,6 +51,7 @@ function getNoiseLevel(score) {
 let channelCache = {}
 let discoveryCache = {}
 let biasReceiptCache = {} // Cache for Gemini-generated bias receipts (6-hour TTL)
+let qualityScoreCache = {} // Cache for video quality scores (1-hour TTL)
 
 // ===============================================
 // PERSISTENCE - Load cache from localStorage
@@ -107,6 +112,10 @@ async function saveCache() {
 
 // Initialize cache on load
 loadCache()
+
+// Clear discovery cache on extension load (prevents stale empty results)
+discoveryCache = {}
+console.log('[Silenced] Discovery cache cleared on startup')
 
 // ===============================================
 // EXPOSURE ADVANTAGE SCORE CALCULATION
@@ -549,6 +558,276 @@ RULES:
 }
 
 // ===============================================
+// AUDIT METRICS COMPUTATION (Deterministic, no Gemini)
+// ===============================================
+
+/**
+ * Compute audit metrics from the final unmuted videos list.
+ * Pure deterministic math - no ML calls.
+ * 
+ * @param {Array} unmutedVideos - Final list of surfaced videos
+ * @param {number} topicConcentration - Top 10 concentration percentage
+ * @returns {Object} auditMetrics
+ */
+function computeAuditMetrics(unmutedVideos, topicConcentration, qualityFilterStats = {}) {
+  if (!unmutedVideos || unmutedVideos.length === 0) {
+    return {
+      under100kShare: 0,
+      under50kShare: 0,
+      dominantShareTop10: topicConcentration || 0,
+      redundancyFiltered: 0,
+      qualityFiltered: 0,
+      diversityMethod: 'quality_filtered'
+    }
+  }
+
+  const total = unmutedVideos.length
+
+  // Count videos from channels under 100k and under 50k
+  const under100k = unmutedVideos.filter(v => (v.subscriberCount || 0) < 100000).length
+  const under50k = unmutedVideos.filter(v => (v.subscriberCount || 0) < 50000).length
+
+  // Check if Gemini was used for quality scoring
+  const geminiUsed = unmutedVideos.some(v => v.surfaceMethod === 'quality_filtered_gemini')
+  const diversityMethod = geminiUsed ? 'quality_filtered_gemini' : 'quality_filtered_heuristic'
+
+  return {
+    under100kShare: Math.round((under100k / total) * 100),
+    under50kShare: Math.round((under50k / total) * 100),
+    dominantShareTop10: topicConcentration || 0,
+    redundancyFiltered: qualityFilterStats.redundancyFiltered || 0,
+    qualityFiltered: qualityFilterStats.qualityFiltered || 0,
+    diversityMethod
+  }
+}
+
+// ===============================================
+// VIDEO QUALITY SCORING (Gemini + Heuristic Fallback)
+// ===============================================
+
+/**
+ * Score video quality and relevance using Gemini AI
+ * Returns a score from 0-1 where higher = better quality/relevance
+ * 
+ * @param {Object} video - Video object with title, description, channelTitle
+ * @param {string} searchQuery - The original search query/topic
+ * @returns {Promise<Object>} Quality assessment
+ */
+async function scoreVideoQuality(video, searchQuery) {
+  const cacheKey = `quality_${video.videoId}`
+
+  // Check cache first
+  if (qualityScoreCache[cacheKey] && Date.now() - qualityScoreCache[cacheKey].timestamp < QUALITY_CACHE_TTL) {
+    return qualityScoreCache[cacheKey].data
+  }
+
+  // Try Gemini if API key is available
+  if (GEMINI_API_KEY && ENABLE_ML_FEATURES) {
+    try {
+      const geminiResult = await scoreVideoQualityWithGemini(video, searchQuery)
+      if (geminiResult) {
+        qualityScoreCache[cacheKey] = { data: geminiResult, timestamp: Date.now() }
+        return geminiResult
+      }
+    } catch (err) {
+      console.warn('[Silenced] Gemini quality scoring failed, using heuristic:', err.message)
+    }
+  }
+
+  // Fallback to heuristic scoring
+  const heuristicResult = scoreVideoQualityHeuristic(video, searchQuery)
+  qualityScoreCache[cacheKey] = { data: heuristicResult, timestamp: Date.now() }
+  return heuristicResult
+}
+
+/**
+ * Score video quality using Gemini AI
+ */
+async function scoreVideoQualityWithGemini(video, searchQuery) {
+  const prompt = `You are evaluating if a YouTube video is a HIGH-QUALITY alternative for someone interested in "${searchQuery}".
+
+Video Title: "${video.title}"
+Channel: "${video.channelTitle}"
+Description: "${(video.description || '').substring(0, 500)}"
+
+Score this video on TWO dimensions (0.0 to 1.0 each):
+
+1. RELEVANCE: Is this video actually about "${searchQuery}"? 
+   - 0.0 = Completely unrelated, just keyword spam
+   - 0.5 = Tangentially related
+   - 1.0 = Directly addresses the topic
+
+2. QUALITY SIGNALS: Does this look like quality content?
+   - Consider: descriptive title (not clickbait), informative description, legitimate channel name
+   - 0.0 = Spam/low-effort/clickbait
+   - 0.5 = Average quality
+   - 1.0 = Professional/educational/well-produced
+
+Respond with ONLY valid JSON in this exact format:
+{"relevance": 0.X, "quality": 0.X, "reason": "brief 10-word reason"}
+
+Be strict - most random search results should score below 0.5.`
+
+  try {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.1, // Low temperature for consistent scoring
+          maxOutputTokens: 150
+        }
+      })
+    })
+
+    if (!response.ok) {
+      throw new Error(`Gemini API error: ${response.status}`)
+    }
+
+    const data = await response.json()
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text
+
+    if (!text) return null
+
+    // Extract JSON from response
+    const jsonMatch = text.match(/\{[\s\S]*\}/)
+    if (!jsonMatch) return null
+
+    const parsed = JSON.parse(jsonMatch[0])
+
+    // Validate and normalize scores
+    const relevance = Math.max(0, Math.min(1, parseFloat(parsed.relevance) || 0))
+    const quality = Math.max(0, Math.min(1, parseFloat(parsed.quality) || 0))
+    const combinedScore = (relevance * 0.6) + (quality * 0.4) // Relevance weighted higher
+
+    return {
+      score: combinedScore,
+      relevance,
+      quality,
+      reason: parsed.reason || 'Evaluated by AI',
+      method: 'gemini'
+    }
+  } catch (err) {
+    console.error('[Silenced] Gemini quality scoring error:', err)
+    return null
+  }
+}
+
+/**
+ * Heuristic fallback for video quality scoring (no Gemini)
+ */
+function scoreVideoQualityHeuristic(video, searchQuery) {
+  let relevanceScore = 0
+  let qualityScore = 0
+  const reasons = []
+
+  const title = (video.title || '').toLowerCase()
+  const description = (video.description || '').toLowerCase()
+  const channelTitle = (video.channelTitle || '').toLowerCase()
+  const queryTerms = searchQuery.toLowerCase().split(/\s+/).filter(t => t.length > 2)
+
+  // === RELEVANCE SCORING ===
+
+  // Check how many query terms appear in title (most important)
+  const titleMatches = queryTerms.filter(term => title.includes(term)).length
+  const titleMatchRatio = queryTerms.length > 0 ? titleMatches / queryTerms.length : 0
+  relevanceScore += titleMatchRatio * 0.5
+
+  // Check description
+  const descMatches = queryTerms.filter(term => description.includes(term)).length
+  const descMatchRatio = queryTerms.length > 0 ? descMatches / queryTerms.length : 0
+  relevanceScore += descMatchRatio * 0.3
+
+  // Bonus for exact phrase match
+  if (title.includes(searchQuery.toLowerCase())) {
+    relevanceScore += 0.2
+    reasons.push('Exact topic match')
+  }
+
+  // === QUALITY SCORING ===
+
+  // Start with a base quality score (benefit of the doubt)
+  qualityScore = 0.3
+
+  // Title length check (too short = low effort, too long = clickbait)
+  if (title.length > 15 && title.length < 120) {
+    qualityScore += 0.15
+  }
+
+  // Has description
+  if (description.length > 50) {
+    qualityScore += 0.15
+    if (description.length > 200) {
+      reasons.push('Detailed description')
+    }
+  }
+
+  // Clickbait detection (negative signals) - be less strict
+  const clickbaitPatterns = [
+    /\b(you won't believe|gone wrong|exposed|gone sexual)\b/i,
+    /[!?]{3,}/, // Only flag 3+ punctuation
+    /\b(free\s+v-?bucks|free\s+robux|giveaway)\b/i
+  ]
+
+  const hasClickbait = clickbaitPatterns.some(p => p.test(title))
+  if (hasClickbait) {
+    qualityScore -= 0.2
+    reasons.push('Clickbait signals detected')
+  } else {
+    qualityScore += 0.15
+  }
+
+  // Channel name quality (not spammy)
+  const spammyChannelPatterns = [/\d{4,}/, /official\s*hd/i, /best\s*of/i, /compilation/i]
+  const isSpammyChannel = spammyChannelPatterns.some(p => p.test(channelTitle))
+  if (!isSpammyChannel) {
+    qualityScore += 0.2
+  }
+
+  // Educational/professional signals
+  const qualitySignals = [
+    /\b(documentary|explained|analysis|review|tutorial|guide|interview|discussion)\b/i,
+    /\b(episode|ep\.|part\s*\d|season)\b/i
+  ]
+  if (qualitySignals.some(p => p.test(title))) {
+    qualityScore += 0.2
+    reasons.push('Quality content signals')
+  }
+
+  // Normalize scores
+  relevanceScore = Math.max(0, Math.min(1, relevanceScore))
+  qualityScore = Math.max(0, Math.min(1, qualityScore))
+
+  const combinedScore = (relevanceScore * 0.6) + (qualityScore * 0.4)
+
+  return {
+    score: combinedScore,
+    relevance: relevanceScore,
+    quality: qualityScore,
+    reason: reasons.length > 0 ? reasons.join(', ') : 'Heuristic evaluation',
+    method: 'heuristic'
+  }
+}
+
+/**
+ * Batch score multiple videos for quality
+ */
+async function batchScoreVideoQuality(videos, searchQuery) {
+  const results = await Promise.all(
+    videos.map(async (video) => {
+      const qualityResult = await scoreVideoQuality(video, searchQuery)
+      return {
+        ...video,
+        qualityScore: qualityResult.score,
+        qualityDetails: qualityResult
+      }
+    })
+  )
+  return results
+}
+
+// ===============================================
 // KPMG SUSTAINABILITY / GREENWASHING AUDIT MODULE
 // ===============================================
 const SUSTAINABILITY_CATEGORIES = {
@@ -914,9 +1193,13 @@ async function searchSilencedCreators(query) {
 // TOPIC SEARCH
 // ===============================================
 async function topicSearch(query, maxResults = 50) {
+  console.log(`[Silenced] topicSearch called with query: "${query}", quotaUsed: ${quotaUsed}/${QUOTA_LIMIT}`)
+
   if (quotaUsed + 100 > QUOTA_LIMIT) {
-    console.warn('[Silenced] Quota limit approaching')
-    return { videos: [], channelIds: [] }
+    console.warn('[Silenced] Quota limit reached! Resetting quota for new session...')
+    // Reset quota - it's likely stale from previous day
+    quotaUsed = 0
+    await chrome.storage.local.set({ quotaUsed: 0, quotaResetDate: new Date().toDateString() })
   }
 
   try {
@@ -924,12 +1207,18 @@ async function topicSearch(query, maxResults = 50) {
     url.searchParams.set('part', 'snippet')
     url.searchParams.set('q', query)
     url.searchParams.set('type', 'video')
-    url.searchParams.set('order', 'rating') // Order by rating for quality alternatives
+    url.searchParams.set('order', 'relevance') // Changed to relevance for better results
     url.searchParams.set('maxResults', String(maxResults))
     url.searchParams.set('key', YOUTUBE_API_KEY)
 
+    console.log(`[Silenced] Making YouTube API search request...`)
     const res = await fetch(url.toString())
-    if (!res.ok) throw new Error(`Search API error: ${res.status}`)
+
+    if (!res.ok) {
+      const errorText = await res.text()
+      console.error(`[Silenced] YouTube API error ${res.status}:`, errorText)
+      throw new Error(`Search API error: ${res.status}`)
+    }
 
     const data = await res.json()
     quotaUsed += 100
@@ -937,7 +1226,7 @@ async function topicSearch(query, maxResults = 50) {
     const videos = data.items || []
     const channelIds = [...new Set(videos.map(v => v.snippet.channelId))]
 
-    console.log(`[Silenced] Search: ${videos.length} videos from ${channelIds.length} channels`)
+    console.log(`[Silenced] Search SUCCESS: ${videos.length} videos from ${channelIds.length} channels`)
 
     return { videos, channelIds }
   } catch (err) {
@@ -1055,15 +1344,25 @@ async function analyzeVideo(videoId, transcript = '') {
 async function runNoiseCancellation(query) {
   const cacheKey = `silence_${query.toLowerCase().trim()}`
 
+  // Check cache - but SKIP cache if it returned empty (failed search)
   if (discoveryCache[cacheKey] && Date.now() - discoveryCache[cacheKey].timestamp < 900000) {
-    return discoveryCache[cacheKey].data
+    const cached = discoveryCache[cacheKey].data
+    // Only use cache if it actually has results
+    if (cached.totalResults > 0 || cached.unmutedVideos?.length > 0) {
+      console.log(`[Silenced] Using cached results for "${query}"`)
+      return cached
+    } else {
+      console.log(`[Silenced] Skipping empty cache for "${query}" - will retry search`)
+    }
   }
 
   console.log(`[Silenced] Scanning for silenced voices: "${query}"`)
+  console.log(`[Silenced] Current quota used: ${quotaUsed}/${QUOTA_LIMIT}`)
   const startQuota = quotaUsed
 
   // Search for videos
   const { videos, channelIds } = await topicSearch(query, 50)
+  console.log(`[Silenced] topicSearch returned ${videos.length} videos from ${channelIds.length} channels`)
 
   // Batch get all channels
   const channels = await batchGetChannels(channelIds)
@@ -1114,7 +1413,7 @@ async function runNoiseCancellation(query) {
   }
 
   // Build unmuted videos with explainability
-  const unmutedVideosRaw = videos
+  const unmutedVideosPreQuality = videos
     .filter(v => silencedChannelIds.has(v.snippet.channelId))
     .map(v => {
       const ch = channelMap.get(v.snippet.channelId)
@@ -1131,25 +1430,6 @@ async function runNoiseCancellation(query) {
       else if (subs < 50000) exposureTier = 'emerging'
       else if (subs < 100000) exposureTier = 'established'
 
-      // Generate "Why surfaced" reasons (2-3 bullet points) - kept for backward compat
-      const whySurfaced = []
-
-      if (subs < avgSubsInTopic * 0.3) {
-        whySurfaced.push(`${Math.round((1 - subs / avgSubsInTopic) * 100)}% smaller than topic average`)
-      }
-      if (engagementProxy > 1.5) {
-        whySurfaced.push(`Strong engagement ratio (${engagementProxy.toFixed(1)}x views per subscriber)`)
-      }
-      if (subs < 50000) {
-        whySurfaced.push(`Under 50K subs in competitive topic`)
-      }
-      if (isRising) {
-        whySurfaced.push(`Rising signal: outperforming channel size`)
-      }
-      if (whySurfaced.length === 0) {
-        whySurfaced.push(`Under-represented in algorithm recommendations`)
-      }
-
       return {
         videoId: v.id.videoId,
         title: v.snippet.title,
@@ -1160,28 +1440,109 @@ async function runNoiseCancellation(query) {
         publishedAt: v.snippet.publishedAt,
         subscriberCount: subs,
         isRisingSignal: isRising,
-        whySurfaced: whySurfaced.slice(0, 3),
         engagementRatio: engagementProxy,
+        exposureTier,
+        avgSubsInTopic,
+        videoCount
+      }
+    })
+
+  // === QUALITY SCORING: Score and filter videos for quality/relevance ===
+  console.log(`[Silenced] Scoring ${unmutedVideosPreQuality.length} videos for quality...`)
+  const videosWithQuality = await batchScoreVideoQuality(unmutedVideosPreQuality, query)
+
+  // Filter out low-quality videos
+  let qualityFilteredVideos = videosWithQuality.filter(v => {
+    const passes = v.qualityScore >= MIN_VIDEO_QUALITY_SCORE
+    if (!passes) {
+      console.log(`[Silenced] Filtered out low-quality video: "${v.title}" (score: ${v.qualityScore.toFixed(2)})`)
+    }
+    return passes
+  })
+
+  console.log(`[Silenced] Quality filter: ${videosWithQuality.length} -> ${qualityFilteredVideos.length} videos (threshold: ${MIN_VIDEO_QUALITY_SCORE})`)
+
+  // SAFETY: If quality filter removed ALL videos, fall back to top-scoring ones
+  if (qualityFilteredVideos.length === 0 && videosWithQuality.length > 0) {
+    console.log(`[Silenced] Quality filter too strict - falling back to top ${Math.min(5, videosWithQuality.length)} videos`)
+    // Sort by quality score and take top 5
+    qualityFilteredVideos = [...videosWithQuality]
+      .sort((a, b) => b.qualityScore - a.qualityScore)
+      .slice(0, 5)
+  }
+
+  // Build final unmuted videos with all metadata
+  const unmutedVideosRaw = qualityFilteredVideos
+    .map(v => {
+      // Generate "Why surfaced" reasons (2-3 bullet points) - kept for backward compat
+      const whySurfaced = []
+
+      if (v.subscriberCount < avgSubsInTopic * 0.3) {
+        whySurfaced.push(`${Math.round((1 - v.subscriberCount / avgSubsInTopic) * 100)}% smaller than topic average`)
+      }
+      if (v.engagementRatio > 1.5) {
+        whySurfaced.push(`Strong engagement ratio (${v.engagementRatio.toFixed(1)}x views per subscriber)`)
+      }
+      if (v.qualityScore >= 0.6) {
+        whySurfaced.push(`High relevance score (${Math.round(v.qualityScore * 100)}%)`)
+      }
+      if (v.subscriberCount < 50000) {
+        whySurfaced.push(`Under 50K subs in competitive topic`)
+      }
+      if (v.isRisingSignal) {
+        whySurfaced.push(`Rising signal: outperforming channel size`)
+      }
+      if (whySurfaced.length === 0) {
+        whySurfaced.push(`Under-represented in algorithm recommendations`)
+      }
+
+      // Determine surface method based on quality scoring
+      const surfaceMethod = v.qualityDetails?.method === 'gemini'
+        ? 'quality_filtered_gemini'
+        : 'quality_filtered_heuristic'
+
+      return {
+        videoId: v.videoId,
+        title: v.title,
+        description: v.description,
+        thumbnail: v.thumbnail,
+        channelId: v.channelId,
+        channelTitle: v.channelTitle,
+        publishedAt: v.publishedAt,
+        subscriberCount: v.subscriberCount,
+        isRisingSignal: v.isRisingSignal,
+        whySurfaced: whySurfaced.slice(0, 3),
+        engagementRatio: v.engagementRatio,
+        qualityScore: v.qualityScore,
+        qualityReason: v.qualityDetails?.reason,
+        surfaceMethod,
+        diversityNote: v.qualityDetails?.reason || 'Passed quality and relevance filter',
         // Metrics for bias receipt generation
         _receiptParams: {
-          videoId: v.id.videoId,
-          subscriberCount: subs,
-          viewsPerDay: avgViews / 30, // Rough estimate
-          uploadFrequency: videoCount > 0 ? Math.min(30, videoCount) : 0,
-          engagementRatio: engagementProxy,
-          avgSubsInTopic,
-          topicConcentration, // From biasSnapshot calculated above
-          exposureTier,
-          isRisingSignal: isRising,
-          videoTitle: v.snippet.title,
-          channelTitle: v.snippet.channelTitle
+          videoId: v.videoId,
+          subscriberCount: v.subscriberCount,
+          viewsPerDay: (v.videoCount > 0 ? v.avgSubsInTopic : 0) / 30,
+          uploadFrequency: v.videoCount > 0 ? Math.min(30, v.videoCount) : 0,
+          engagementRatio: v.engagementRatio,
+          avgSubsInTopic: v.avgSubsInTopic,
+          topicConcentration,
+          exposureTier: v.exposureTier,
+          isRisingSignal: v.isRisingSignal,
+          videoTitle: v.title,
+          channelTitle: v.channelTitle
         }
       }
     })
+    // Sort by combined score: quality + engagement + rising signal bonus
     .sort((a, b) => {
+      // Rising signals get priority
       if (a.isRisingSignal && !b.isRisingSignal) return -1
       if (!a.isRisingSignal && b.isRisingSignal) return 1
-      return b.engagementRatio - a.engagementRatio
+
+      // Then sort by combined quality + engagement score
+      const aScore = (a.qualityScore * 0.7) + (Math.min(a.engagementRatio, 3) / 3 * 0.3)
+      const bScore = (b.qualityScore * 0.7) + (Math.min(b.engagementRatio, 3) / 3 * 0.3)
+      return bScore - aScore
     })
 
   // Generate bias receipts for top videos (async) with error handling
@@ -1227,15 +1588,32 @@ async function runNoiseCancellation(query) {
     tier: parseInt(ch.statistics?.subscriberCount || '0') > 1000000 ? 'dominant' : 'amplified'
   }))
 
+  // Compute audit metrics from final unmuted videos list
+  const qualityFilterStats = {
+    qualityFiltered: videosWithQuality.length - qualityFilteredVideos.length,
+    redundancyFiltered: 0 // Future: track duplicates removed
+  }
+  const auditMetrics = computeAuditMetrics(unmutedVideos, topicConcentration, qualityFilterStats)
+
+  // Add surfaceMethod to each video for audit display
+  const unmutedVideosWithMethod = unmutedVideos.map(video => ({
+    ...video,
+    surfaceMethod: video.isRisingSignal ? 'rising_signal' : 'engagement_ranking',
+    diversityNote: video.isRisingSignal
+      ? 'Surfaced due to high engagement relative to channel size'
+      : 'Surfaced via under-representation filter and engagement ranking'
+  }))
+
   const result = {
     query,
     totalResults: videos.length,
     silencedVoicesFound: silencedVoices.length,
     risingSignalsCount: risingSignals.length,
-    unmutedVideos,
+    unmutedVideos: unmutedVideosWithMethod,
     channelsToMute,
     noisyChannelIds: noisyChannels.map(ch => ch.id),
     biasSnapshot,
+    auditMetrics, // New optional field for Bias Audit Mode
     quotaCost: quotaUsed - startQuota,
     timestamp: Date.now(),
     _schemaVersion: SCHEMA_VERSION

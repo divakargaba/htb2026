@@ -13,6 +13,7 @@ let isOpen = true
 let breakdownOpen = false
 let silenceReportOpen = false
 let noiseCancellationActive = false
+let auditModeActive = false // Bias Audit Mode state
 let discoveryCache = null
 let discoveryObserver = null
 let processedVideoCards = new Set()
@@ -617,7 +618,7 @@ function getShadowStyles() {
       padding-left: 12px;
       position: relative;
     }
-
+    
     .explain-list li::before {
       content: "•";
       position: absolute;
@@ -993,6 +994,119 @@ function getShadowStyles() {
     .confidence-dot.filled.low {
       background: #6b7280;
     }
+
+    /* === AUDIT MODE === */
+    .audit-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 14px;
+      border-top: 1px solid #262626;
+      cursor: pointer;
+    }
+
+    .audit-toggle:hover {
+      background: #1a1a1a;
+    }
+
+    .audit-toggle-label {
+      font-size: 10px;
+      font-weight: 500;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    .audit-toggle.active .audit-toggle-label {
+      color: #3b82f6;
+    }
+
+    .audit-switch {
+      width: 32px;
+      height: 16px;
+      background: #404040;
+      border-radius: 8px;
+      position: relative;
+      transition: background 0.2s ease;
+    }
+
+    .audit-switch.on {
+      background: #3b82f6;
+    }
+
+    .audit-switch-knob {
+      width: 12px;
+      height: 12px;
+      background: white;
+      border-radius: 50%;
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      transition: transform 0.2s ease;
+    }
+
+    .audit-switch.on .audit-switch-knob {
+      transform: translateX(16px);
+    }
+
+    .impact-snapshot {
+      padding: 12px 14px;
+      background: #0d1117;
+      border-bottom: 1px solid #262626;
+    }
+
+    .impact-snapshot-title {
+      font-size: 9px;
+      font-weight: 600;
+      color: #3b82f6;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 10px;
+    }
+
+    .impact-metrics {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .impact-metric {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+    }
+
+    .impact-metric-label {
+      color: #9ca3af;
+    }
+
+    .impact-metric-value {
+      font-weight: 600;
+      color: #e5e5e5;
+      font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+    }
+
+    .impact-metric-value.highlight {
+      color: #10b981;
+    }
+
+    .impact-metric-value.muted {
+      color: #6b7280;
+    }
+
+    .impact-divider {
+      height: 1px;
+      background: #262626;
+      margin: 6px 0;
+    }
+
+    .impact-unavailable {
+      font-size: 11px;
+      color: #6b7280;
+      text-align: center;
+      padding: 8px 0;
+    }
   `
 }
 
@@ -1068,8 +1182,8 @@ function createDashboard(data) {
         ${explainHtml}
           </div>
           
-      ${sustainabilityHtml}
-
+          ${sustainabilityHtml}
+          
       <!-- Toggle -->
       <div class="action-toggle ${noiseCancellationActive ? 'active' : ''}" id="noise-cancel-toggle">
         <div class="toggle-left">
@@ -1077,16 +1191,157 @@ function createDashboard(data) {
             <div class="toggle-title">${noiseCancellationActive ? 'Showing Silenced Voices' : 'Surface Under-represented Creators'}</div>
             <div class="toggle-desc">${noiseCancellationActive ? 'Alternatives shown below' : 'Find creators the algorithm misses'}</div>
             </div>
-            </div>
+                  </div>
         <div class="toggle-switch ${noiseCancellationActive ? 'on' : ''}">
           <div class="toggle-knob"></div>
+                  </div>
+                </div>
+          
+      <!-- Audit Mode Toggle -->
+      <div class="audit-toggle ${auditModeActive ? 'active' : ''}" id="audit-mode-toggle">
+        <span class="audit-toggle-label">Audit Mode</span>
+        <div class="audit-switch ${auditModeActive ? 'on' : ''}">
+          <div class="audit-switch-knob"></div>
+            </div>
           </div>
-        </div>
+          
+      <!-- Impact Snapshot (only shown when audit mode is active) -->
+      <div id="impact-snapshot-container"></div>
         
       <!-- Footer -->
       <div class="panel-footer">
         <span>Hack the Bias '26</span>
         <a id="refresh-btn">Refresh</a>
+            </div>
+            </div>
+  `
+}
+
+// ===============================================
+// IMPACT SNAPSHOT - Audit Mode metrics display
+// ===============================================
+
+/**
+ * Format the diversity method for display
+ * @param {string} method - The raw method string
+ * @returns {string} Human-readable method description
+ */
+function formatDiversityMethod(method) {
+  if (!method || method === 'unknown') {
+    return 'exposure-adjusted ranking'
+  }
+  
+  const methodLower = method.toLowerCase()
+  
+  // Check for Gemini quality filtering
+  if (methodLower.includes('quality_filtered_gemini') || methodLower.includes('gemini')) {
+    return 'AI quality filter + exposure ranking'
+  }
+  
+  // Check for heuristic quality filtering
+  if (methodLower.includes('quality_filtered_heuristic') || methodLower.includes('quality_filtered')) {
+    return 'quality filter + exposure ranking'
+  }
+  
+  // Check for ML diversification methods
+  if (methodLower.includes('greedy_cosine') || methodLower.includes('cosine') || methodLower.includes('embedding')) {
+    return 'exposure-adjusted ranking + ML diversification'
+  }
+  
+  // Check for fallback
+  if (methodLower.includes('fallback') || methodLower.includes('heuristic')) {
+    return 'exposure-adjusted ranking (fallback)'
+  }
+  
+  // Default: exposure-adjusted ranking
+  return 'exposure-adjusted ranking'
+}
+
+function renderImpactSnapshot(auditMetrics) {
+  if (!auditMetrics) {
+    return `
+      <div class="impact-snapshot">
+        <div class="impact-snapshot-title">Impact Snapshot</div>
+        <div class="impact-unavailable">Metrics unavailable</div>
+          </div>
+    `
+  }
+
+  const {
+    under100kShare = 0,
+    under50kShare = 0,
+    dominantShareTop10 = 0,
+    redundancyFiltered = 0,
+    qualityFiltered = 0,
+    diversityMethod = 'unknown'
+  } = auditMetrics
+
+  // Format quality filtering display
+  let qualityFilterHtml = ''
+  if (qualityFiltered > 0) {
+    qualityFilterHtml = `
+      <div class="impact-metric">
+        <span class="impact-metric-label">Low-quality videos filtered</span>
+        <span class="impact-metric-value highlight">${qualityFiltered}</span>
+        </div>
+    `
+  } else {
+    qualityFilterHtml = `
+      <div class="impact-metric">
+        <span class="impact-metric-label">Quality filter</span>
+        <span class="impact-metric-value muted">All passed</span>
+      </div>
+    `
+  }
+
+  // Format duplicates display
+  let duplicatesHtml = ''
+  if (redundancyFiltered === 0) {
+    duplicatesHtml = `
+      <div class="impact-metric">
+        <span class="impact-metric-label">Near-duplicate removals</span>
+        <span class="impact-metric-value muted">None detected</span>
+        </div>
+    `
+  } else {
+    duplicatesHtml = `
+      <div class="impact-metric">
+        <span class="impact-metric-label">Near-duplicate videos removed</span>
+        <span class="impact-metric-value highlight">${redundancyFiltered}</span>
+      </div>
+    `
+  }
+
+  // Format method display (Fix 3)
+  const methodDisplay = formatDiversityMethod(diversityMethod)
+
+  return `
+    <div class="impact-snapshot">
+      <div class="impact-snapshot-title">Impact Snapshot</div>
+      <div style="font-size: 9px; color: #4b5563; margin-bottom: 8px;">Share of surfaced results from under-represented creators</div>
+      <div class="impact-metrics">
+        <div class="impact-metric">
+          <span class="impact-metric-label">From creators &lt;100k subs</span>
+          <span class="impact-metric-value ${under100kShare > 50 ? 'highlight' : ''}">${under100kShare}%</span>
+        </div>
+        <div class="impact-metric">
+          <span class="impact-metric-label">From very small creators &lt;50k</span>
+          <span class="impact-metric-value ${under50kShare > 30 ? 'highlight' : ''}">${under50kShare}%</span>
+        </div>
+        ${dominantShareTop10 > 0 ? `
+        <div class="impact-divider"></div>
+        <div class="impact-metric">
+          <span class="impact-metric-label">Topic concentration (top 10)</span>
+          <span class="impact-metric-value ${dominantShareTop10 > 70 ? 'muted' : ''}">${dominantShareTop10}%</span>
+        </div>
+        ` : ''}
+        <div class="impact-divider"></div>
+        ${qualityFilterHtml}
+        ${duplicatesHtml}
+        <div class="impact-metric">
+          <span class="impact-metric-label">Method</span>
+          <span class="impact-metric-value muted">${methodDisplay}</span>
+        </div>
       </div>
     </div>
   `
@@ -1147,6 +1402,8 @@ function injectDashboard(data) {
   // Attach event listeners inside shadow DOM
   const noiseCancelToggle = shadow.getElementById('noise-cancel-toggle')
   const refreshBtn = shadow.getElementById('refresh-btn')
+  const auditToggle = shadow.getElementById('audit-mode-toggle')
+  const impactContainer = shadow.getElementById('impact-snapshot-container')
   
   // Noise Cancellation Toggle
   noiseCancelToggle?.addEventListener('click', () => {
@@ -1162,6 +1419,28 @@ function injectDashboard(data) {
     if (title) title.textContent = noiseCancellationActive ? 'Noise Cancellation ON' : 'Unmute the Silenced'
     if (desc) desc.textContent = noiseCancellationActive ? 'Showing hidden voices below ↓' : 'Reveal smaller creators on this topic'
     if (icon) icon.textContent = noiseCancellationActive ? '🎧' : '📢'
+  })
+
+  // Audit Mode Toggle
+  auditToggle?.addEventListener('click', () => {
+    auditModeActive = !auditModeActive
+    const switchEl = auditToggle.querySelector('.audit-switch')
+    switchEl?.classList.toggle('on', auditModeActive)
+    auditToggle.classList.toggle('active', auditModeActive)
+    
+    // Update impact snapshot
+    if (impactContainer) {
+      if (auditModeActive) {
+        impactContainer.innerHTML = renderImpactSnapshot(discoveryCache?.auditMetrics)
+      } else {
+        impactContainer.innerHTML = ''
+      }
+    }
+    
+    // Re-inject unmuted voices to update audit info display
+    if (noiseCancellationActive && discoveryCache) {
+      injectUnmutedVoices()
+    }
   })
   
   refreshBtn?.addEventListener('click', () => {
@@ -1569,6 +1848,7 @@ function injectUnmutedVoices() {
   `
 
   // Bias Snapshot (if available)
+  // When Audit Mode is ON, rename to "Platform Context" to avoid confusion with Impact Snapshot
   if (biasSnapshot) {
     const snapshot = document.createElement('div')
     snapshot.style.cssText = `
@@ -1578,8 +1858,16 @@ function injectUnmutedVoices() {
       margin-bottom: 12px;
     `
     const concentrationClass = biasSnapshot.topicConcentration > 70 ? 'color: #f59e0b;' : 'color: #10b981;'
+    
+    // Fix 1: Different title when Audit Mode is ON
+    const snapshotTitle = auditModeActive ? 'Platform Context' : 'Topic Bias Snapshot'
+    const subtitleHtml = auditModeActive 
+      ? '<div style="font-size: 8px; color: #4b5563; margin-bottom: 6px;">Baseline distribution for this topic</div>' 
+      : ''
+    
     snapshot.innerHTML = `
-      <div style="font-size: 9px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Topic Bias Snapshot</div>
+      <div style="font-size: 9px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: ${auditModeActive ? '2px' : '8px'};">${snapshotTitle}</div>
+      ${subtitleHtml}
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
         <div style="padding: 6px 8px; background: #171717; border-radius: 4px;">
           <div style="font-size: 14px; font-weight: 700; ${concentrationClass}">${biasSnapshot.topicConcentration}%</div>
@@ -1666,6 +1954,18 @@ function injectUnmutedVoices() {
       `
     }
     
+    // Build audit info line (only when audit mode is active)
+    // Fix 3: Use improved method label formatting
+    const surfaceMethod = video.surfaceMethod || 'engagement_ranking'
+    const diversityNote = video.diversityNote || ''
+    const methodDisplay = formatDiversityMethod(surfaceMethod)
+    const auditInfoHtml = auditModeActive ? `
+      <div style="padding: 6px 10px; border-top: 1px solid #262626; font-size: 10px; color: #6b7280; font-family: 'SF Mono', Monaco, monospace;">
+        Subs: ${fmt(video.subscriberCount)} · Surfaced via: ${methodDisplay}
+        ${diversityNote ? `<div style="font-size: 9px; color: #4b5563; margin-top: 2px;">${esc(diversityNote)}</div>` : ''}
+      </div>
+    ` : ''
+    
     card.innerHTML = `
       <a href="/watch?v=${video.videoId}" class="video-link" style="display: block; padding: 10px; text-decoration: none;">
         <div style="display: flex; gap: 10px;">
@@ -1678,6 +1978,7 @@ function injectUnmutedVoices() {
           </div>
         </div>
       </a>
+      ${auditInfoHtml}
       ${biasReceipt ? `<div style="padding: 0 10px 10px;">${biasReceiptHtml}</div>` : ''}
     `
     
