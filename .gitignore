@@ -1,0 +1,12 @@
+# Documents and Plans
+*.pdf
+plan.md
+README.md
+SETUP.md
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Extension local files
+extension/icons/

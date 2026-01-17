@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Silenced by the Algorithm",
+  "version": "1.0.0",
+  "description": "Uncover sustainability content hidden by YouTube's algorithm. Detect, visualize, and mitigate algorithmic bias.",
+  "permissions": ["activeTab", "storage"],
+  "host_permissions": ["https://www.youtube.com/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [{
+    "matches": ["https://www.youtube.com/*"],
+    "js": ["content.js"],
+    "css": ["overlay.css"],
+    "run_at": "document_idle"
+  }],
+  "action": {
+    "default_title": "Silenced by the Algorithm - Click to analyze bias"
+  }
+}
