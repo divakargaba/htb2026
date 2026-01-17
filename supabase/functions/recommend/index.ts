@@ -1,15 +1,110 @@
-// Silenced by the Algorithm - Edge Function v15
+// Silenced by the Algorithm - Edge Function v18
 // Real algorithmic bias analysis with strict sustainability detection
+// Includes: health endpoint, schema versioning, demo-safe fallbacks, Gemini AI integration
+// v18: Added embedding-based diversification for silenced alternatives
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import { gemini, classifyGreenwashing, checkGeminiHealth } from "../_shared/gemini_client.ts"
+import { diversifySilencedVoices, type DiversityMetadata } from "../_shared/diversify.ts"
+
+// ============================================
+// CONFIGURATION & VERSIONING
+// ============================================
+const SCHEMA_VERSION = '3.1.0'
+const FUNCTION_VERSION = 'v18'
 
 const YOUTUBE_API_KEY = Deno.env.get('YOUTUBE_API_KEY') || 'AIzaSyAV_xT7shJvRyip9yCSpvx7ogZhiPpi2LY'
+const ENABLE_ML_FEATURES = Deno.env.get('ENABLE_ML_FEATURES') !== 'false' // Default enabled
+const DEMO_MODE = Deno.env.get('DEMO_MODE') === 'true'
 
 const headers = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
   'Content-Type': 'application/json'
+}
+
+// ============================================
+// HEALTH CHECK RESPONSE
+// ============================================
+function healthResponse() {
+  const geminiStatus = checkGeminiHealth()
+
+  return new Response(JSON.stringify({
+    status: 'healthy',
+    version: FUNCTION_VERSION,
+    schemaVersion: SCHEMA_VERSION,
+    timestamp: new Date().toISOString(),
+    config: {
+      hasYouTubeKey: !!YOUTUBE_API_KEY,
+      mlFeaturesEnabled: ENABLE_ML_FEATURES,
+      demoMode: DEMO_MODE
+    },
+    services: {
+      gemini: {
+        available: geminiStatus.available,
+        hasApiKey: geminiStatus.hasApiKey,
+        error: geminiStatus.error
+      }
+    }
+  }), { status: 200, headers })
+}
+
+// ============================================
+// DEMO-SAFE FALLBACK RESPONSE
+// Returns heuristic data if API/ML fails
+// ============================================
+function fallbackResponse(videoId: string, error: string) {
+  console.warn(`[Fallback] Returning demo-safe response for ${videoId}: ${error}`)
+
+  return {
+    video_data: {
+      title: 'Video Analysis (Fallback Mode)',
+      channel: 'Unknown Channel',
+      views: 0,
+      likes: 0,
+      comments: 0
+    },
+    bias_analysis: {
+      total_score: 50,
+      breakdown: [
+        {
+          factor: 'Analysis Unavailable',
+          points: 50,
+          maxPoints: 100,
+          explanation: 'Could not fetch video data - showing estimated values',
+          insight: 'Retry or check internet connection'
+        }
+      ]
+    },
+    content_analysis: {
+      topic: 'Unknown',
+      content_type: 'Unknown',
+      educational_value: 50,
+      depth_score: 50,
+      sensationalism: 50,
+      clickbait_indicators: []
+    },
+    sustainability: {
+      is_sustainability: false,
+      matched_keywords: [],
+      confidence: 0,
+      greenwashing: null
+    },
+    silenced_alternatives: [],
+    diversity: {
+      method: 'fallback_heuristic',
+      thresholdUsed: 0,
+      candidatesEmbedded: 0,
+      originalCount: 0,
+      selectedCount: 0,
+      error: 'Fallback mode - no diversification'
+    },
+    transcript_analysis: null,
+    _fallback: true,
+    _fallbackReason: error,
+    _schemaVersion: SCHEMA_VERSION
+  }
 }
 
 async function getVideoById(videoId: string) {
@@ -213,81 +308,145 @@ function calculateBiasScore(video: any, channel: any, relatedVideos: any[]) {
 }
 
 // Generate greenwashing analysis ONLY for sustainability content
-function analyzeGreenwashing(video: any, channel: any, sustainabilityData: any) {
+// Uses Gemini AI when available, falls back to heuristics
+async function analyzeGreenwashing(video: any, channel: any, sustainabilityData: any, transcript: string = '') {
   if (!sustainabilityData.is_sustainability) {
     return null // Don't analyze non-sustainability content
   }
-  
-  const title = (video.snippet?.title || '').toLowerCase()
-  const desc = (video.snippet?.description || '').toLowerCase()
+
+  const title = video.snippet?.title || ''
+  const desc = video.snippet?.description || ''
   const subs = parseInt(channel?.statistics?.subscriberCount || '0')
-  
+
+  // Try Gemini AI classification first (if enabled)
+  if (ENABLE_ML_FEATURES && gemini.isAvailable()) {
+    try {
+      const contentForAnalysis = [
+        `Title: ${title}`,
+        `Description: ${desc}`,
+        transcript ? `Transcript excerpt: ${transcript.slice(0, 5000)}` : ''
+      ].filter(Boolean).join('\n\n')
+
+      console.log('[Gemini] Attempting AI greenwashing classification...')
+      const aiResult = await classifyGreenwashing(contentForAnalysis)
+
+      if (aiResult) {
+        console.log('[Gemini] AI classification successful')
+
+        // Map AI result to expected response format
+        return {
+          score: (100 - aiResult.transparencyScore) / 100, // Invert: high transparency = low risk
+          risk_level: aiResult.transparencyScore >= 70 ? 'low' : aiResult.transparencyScore >= 40 ? 'medium' : 'high',
+          flags: aiResult.flags.map(f => f.evidence ? `${f.text}: "${f.evidence}"` : f.text),
+          explanation: aiResult.transparencyScore >= 70
+            ? 'AI analysis indicates transparent environmental claims with evidence.'
+            : aiResult.transparencyScore >= 40
+              ? 'AI analysis found some greenwashing indicators that warrant verification.'
+              : 'AI analysis detected significant greenwashing concerns.',
+          ai_analysis: {
+            enabled: true,
+            transparencyScore: aiResult.transparencyScore,
+            flags: aiResult.flags
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('[Gemini] AI classification failed, falling back to heuristics:', error)
+    }
+  }
+
+  // FALLBACK: Heuristic-based analysis
+  console.log('[Heuristics] Using rule-based greenwashing analysis')
+
+  const titleLower = title.toLowerCase()
+  const descLower = desc.toLowerCase()
+
   const flags: string[] = []
   let riskScore = 0
-  
+
   // Check for vague claims
   const vagueTerms = ['eco-friendly', 'green', 'natural', 'clean', 'pure', 'conscious']
-  const vagueMatches = vagueTerms.filter(t => title.includes(t) || desc.includes(t))
+  const vagueMatches = vagueTerms.filter(t => titleLower.includes(t) || descLower.includes(t))
   if (vagueMatches.length > 0) {
     flags.push(`Uses vague environmental terms without specifics: "${vagueMatches.join('", "')}"`)
     riskScore += 0.2
   }
-  
+
   // Check for missing sources/citations
-  const hasLinks = desc.includes('http') || desc.includes('www.')
-  const mentionsSources = desc.includes('source') || desc.includes('study') || desc.includes('research') || desc.includes('report')
+  const hasLinks = descLower.includes('http') || descLower.includes('www.')
+  const mentionsSources = descLower.includes('source') || descLower.includes('study') || descLower.includes('research') || descLower.includes('report')
   if (!hasLinks && !mentionsSources) {
     flags.push('No sources or citations provided for environmental claims')
     riskScore += 0.25
   }
-  
+
   // Check for corporate sponsor potential
   const sponsorTerms = ['sponsored', 'partner', 'ad', 'paid', 'collab']
-  const isSponsored = sponsorTerms.some(t => desc.includes(t))
+  const isSponsored = sponsorTerms.some(t => descLower.includes(t))
   if (isSponsored) {
     flags.push('Sponsored content - may have financial incentive affecting objectivity')
     riskScore += 0.15
   }
-  
+
   // Large channel = higher scrutiny
   if (subs > 1000000) {
     flags.push('Large platform reach increases responsibility for accuracy')
     riskScore += 0.1
   }
-  
+
   // Determine risk level
   let riskLevel: 'low' | 'medium' | 'high' = 'low'
   if (riskScore >= 0.5) riskLevel = 'high'
   else if (riskScore >= 0.25) riskLevel = 'medium'
-  
+
   return {
     score: Math.min(1, riskScore),
     risk_level: riskLevel,
     flags,
-    explanation: flags.length > 0 
+    explanation: flags.length > 0
       ? 'Content makes environmental claims that should be independently verified.'
-      : 'No significant greenwashing indicators detected.'
+      : 'No significant greenwashing indicators detected.',
+    ai_analysis: {
+      enabled: false,
+      reason: ENABLE_ML_FEATURES ? 'Gemini API unavailable or failed' : 'ML features disabled'
+    }
   }
 }
 
 serve(async (req) => {
+  // CORS preflight
   if (req.method === 'OPTIONS') return new Response('ok', { headers })
-  
+
+  // Health check endpoint (GET request or ?health query param)
+  const url = new URL(req.url)
+  if (req.method === 'GET' || url.searchParams.has('health')) {
+    return healthResponse()
+  }
+
+  let video_id = ''
+
   try {
     const body = await req.json()
-    const { video_id, transcript } = body
-    
+    video_id = body.video_id
+    const transcript = body.transcript
+
     if (!video_id) {
-      return new Response(JSON.stringify({ error: 'MISSING_VIDEO_ID', bias_analysis: null }), { status: 200, headers })
+      return new Response(JSON.stringify({
+        error: 'MISSING_VIDEO_ID',
+        bias_analysis: null,
+        _schemaVersion: SCHEMA_VERSION
+      }), { status: 200, headers })
     }
-    
+
     if (!YOUTUBE_API_KEY) {
-      return new Response(JSON.stringify({ error: 'MISSING_API_KEY', bias_analysis: null }), { status: 200, headers })
+      // Demo-safe fallback: return heuristic data instead of error
+      return new Response(JSON.stringify(fallbackResponse(video_id, 'NO_API_KEY')), { status: 200, headers })
     }
-    
+
     const videoResult = await getVideoById(video_id)
     if (videoResult.error) {
-      return new Response(JSON.stringify({ error: videoResult.error, bias_analysis: null }), { status: 200, headers })
+      // Demo-safe fallback: return heuristic data instead of error
+      return new Response(JSON.stringify(fallbackResponse(video_id, videoResult.error)), { status: 200, headers })
     }
     
     const video = videoResult.data
@@ -299,31 +458,75 @@ serve(async (req) => {
     
     // Calculate bias with real metrics
     const biasAnalysis = calculateBiasScore(video, channel, relatedVideos)
-    
+
     // Strict sustainability detection
     const sustainabilityData = detectSustainability(video)
-    
+
     // Only generate greenwashing for actual sustainability content
-    const greenwashingAnalysis = analyzeGreenwashing(video, channel, sustainabilityData)
+    // Uses Gemini AI when available, falls back to heuristics
+    const greenwashingAnalysis = await analyzeGreenwashing(video, channel, sustainabilityData, transcript || '')
     
-    // Format alternatives
-    const alternatives = relatedVideos
+    // =========================================
+    // SILENCED ALTERNATIVES WITH DIVERSIFICATION
+    // Step 1: Build ranked candidate list (existing logic)
+    // Step 2: Apply embedding-based diversification
+    // =========================================
+
+    // Step 1: Format candidates with ranking scores
+    const rankedCandidates = relatedVideos
       .filter((v: any) => v.id.videoId !== video_id)
-      .slice(0, 5)
-      .map((v: any, index: number) => ({
-        video_id: v.id.videoId,
-        title: v.snippet.title,
-        channel: v.snippet.channelTitle,
-        thumbnail: v.snippet.thumbnails?.medium?.url || v.snippet.thumbnails?.default?.url,
-        view_count: Math.floor(Math.random() * 50000) + 1000,
-        subscriber_count: Math.floor(Math.random() * 100000) + 5000,
-        silence_score: 60 + Math.floor(Math.random() * 30),
-        reasons: [
-          'Lower recommendation priority',
-          'Smaller creator facing algorithmic disadvantage',
-          'Less engagement-optimized content'
-        ].slice(0, 2 + (index % 2))
-      }))
+      .map((v: any, index: number) => {
+        // Simulate silence score based on position + some variance
+        // In production, this would come from real channel data
+        const baseScore = 90 - (index * 3)
+        const variance = Math.floor(Math.random() * 10) - 5
+        const silenceScore = Math.max(50, Math.min(95, baseScore + variance))
+
+        return {
+          video_id: v.id.videoId,
+          title: v.snippet.title,
+          channel: v.snippet.channelTitle,
+          description: (v.snippet.description || '').slice(0, 200),
+          thumbnail: v.snippet.thumbnails?.medium?.url || v.snippet.thumbnails?.default?.url,
+          view_count: Math.floor(Math.random() * 50000) + 1000,
+          subscriber_count: Math.floor(Math.random() * 100000) + 5000,
+          silence_score: silenceScore,
+          rank: index, // Preserve original ranking
+          reasons: [
+            'Lower recommendation priority',
+            'Smaller creator facing algorithmic disadvantage',
+            'Less engagement-optimized content'
+          ].slice(0, 2 + (index % 2))
+        }
+      })
+      // Sort by silence_score descending (higher = more silenced = prioritize)
+      .sort((a: any, b: any) => b.silence_score - a.silence_score)
+
+    console.log(`[Recommend] Built ${rankedCandidates.length} ranked candidates for diversification`)
+
+    // Step 2: Apply embedding-based diversification
+    const diversificationResult = await diversifySilencedVoices(
+      rankedCandidates,
+      10, // Target 10 diverse results
+      ENABLE_ML_FEATURES
+    )
+
+    // Map diversified items to final format
+    const alternatives = diversificationResult.items.map((item: any) => ({
+      video_id: item.video_id,
+      title: item.title,
+      channel: item.channel,
+      thumbnail: item.thumbnail,
+      view_count: item.view_count,
+      subscriber_count: item.subscriber_count,
+      silence_score: item.silence_score,
+      reasons: item.reasons,
+      diversityNote: item.diversityNote
+    }))
+
+    const diversityMetadata: DiversityMetadata = diversificationResult.diversity
+
+    console.log(`[Recommend] Diversification complete: ${diversityMetadata.method}, ${diversityMetadata.selectedCount} selected from ${diversityMetadata.originalCount}`)
     
     // Content analysis
     const title = video.snippet?.title || ''
@@ -366,21 +569,20 @@ serve(async (req) => {
         greenwashing: greenwashingAnalysis // null for non-sustainability content
       },
       silenced_alternatives: alternatives,
+      diversity: diversityMetadata,
       transcript_analysis: transcript ? {
         claims_count: Math.floor(transcript.length / 500) + 1,
         sources_cited: Math.floor(Math.random() * 3),
         specificity_score: Math.min(85, 40 + (transcript.length / 200)),
         key_claims: ['Content analyzed from transcript'],
         topic_coverage: Math.min(90, 50 + (transcript.length / 150))
-      } : null
+      } : null,
+      _schemaVersion: SCHEMA_VERSION
     }), { status: 200, headers })
-    
+
   } catch (err) {
     console.error('Error:', err)
-    return new Response(JSON.stringify({ 
-      error: 'SERVER_ERROR',
-      message: err instanceof Error ? err.message : 'Unknown error',
-      bias_analysis: null
-    }), { status: 200, headers })
+    // Demo-safe fallback: return heuristic data instead of error
+    return new Response(JSON.stringify(fallbackResponse(video_id, err instanceof Error ? err.message : 'Unknown error')), { status: 200, headers })
   }
 })

@@ -10,3 +10,18 @@ Thumbs.db
 
 # Extension local files
 extension/icons/
+
+# Environment variables (NEVER commit)
+.env
+.env.local
+.env.*.local
+
+# Supabase
+supabase/.temp/
+
+# Node modules (if any)
+node_modules/
+
+# IDE
+.idea/
+.vscode/

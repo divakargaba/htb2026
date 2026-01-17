@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Silenced by the Algorithm",
-  "version": "1.1.0",
-  "description": "Uncover sustainability content hidden by YouTube's algorithm. Detect, visualize, and mitigate algorithmic bias. Discovery Mode finds underrepresented creators.",
+  "version": "3.1.0",
+  "description": "Surface under-represented YouTube creators. Exposure Advantage Score, explainability, bias snapshot, and KPMG sustainability auditing.",
   "permissions": [
     "activeTab",
     "storage",
@@ -22,6 +22,7 @@
     "run_at": "document_idle"
   }],
   "action": {
-    "default_title": "Silenced - Toggle Discovery Mode"
+    "default_title": "Silenced - Noise Cancellation for YouTube",
+    "default_popup": "popup.html"
   }
 }

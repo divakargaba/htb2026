@@ -1,5 +1,5 @@
-// Silenced - YouTube Equity Filter with Shadow DOM Injection
-// Features: Equity Score Dashboard + Discovery Mode + KPMG Sustainability Audit
+// Silenced by the Algorithm
+// See the bias. Hear the silenced.
 
 const SUPABASE_URL = 'https://ntspwmgvabdpifzzebrv.supabase.co/functions/v1/recommend'
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im50c3B3bWd2YWJkcGlmenplYnJ2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg2MzIyNjIsImV4cCI6MjA4NDIwODI2Mn0.26ndaCrexA3g29FHrJB1uBKJIUW6E5yn-nbvarsBp4o'
@@ -11,11 +11,15 @@ let currentVideoId = null
 let panelInjected = false
 let isOpen = true
 let breakdownOpen = false
-let discoveryMode = false
+let silenceReportOpen = false
+let noiseCancellationActive = false
 let discoveryCache = null
 let discoveryObserver = null
 let processedVideoCards = new Set()
+let processedThumbnails = new Set()
 let shadowHost = null
+let stats = { voicesUnmuted: 0, noiseMuted: 0 }
+let channelSubCache = new Map() // Cache channel subscriber counts
 
 // ===============================================
 // HELPERS
@@ -40,22 +44,392 @@ function esc(t) {
 }
 
 // ===============================================
-// PERSISTENCE - Load Discovery Mode state
+// VIDEO THUMBNAIL LABELING - Show noise/silence on ALL videos
 // ===============================================
-async function loadDiscoveryState() {
+function injectBiasReceiptStyles() {
+  if (document.getElementById('silenced-bias-receipt-styles')) return
+  
+  const style = document.createElement('style')
+  style.id = 'silenced-bias-receipt-styles'
+  style.textContent = `
+    /* Bias Receipt Styles - injected for unmuted voices container */
+    .silenced-bias-receipt {
+      margin-top: 8px;
+      border-top: 1px solid #262626;
+      padding-top: 8px;
+    }
+
+    .silenced-bias-receipt-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      padding: 4px 0;
+      user-select: none;
+    }
+
+    .silenced-bias-receipt-toggle:hover .silenced-receipt-title {
+      color: #d1d5db;
+    }
+
+    .silenced-receipt-title {
+      font-size: 10px;
+      font-weight: 600;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .silenced-receipt-method {
+      font-size: 8px;
+      font-weight: 500;
+      color: #4b5563;
+      background: #1f1f1f;
+      padding: 2px 5px;
+      border-radius: 3px;
+      text-transform: uppercase;
+    }
+
+    .silenced-receipt-method.fallback {
+      color: #9ca3af;
+    }
+
+    .silenced-receipt-arrow {
+      font-size: 10px;
+      color: #6b7280;
+      transition: transform 0.2s ease;
+    }
+
+    .silenced-bias-receipt.open .silenced-receipt-arrow {
+      transform: rotate(180deg);
+    }
+
+    .silenced-receipt-content {
+      display: none;
+      padding: 8px 0 4px;
+    }
+
+    .silenced-bias-receipt.open .silenced-receipt-content {
+      display: block;
+    }
+
+    .silenced-receipt-section {
+      margin-bottom: 8px;
+    }
+
+    .silenced-receipt-section:last-child {
+      margin-bottom: 0;
+    }
+
+    .silenced-receipt-section-title {
+      font-size: 9px;
+      font-weight: 600;
+      color: #ef4444;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    .silenced-receipt-section-title.surfaced {
+      color: #10b981;
+    }
+
+    .silenced-receipt-bullets {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+
+    .silenced-receipt-bullets li {
+      font-size: 10px;
+      color: #9ca3af;
+      line-height: 1.4;
+      padding: 2px 0;
+      padding-left: 10px;
+      position: relative;
+    }
+
+    .silenced-receipt-bullets li::before {
+      content: "•";
+      position: absolute;
+      left: 0;
+      color: #4b5563;
+    }
+
+    .silenced-receipt-confidence {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px dashed #262626;
+    }
+
+    .silenced-confidence-label {
+      font-size: 8px;
+      color: #4b5563;
+      text-transform: uppercase;
+    }
+
+    .silenced-confidence-indicator {
+      display: flex;
+      gap: 2px;
+    }
+
+    .silenced-confidence-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #262626;
+    }
+
+    .silenced-confidence-dot.filled {
+      background: #6b7280;
+    }
+
+    .silenced-confidence-dot.filled.high {
+      background: #10b981;
+    }
+
+    .silenced-confidence-dot.filled.medium {
+      background: #f59e0b;
+    }
+
+    .silenced-confidence-dot.filled.low {
+      background: #6b7280;
+    }
+  `
+  document.head.appendChild(style)
+}
+
+function injectThumbnailStyles() {
+  if (document.getElementById('silenced-thumbnail-styles')) return
+  
+  const style = document.createElement('style')
+  style.id = 'silenced-thumbnail-styles'
+  style.textContent = `
+    .silenced-badge {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-family: 'Courier New', monospace;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      z-index: 100;
+      pointer-events: none;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+    }
+    
+    .silenced-badge.noise {
+      background: #FF1744;
+      color: white;
+      animation: noisePulse 2s ease-in-out infinite;
+    }
+    
+    .silenced-badge.amplified {
+      background: #FF6D00;
+      color: white;
+    }
+    
+    .silenced-badge.silenced {
+      background: #00E676;
+      color: black;
+    }
+    
+    .silenced-badge.quiet {
+      background: #00BFA5;
+      color: black;
+    }
+    
+    @keyframes noisePulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.8; }
+    }
+    
+    /* Dim noisy videos when noise cancellation is active */
+    .silenced-dimmed {
+      opacity: 0.3;
+      filter: grayscale(0.5);
+      transition: opacity 0.3s ease, filter 0.3s ease;
+    }
+    
+    .silenced-dimmed:hover {
+      opacity: 0.7;
+      filter: grayscale(0.2);
+    }
+    
+    /* Highlight silenced videos */
+    .silenced-highlighted {
+      outline: 3px solid #00E676;
+      outline-offset: -3px;
+    }
+    
+    /* Channel info overlay on hover */
+    .silenced-channel-info {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: linear-gradient(transparent, rgba(0,0,0,0.9));
+      padding: 24px 8px 8px;
+      font-family: 'Roboto', sans-serif;
+      z-index: 99;
+      opacity: 0;
+      transition: opacity 0.2s ease;
+    }
+    
+    ytd-rich-item-renderer:hover .silenced-channel-info,
+    ytd-video-renderer:hover .silenced-channel-info,
+    ytd-compact-video-renderer:hover .silenced-channel-info {
+      opacity: 1;
+    }
+    
+    .silenced-channel-info .subs {
+      font-size: 11px;
+      color: #aaa;
+    }
+    
+    .silenced-channel-info .label {
+      font-size: 10px;
+      font-weight: 700;
+      margin-top: 2px;
+    }
+    
+    .silenced-channel-info .label.noise { color: #FF5252; }
+    .silenced-channel-info .label.silenced { color: #00E676; }
+  `
+  document.head.appendChild(style)
+}
+
+async function getChannelSubs(channelHandle) {
+  // Check cache first
+  if (channelSubCache.has(channelHandle)) {
+    return channelSubCache.get(channelHandle)
+  }
+  
+  // Request from background script
   return new Promise((resolve) => {
-    chrome.runtime.sendMessage({ action: 'getDiscoveryMode' }, (response) => {
-      discoveryMode = response?.enabled || false
-      resolve(discoveryMode)
+    chrome.runtime.sendMessage({ 
+      action: 'getChannelByHandle', 
+      handle: channelHandle 
+    }, (response) => {
+      const subs = response?.subscriberCount || 0
+      channelSubCache.set(channelHandle, subs)
+      resolve(subs)
     })
   })
 }
 
-async function saveDiscoveryState(enabled) {
+async function labelVideoThumbnails() {
+  if (!noiseCancellationActive) return
+  
+  // Find all video renderers
+  const videoCards = document.querySelectorAll(`
+    ytd-rich-item-renderer,
+    ytd-video-renderer,
+    ytd-compact-video-renderer,
+    ytd-grid-video-renderer
+  `)
+  
+  for (const card of videoCards) {
+    // Skip if already processed
+    const videoId = card.querySelector('a#thumbnail')?.href?.match(/[?&]v=([^&]+)/)?.[1]
+    if (!videoId || processedThumbnails.has(videoId)) continue
+    processedThumbnails.add(videoId)
+    
+    // Get channel info
+    const channelLink = card.querySelector('a.yt-formatted-string[href^="/@"], ytd-channel-name a, a[href^="/@"]')
+    const channelHandle = channelLink?.getAttribute('href')?.replace('/@', '') || ''
+    
+    // Get subscriber count
+    let subs = 0
+    if (channelHandle) {
+      subs = await getChannelSubs(channelHandle)
+    }
+    
+    // Determine exposure tier
+    let noiseLevel = 'unknown'
+    let badgeText = ''
+
+    if (subs >= 1000000) {
+      noiseLevel = 'noise'
+      badgeText = 'DOMINANT'
+    } else if (subs >= 500000) {
+      noiseLevel = 'amplified'
+      badgeText = 'AMPLIFIED'
+    } else if (subs >= 100000) {
+      noiseLevel = 'moderate'
+      badgeText = '' // Don't label moderate
+    } else if (subs > 0) {
+      noiseLevel = 'silenced'
+      badgeText = 'SILENCED'
+    }
+    
+    // Add badge to thumbnail
+    const thumbnail = card.querySelector('#thumbnail, ytd-thumbnail')
+    if (thumbnail && badgeText) {
+      // Make thumbnail position relative for badge positioning
+      thumbnail.style.position = 'relative'
+      
+      // Remove existing badge if any
+      thumbnail.querySelector('.silenced-badge')?.remove()
+      
+      // Create and add badge
+      const badge = document.createElement('div')
+      badge.className = `silenced-badge ${noiseLevel}`
+      badge.textContent = badgeText
+      thumbnail.appendChild(badge)
+      
+      // Apply dimming for noisy videos
+      if (noiseLevel === 'noise' || noiseLevel === 'amplified') {
+        card.classList.add('silenced-dimmed')
+      } else if (noiseLevel === 'silenced') {
+        card.classList.add('silenced-highlighted')
+      }
+    }
+  }
+}
+
+function clearThumbnailLabels() {
+  document.querySelectorAll('.silenced-badge').forEach(el => el.remove())
+  document.querySelectorAll('.silenced-dimmed').forEach(el => el.classList.remove('silenced-dimmed'))
+  document.querySelectorAll('.silenced-highlighted').forEach(el => el.classList.remove('silenced-highlighted'))
+  processedThumbnails.clear()
+}
+
+// ===============================================
+// PERSISTENCE - Load Noise Cancellation state
+// ===============================================
+async function loadNoiseCancellationState() {
   return new Promise((resolve) => {
-    chrome.runtime.sendMessage({ action: 'setDiscoveryMode', enabled }, () => {
+    chrome.runtime.sendMessage({ action: 'getNoiseCancellation' }, (response) => {
+      noiseCancellationActive = response?.enabled || false
+      resolve(noiseCancellationActive)
+    })
+  })
+}
+
+async function saveNoiseCancellationState(enabled) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ action: 'setNoiseCancellation', enabled }, () => {
       resolve()
     })
+  })
+}
+
+async function updateStats(voicesUnmuted = 0, noiseMuted = 0) {
+  stats.voicesUnmuted += voicesUnmuted
+  stats.noiseMuted += noiseMuted
+  await chrome.storage.local.set({ 
+    discoveredCount: stats.voicesUnmuted,
+    hiddenCount: stats.noiseMuted 
   })
 }
 
@@ -87,7 +461,11 @@ function createShadowContainer(id, hostElement) {
 
 function getShadowStyles() {
   return `
-    /* Reset and base styles inside Shadow DOM */
+    /* ====================================
+       SILENCED - Clean, Professional UI
+       No gradients, minimal glow, clear hierarchy
+       ==================================== */
+
     *, *::before, *::after {
       box-sizing: border-box;
       margin: 0;
@@ -95,384 +473,366 @@ function getShadowStyles() {
     }
     
     .silenced-container {
-      font-family: "Roboto", "Arial", sans-serif;
-      color: #f1f1f1;
-      font-size: 14px;
-      line-height: 1.4;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: #d1d5db;
+      font-size: 13px;
+      line-height: 1.5;
     }
-    
-    /* Dashboard Panel */
-    .silenced-dashboard {
-      background: linear-gradient(145deg, #1a1a1a 0%, #0d0d0d 100%);
-      border: 1px solid #333;
-      border-radius: 12px;
+
+    /* === MAIN PANEL === */
+    .silenced-panel {
+      background: #111111;
+      border: 1px solid #262626;
+      border-radius: 8px;
       margin-bottom: 12px;
       overflow: hidden;
     }
     
-    .dashboard-header {
+    /* === HEADER === */
+    .panel-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 14px 16px;
-      background: linear-gradient(90deg, #1a3a1a 0%, #1a1a1a 100%);
-      cursor: pointer;
-      border-bottom: 1px solid #333;
+      padding: 12px 14px;
+      border-bottom: 1px solid #262626;
     }
-    
-    .dashboard-header:hover {
-      background: linear-gradient(90deg, #1f4a1f 0%, #252525 100%);
-    }
-    
-    .header-left {
+
+    .header-brand {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 8px;
     }
-    
-    .logo-icon {
-      width: 28px;
-      height: 28px;
-      background: linear-gradient(135deg, #00E676 0%, #00C853 100%);
-      border-radius: 6px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    
-    .logo-icon svg {
-      width: 16px;
-      height: 16px;
-      fill: white;
-    }
-    
-    .logo-text {
-      font-size: 16px;
+
+    .brand-name {
+      font-size: 14px;
       font-weight: 600;
-      color: #00E676;
+      color: #f5f5f5;
       letter-spacing: -0.3px;
     }
     
-    .score-chip {
-      background: #00E676;
-      color: #000;
-      padding: 4px 12px;
-      border-radius: 20px;
-      font-size: 13px;
-      font-weight: 700;
-    }
-    
-    .chevron {
-      width: 24px;
-      height: 24px;
-      fill: #aaa;
-      transition: transform 0.2s ease;
-    }
-    
-    .chevron.open {
-      transform: rotate(180deg);
-    }
-    
-    /* Score Display */
-    .score-section {
-      padding: 24px 16px;
-      text-align: center;
-      background: linear-gradient(180deg, rgba(0,230,118,0.05) 0%, transparent 100%);
-    }
-    
-    .score-ring {
-      width: 120px;
-      height: 120px;
-      margin: 0 auto 16px;
-      position: relative;
-    }
-    
-    .score-ring svg {
-      width: 100%;
-      height: 100%;
-      transform: rotate(-90deg);
-    }
-    
-    .score-ring circle {
-      fill: none;
-      stroke-width: 8;
-    }
-    
-    .score-ring .bg {
-      stroke: #333;
-    }
-    
-    .score-ring .progress {
-      stroke: #00E676;
-      stroke-linecap: round;
-      transition: stroke-dashoffset 1s ease;
-    }
-    
-    .score-value {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      font-size: 32px;
-      font-weight: 700;
-      color: #00E676;
-    }
-    
-    .score-value span {
-      font-size: 16px;
-      color: #888;
-    }
-    
-    .score-label {
-      font-size: 14px;
-      color: #aaa;
-      margin-bottom: 8px;
-    }
-    
-    .score-sublabel {
-      font-size: 12px;
-      color: #666;
-    }
-    
-    /* Breakdown Items */
-    .breakdown-section {
-      border-top: 1px solid #333;
-    }
-    
-    .breakdown-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 12px 16px;
-      cursor: pointer;
-    }
-    
-    .breakdown-header:hover {
-      background: #252525;
-    }
-    
-    .breakdown-title {
-      font-size: 14px;
-      font-weight: 500;
-      color: #f1f1f1;
-    }
-    
-    .breakdown-content {
-      display: none;
-      padding: 0 16px 16px;
-    }
-    
-    .breakdown-content.open {
-      display: block;
-    }
-    
-    .metric-item {
-      padding: 12px;
-      background: #1a1a1a;
-      border-radius: 8px;
-      margin-bottom: 8px;
-      border-left: 3px solid #00E676;
-    }
-    
-    .metric-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 6px;
-    }
-    
-    .metric-name {
-      font-size: 13px;
-      font-weight: 500;
-      color: #f1f1f1;
-    }
-    
-    .metric-score {
-      font-size: 13px;
+    .header-tier {
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 10px;
       font-weight: 600;
-      color: #00E676;
-    }
-    
-    .metric-bar {
-      height: 4px;
-      background: #333;
-      border-radius: 2px;
-      margin-bottom: 6px;
-      overflow: hidden;
-    }
-    
-    .metric-bar-fill {
-      height: 100%;
-      background: linear-gradient(90deg, #00E676 0%, #00C853 100%);
-      border-radius: 2px;
-      transition: width 0.5s ease;
-    }
-    
-    .metric-explanation {
-      font-size: 12px;
-      color: #888;
-      line-height: 1.4;
-    }
-    
-    .metric-value {
-      font-size: 11px;
-      color: #666;
-      margin-top: 4px;
-    }
-    
-    /* Sustainability Badge */
-    .sustainability-badge {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 12px 16px;
-      margin: 12px 16px;
-      border-radius: 8px;
-      animation: badgePulse 2s ease-in-out infinite;
-    }
-    
-    .sustainability-badge.verified {
-      background: linear-gradient(135deg, rgba(0,230,118,0.2) 0%, rgba(0,200,83,0.1) 100%);
-      border: 1px solid #00E676;
-    }
-    
-    .sustainability-badge.warning {
-      background: linear-gradient(135deg, rgba(255,152,0,0.2) 0%, rgba(255,87,34,0.1) 100%);
-      border: 1px solid #FF9800;
-    }
-    
-    .badge-icon {
-      width: 32px;
-      height: 32px;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 18px;
-    }
-    
-    .badge-content {
-      flex: 1;
-    }
-    
-    .badge-title {
-      font-size: 12px;
-      font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.3px;
     }
-    
-    .badge-subtitle {
-      font-size: 11px;
-      color: #aaa;
-      margin-top: 2px;
+
+    .header-tier.dominant { background: #dc2626; color: white; }
+    .header-tier.amplified { background: #f97316; color: white; }
+    .header-tier.established { background: #f59e0b; color: #111; }
+    .header-tier.emerging { background: #22c55e; color: #111; }
+    .header-tier.under-represented { background: #10b981; color: #111; }
+
+    /* === SCORE SECTION === */
+    .score-section {
+      padding: 14px;
+      border-bottom: 1px solid #262626;
     }
-    
-    @keyframes badgePulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.85; }
-    }
-    
-    /* Discovery Mode Toggle */
-    .discovery-toggle {
+
+    .score-row {
       display: flex;
       align-items: center;
       gap: 12px;
-      padding: 12px 16px;
-      background: #1a1a1a;
-      border-top: 1px solid #333;
-      cursor: pointer;
-      transition: background 0.2s ease;
+    }
+
+    .channel-avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      object-fit: cover;
+      background: #262626;
+    }
+
+    .channel-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .channel-name {
+      font-size: 13px;
+      font-weight: 500;
+      color: #f5f5f5;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .channel-meta {
+      font-size: 11px;
+      color: #6b7280;
+      margin-top: 1px;
+    }
+
+    .score-badge {
+      text-align: center;
+      min-width: 52px;
     }
     
-    .discovery-toggle:hover {
-      background: #252525;
+    .score-value {
+      font-size: 20px;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .score-value.high { color: #ef4444; }
+    .score-value.medium { color: #f59e0b; }
+    .score-value.low { color: #10b981; }
+    
+    .score-label {
+      font-size: 8px;
+      font-weight: 600;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-top: 2px;
+    }
+
+    /* === EXPLANATION === */
+    .explain-section {
+      padding: 10px 14px;
+      border-bottom: 1px solid #262626;
+      font-size: 12px;
+      color: #9ca3af;
+      line-height: 1.5;
+    }
+
+    .explain-section.advantaged {
+      border-left: 3px solid #ef4444;
+    }
+
+    .explain-section.underrepresented {
+      border-left: 3px solid #10b981;
+    }
+
+    .explain-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+
+    .explain-list li {
+      padding: 2px 0;
+      padding-left: 12px;
+      position: relative;
+    }
+
+    .explain-list li::before {
+      content: "•";
+      position: absolute;
+      left: 0;
+      color: #6b7280;
+    }
+
+    /* === BIAS SNAPSHOT === */
+    .bias-snapshot {
+      padding: 12px 14px;
+      border-bottom: 1px solid #262626;
+      background: #0a0a0a;
+    }
+
+    .snapshot-title {
+      font-size: 10px;
+      font-weight: 600;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 10px;
+    }
+
+    .snapshot-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .snapshot-item {
+      padding: 8px;
+      background: #171717;
+      border-radius: 4px;
+    }
+
+    .snapshot-value {
+      font-size: 16px;
+      font-weight: 700;
+      color: #f5f5f5;
+    }
+
+    .snapshot-value.warning { color: #f59e0b; }
+    .snapshot-value.good { color: #10b981; }
+
+    .snapshot-label {
+      font-size: 9px;
+      color: #6b7280;
+      margin-top: 2px;
+    }
+
+    /* === SUSTAINABILITY AUDIT === */
+    .sustainability-section {
+      padding: 12px 14px;
+      border-bottom: 1px solid #262626;
+    }
+
+    .sustainability-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+
+    .sustainability-title {
+      font-size: 10px;
+      font-weight: 600;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .transparency-score {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+
+    .transparency-score.verified { background: #10b98130; color: #10b981; }
+    .transparency-score.partial { background: #f59e0b30; color: #f59e0b; }
+    .transparency-score.caution { background: #ef444430; color: #ef4444; }
+    .transparency-score.unverified { background: #6b728030; color: #9ca3af; }
+
+    .audit-flags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .audit-flag {
+      font-size: 10px;
+      padding: 3px 8px;
+      border-radius: 3px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .audit-flag.warning { background: #ef444420; color: #fca5a5; }
+    .audit-flag.caution { background: #f59e0b20; color: #fcd34d; }
+    .audit-flag.info { background: #3b82f620; color: #93c5fd; }
+    .audit-flag.positive { background: #10b98120; color: #6ee7b7; }
+
+    .flag-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+    }
+
+    .flag-dot.warning { background: #ef4444; }
+    .flag-dot.caution { background: #f59e0b; }
+    .flag-dot.info { background: #3b82f6; }
+    .flag-dot.positive { background: #10b981; }
+
+    /* === ACTION TOGGLE === */
+    .action-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+
+    .action-toggle:hover {
+      background: #1a1a1a;
+    }
+
+    .action-toggle.active {
+      background: #10b98110;
+    }
+
+    .toggle-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .toggle-text {
+      line-height: 1.3;
+    }
+
+    .toggle-title {
+      font-size: 12px;
+      font-weight: 500;
+      color: #f5f5f5;
+    }
+
+    .toggle-desc {
+      font-size: 10px;
+      color: #6b7280;
     }
     
     .toggle-switch {
-      width: 48px;
-      height: 26px;
-      background: #444;
-      border-radius: 13px;
-      position: relative;
-      transition: background 0.3s ease;
-    }
-    
-    .toggle-switch.active {
-      background: #00E676;
-    }
-    
-    .toggle-thumb {
-      width: 22px;
+      width: 40px;
       height: 22px;
+      background: #404040;
+      border-radius: 11px;
+      position: relative;
+      transition: background 0.2s ease;
+    }
+
+    .toggle-switch.on {
+      background: #10b981;
+    }
+
+    .toggle-knob {
+      width: 18px;
+      height: 18px;
       background: white;
       border-radius: 50%;
       position: absolute;
       top: 2px;
       left: 2px;
-      transition: transform 0.3s ease;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+      transition: transform 0.2s ease;
     }
-    
-    .toggle-switch.active .toggle-thumb {
-      transform: translateX(22px);
+
+    .toggle-switch.on .toggle-knob {
+      transform: translateX(18px);
     }
-    
-    .toggle-label {
-      flex: 1;
-    }
-    
-    .toggle-title {
-      font-size: 14px;
-      font-weight: 500;
-      color: #f1f1f1;
-    }
-    
-    .toggle-hint {
-      font-size: 11px;
-      color: #888;
-    }
-    
-    /* Footer */
-    .dashboard-footer {
-      padding: 10px 16px;
-      background: #0d0d0d;
-      border-top: 1px solid #333;
+
+    /* === FOOTER === */
+    .panel-footer {
       display: flex;
       justify-content: space-between;
-      align-items: center;
+      padding: 8px 14px;
+      border-top: 1px solid #262626;
+      font-size: 10px;
+      color: #4b5563;
     }
-    
-    .footer-text {
-      font-size: 11px;
-      color: #555;
-    }
-    
-    .footer-link {
-      font-size: 11px;
-      color: #00E676;
+
+    .panel-footer a {
+      color: #10b981;
       cursor: pointer;
       text-decoration: none;
     }
     
-    .footer-link:hover {
+    .panel-footer a:hover {
       text-decoration: underline;
     }
     
-    /* Loading State */
+    /* === LOADING === */
     .loading-state {
-      padding: 48px 16px;
+      padding: 32px;
       text-align: center;
     }
     
     .spinner {
-      width: 40px;
-      height: 40px;
-      border: 3px solid #333;
-      border-top-color: #00E676;
+      width: 28px;
+      height: 28px;
+      border: 2px solid #262626;
+      border-top-color: #10b981;
       border-radius: 50%;
-      animation: spin 1s linear infinite;
-      margin: 0 auto 16px;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 10px;
     }
     
     @keyframes spin {
@@ -480,231 +840,299 @@ function getShadowStyles() {
     }
     
     .loading-text {
-      font-size: 14px;
-      color: #888;
-    }
-    
-    /* Body visibility */
-    .dashboard-body {
-      display: none;
-    }
-    
-    .dashboard-body.open {
-      display: block;
-    }
-    
-    /* ARIA Focus Styles */
-    button:focus, [role="button"]:focus, [tabindex="0"]:focus {
-      outline: 2px solid #00E676;
-      outline-offset: 2px;
-    }
-    
-    /* Injected Video Cards (for sidebar) */
-    .equity-video-card {
-      background: #1a1a1a;
-      border: 2px solid #00E676;
-      border-radius: 8px;
-      margin-bottom: 8px;
-      overflow: hidden;
-      transition: transform 0.2s ease, box-shadow 0.2s ease;
-    }
-    
-    .equity-video-card:hover {
-      transform: translateX(-4px);
-      box-shadow: 4px 0 12px rgba(0,230,118,0.3);
-    }
-    
-    .equity-video-link {
-      display: flex;
-      gap: 8px;
-      padding: 8px;
-      text-decoration: none;
-    }
-    
-    .equity-thumb {
-      width: 120px;
-      height: 68px;
-      border-radius: 4px;
-      object-fit: cover;
-      flex-shrink: 0;
-    }
-    
-    .equity-info {
-      flex: 1;
-      min-width: 0;
-    }
-    
-    .equity-title {
-      font-size: 12px;
-      font-weight: 500;
-      color: #f1f1f1;
-      line-height: 1.3;
-      display: -webkit-box;
-      -webkit-line-clamp: 2;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
-      margin-bottom: 4px;
-    }
-    
-    .equity-channel {
       font-size: 11px;
-      color: #aaa;
-      margin-bottom: 4px;
+      color: #6b7280;
     }
-    
-    .equity-badge {
-      display: inline-flex;
+
+    /* === BIAS RECEIPT === */
+    .bias-receipt {
+      margin-top: 8px;
+      border-top: 1px solid #262626;
+      padding-top: 8px;
+    }
+
+    .bias-receipt-toggle {
+      display: flex;
       align-items: center;
-      gap: 4px;
-      padding: 2px 6px;
-      background: linear-gradient(90deg, #00E676 0%, #00C853 100%);
-      border-radius: 4px;
+      justify-content: space-between;
+      cursor: pointer;
+      padding: 4px 0;
+      user-select: none;
+    }
+
+    .bias-receipt-toggle:hover .receipt-title {
+      color: #d1d5db;
+    }
+
+    .receipt-title {
       font-size: 10px;
       font-weight: 600;
-      color: #000;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
-    
-    .rising-star-badge {
-      background: linear-gradient(90deg, #FFD700 0%, #FFA000 100%);
+
+    .receipt-method {
+      font-size: 8px;
+      font-weight: 500;
+      color: #4b5563;
+      background: #1f1f1f;
+      padding: 2px 5px;
+      border-radius: 3px;
+      text-transform: uppercase;
+    }
+
+    .receipt-method.fallback {
+      color: #9ca3af;
+    }
+
+    .receipt-arrow {
+      font-size: 10px;
+      color: #6b7280;
+      transition: transform 0.2s ease;
+    }
+
+    .bias-receipt.open .receipt-arrow {
+      transform: rotate(180deg);
+    }
+
+    .receipt-content {
+      display: none;
+      padding: 8px 0 4px;
+    }
+
+    .bias-receipt.open .receipt-content {
+      display: block;
+    }
+
+    .receipt-section {
+      margin-bottom: 8px;
+    }
+
+    .receipt-section:last-child {
+      margin-bottom: 0;
+    }
+
+    .receipt-section-title {
+      font-size: 9px;
+      font-weight: 600;
+      color: #ef4444;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    .receipt-section-title.surfaced {
+      color: #10b981;
+    }
+
+    .receipt-bullets {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+
+    .receipt-bullets li {
+      font-size: 10px;
+      color: #9ca3af;
+      line-height: 1.4;
+      padding: 2px 0;
+      padding-left: 10px;
+      position: relative;
+    }
+
+    .receipt-bullets li::before {
+      content: "•";
+      position: absolute;
+      left: 0;
+      color: #4b5563;
+    }
+
+    .receipt-confidence {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px dashed #262626;
+    }
+
+    .confidence-label {
+      font-size: 8px;
+      color: #4b5563;
+      text-transform: uppercase;
+    }
+
+    .confidence-indicator {
+      display: flex;
+      gap: 2px;
+    }
+
+    .confidence-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #262626;
+    }
+
+    .confidence-dot.filled {
+      background: #6b7280;
+    }
+
+    .confidence-dot.filled.high {
+      background: #10b981;
+    }
+
+    .confidence-dot.filled.medium {
+      background: #f59e0b;
+    }
+
+    .confidence-dot.filled.low {
+      background: #6b7280;
     }
   `
 }
 
+// (Old orphaned CSS removed successfully)
+
 // ===============================================
-// EQUITY SCORE DASHBOARD
+// DASHBOARD - Clean, professional design
 // ===============================================
 function createDashboard(data) {
-  const { equityScore, sustainability, video, channel } = data
-  const score = equityScore?.totalScore || 0
-  const breakdown = equityScore?.breakdown || []
-  const circumference = 2 * Math.PI * 52
-  const offset = circumference - (score / 100) * circumference
-  
-  // Sustainability badge HTML
+  const { noiseAnalysis, video, channel, sustainability } = data
+  const score = noiseAnalysis?.totalScore || 0
+  const tier = noiseAnalysis?.exposureTier || noiseAnalysis?.noiseLevel || { label: 'Unknown', color: '#6b7280' }
+  const subs = channel?.subscriberCount || 0
+  const explainReasons = noiseAnalysis?.explainReasons || []
+
+  const isAdvantaged = score > 50
+  const tierClass = score > 80 ? 'dominant' : score > 60 ? 'amplified' : score > 40 ? 'established' : score > 20 ? 'emerging' : 'under-represented'
+  const scoreClass = score > 60 ? 'high' : score > 40 ? 'medium' : 'low'
+
+  // Build sustainability section HTML if applicable
   let sustainabilityHtml = ''
   if (sustainability?.isSustainability && sustainability?.auditResult) {
     const audit = sustainability.auditResult
-    const isVerified = audit.passesAudit
+    const flagsHtml = (audit.flags || []).map(flag =>
+      `<div class="audit-flag ${flag.type}"><span class="flag-dot ${flag.type}"></span>${esc(flag.text)}</div>`
+    ).join('')
+
     sustainabilityHtml = `
-      <div class="sustainability-badge ${isVerified ? 'verified' : 'warning'}"
-           role="status"
-           aria-label="${audit.level}: Score ${audit.score} out of 100">
-        <div class="badge-icon" style="background: ${audit.badgeColor}20; border: 2px solid ${audit.badgeColor}">
-          ${isVerified ? '🌿' : '⚠️'}
+      <div class="sustainability-section">
+        <div class="sustainability-header">
+          <span class="sustainability-title">Sustainability Audit</span>
+          <span class="transparency-score ${audit.tier}">${audit.transparencyScore}/100</span>
         </div>
-        <div class="badge-content">
-          <div class="badge-title" style="color: ${audit.badgeColor}">${audit.level}</div>
-          <div class="badge-subtitle">${audit.recommendation}</div>
-        </div>
+        ${flagsHtml ? `<div class="audit-flags">${flagsHtml}</div>` : ''}
       </div>
     `
   }
   
+  // Build explanation list
+  const explainHtml = explainReasons.length > 0
+    ? `<ul class="explain-list">${explainReasons.map(r => `<li>${esc(r)}</li>`).join('')}</ul>`
+    : `<p>${isAdvantaged ? 'This channel has significant platform advantage.' : 'This creator has limited algorithmic visibility.'}</p>`
+  
   return `
-    <div class="silenced-dashboard" role="region" aria-label="Algorithmic Bias Analysis Dashboard">
-      <div class="dashboard-header" 
-           id="dashboard-toggle"
-           role="button"
-           tabindex="0"
-           aria-expanded="${isOpen}"
-           aria-controls="dashboard-body"
-           aria-label="Toggle dashboard, current score ${score} out of 100">
-        <div class="header-left">
-          <div class="logo-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>
+    <div class="silenced-panel">
+      <!-- Header -->
+      <div class="panel-header">
+        <div class="header-brand">
+          <span class="brand-name">silenced</span>
           </div>
-          <span class="logo-text">Silenced</span>
-          <span class="score-chip" aria-label="Bias score">${score}/100</span>
-        </div>
-        <svg class="chevron ${isOpen ? 'open' : ''}" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/>
-        </svg>
+        <div class="header-tier ${tierClass}">${tier.label}</div>
       </div>
       
-      <div class="dashboard-body ${isOpen ? 'open' : ''}" id="dashboard-body">
-        <div class="loading-state" id="loading-state" style="display: none;">
-          <div class="spinner" aria-hidden="true"></div>
-          <div class="loading-text">Analyzing algorithmic bias...</div>
-        </div>
-        
-        <div id="dashboard-content">
+      <!-- Score Section -->
           <div class="score-section">
-            <div class="score-ring" role="img" aria-label="Bias score ${score} percent">
-              <svg viewBox="0 0 120 120">
-                <circle class="bg" cx="60" cy="60" r="52"/>
-                <circle class="progress" cx="60" cy="60" r="52"
-                        stroke-dasharray="${circumference}"
-                        stroke-dashoffset="${offset}"/>
-              </svg>
-              <div class="score-value">${score}<span>/100</span></div>
+        <div class="score-row">
+          ${channel?.thumbnail
+            ? `<img class="channel-avatar" src="${channel.thumbnail}" alt="">`
+            : '<div class="channel-avatar"></div>'}
+          <div class="channel-info">
+            <div class="channel-name">${esc(video?.channel || 'Unknown')}</div>
+            <div class="channel-meta">${fmt(subs)} subscribers</div>
             </div>
-            <div class="score-label">Algorithmic Bias Score</div>
-            <div class="score-sublabel">Higher = More Algorithmically Favored</div>
+          <div class="score-badge">
+            <div class="score-value ${scoreClass}">${score}</div>
+            <div class="score-label">Advantage</div>
+          </div>
+            </div>
+                  </div>
+
+      <!-- Explanation -->
+      <div class="explain-section ${isAdvantaged ? 'advantaged' : 'underrepresented'}">
+        ${explainHtml}
           </div>
           
-          ${sustainabilityHtml}
-          
-          <div class="breakdown-section">
-            <div class="breakdown-header"
-                 id="breakdown-toggle"
-                 role="button"
-                 tabindex="0"
-                 aria-expanded="${breakdownOpen}"
-                 aria-controls="breakdown-content"
-                 aria-label="Toggle detailed breakdown">
-              <span class="breakdown-title">Detailed Breakdown</span>
-              <svg class="chevron ${breakdownOpen ? 'open' : ''}" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/>
-              </svg>
+      ${sustainabilityHtml}
+
+      <!-- Toggle -->
+      <div class="action-toggle ${noiseCancellationActive ? 'active' : ''}" id="noise-cancel-toggle">
+        <div class="toggle-left">
+          <div class="toggle-text">
+            <div class="toggle-title">${noiseCancellationActive ? 'Showing Silenced Voices' : 'Surface Under-represented Creators'}</div>
+            <div class="toggle-desc">${noiseCancellationActive ? 'Alternatives shown below' : 'Find creators the algorithm misses'}</div>
             </div>
-            <div class="breakdown-content ${breakdownOpen ? 'open' : ''}" id="breakdown-content" role="list">
-              ${breakdown.map((item, i) => `
-                <div class="metric-item" role="listitem" aria-label="${item.factor}: ${item.weighted} points">
-                  <div class="metric-header">
-                    <span class="metric-name">${esc(item.factor)}</span>
-                    <span class="metric-score">+${item.weighted}/${item.weight}</span>
-                  </div>
-                  <div class="metric-bar" role="progressbar" aria-valuenow="${item.score}" aria-valuemin="0" aria-valuemax="100">
-                    <div class="metric-bar-fill" style="width: ${item.score}%"></div>
-                  </div>
-                  <div class="metric-explanation">${esc(item.explanation)}</div>
-                  <div class="metric-value">${esc(item.metric)}</div>
-                </div>
-              `).join('')}
             </div>
-          </div>
-          
-          <div class="discovery-toggle"
-               id="discovery-mode-toggle"
-               role="switch"
-               tabindex="0"
-               aria-checked="${discoveryMode}"
-               aria-label="Discovery Mode: Find underrepresented creators">
-            <div class="toggle-switch ${discoveryMode ? 'active' : ''}">
-              <div class="toggle-thumb"></div>
-            </div>
-            <div class="toggle-label">
-              <div class="toggle-title">Discovery Mode</div>
-              <div class="toggle-hint">Hide monopoly channels, show equity creators</div>
-            </div>
+        <div class="toggle-switch ${noiseCancellationActive ? 'on' : ''}">
+          <div class="toggle-knob"></div>
           </div>
         </div>
         
-        <div class="dashboard-footer">
-          <span class="footer-text">Silenced by the Algorithm v2.0</span>
-          <a class="footer-link" id="refresh-btn" role="button" tabindex="0" aria-label="Refresh analysis">Refresh</a>
-        </div>
+      <!-- Footer -->
+      <div class="panel-footer">
+        <span>Hack the Bias '26</span>
+        <a id="refresh-btn">Refresh</a>
       </div>
     </div>
   `
 }
 
+// Generate audio waveform visualization (kept for potential future use)
+function generateWaveform(score, isNoisy) {
+  const barCount = 20
+  const bars = []
+  
+  for (let i = 0; i < barCount; i++) {
+    // Create a wave pattern that responds to the score
+    const position = i / barCount
+    const baseHeight = Math.sin(position * Math.PI) * 0.7 + 0.3
+    const noiseVariance = (Math.random() * 0.3 + 0.7)
+    const scoreMultiplier = 0.3 + (score / 100) * 0.7
+    const height = Math.round(baseHeight * noiseVariance * scoreMultiplier * 100)
+    
+    // Color based on score - gradient from green (quiet) to red (noisy)
+    const hue = 120 - (score * 1.2) // 120 = green, 0 = red
+    const saturation = 70 + (score * 0.3)
+    const lightness = 45 + (Math.random() * 10)
+    const color = `hsl(${Math.max(0, hue)}, ${saturation}%, ${lightness}%)`
+    
+    const isActive = score > 50 && i % 3 === 0
+    
+    bars.push(`<div class="waveform-bar ${isActive ? 'active' : ''}" 
+                   style="height: ${Math.max(8, height * 0.6)}px; 
+                          background: ${color};
+                          animation-delay: ${i * 0.05}s"></div>`)
+  }
+  
+  return bars.join('')
+}
+
 // ===============================================
 // INJECT DASHBOARD INTO SIDEBAR
 // ===============================================
+let currentAnalysisData = null // Store for silence report
+
 function injectDashboard(data) {
   const sidebar = document.querySelector('#secondary-inner') || document.querySelector('#secondary')
   if (!sidebar) return false
+  
+  // Store data for silence report
+  currentAnalysisData = data
   
   // Remove existing
   document.querySelector('#silenced-shadow-host')?.remove()
@@ -717,56 +1145,23 @@ function injectDashboard(data) {
   container.innerHTML = createDashboard(data)
   
   // Attach event listeners inside shadow DOM
-  const dashboardToggle = shadow.getElementById('dashboard-toggle')
-  const breakdownToggle = shadow.getElementById('breakdown-toggle')
-  const discoveryToggle = shadow.getElementById('discovery-mode-toggle')
+  const noiseCancelToggle = shadow.getElementById('noise-cancel-toggle')
   const refreshBtn = shadow.getElementById('refresh-btn')
   
-  dashboardToggle?.addEventListener('click', () => {
-    isOpen = !isOpen
-    const body = shadow.getElementById('dashboard-body')
-    const chevron = dashboardToggle.querySelector('.chevron')
-    body?.classList.toggle('open', isOpen)
-    chevron?.classList.toggle('open', isOpen)
-    dashboardToggle.setAttribute('aria-expanded', isOpen)
-  })
-  
-  // Keyboard support
-  dashboardToggle?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault()
-      dashboardToggle.click()
-    }
-  })
-  
-  breakdownToggle?.addEventListener('click', () => {
-    breakdownOpen = !breakdownOpen
-    const content = shadow.getElementById('breakdown-content')
-    const chevron = breakdownToggle.querySelector('.chevron')
-    content?.classList.toggle('open', breakdownOpen)
-    chevron?.classList.toggle('open', breakdownOpen)
-    breakdownToggle.setAttribute('aria-expanded', breakdownOpen)
-  })
-  
-  breakdownToggle?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault()
-      breakdownToggle.click()
-    }
-  })
-  
-  discoveryToggle?.addEventListener('click', () => {
-    window.silencedToggleDiscovery()
-    const switchEl = discoveryToggle.querySelector('.toggle-switch')
-    switchEl?.classList.toggle('active', discoveryMode)
-    discoveryToggle.setAttribute('aria-checked', discoveryMode)
-  })
-  
-  discoveryToggle?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault()
-      discoveryToggle.click()
-    }
+  // Noise Cancellation Toggle
+  noiseCancelToggle?.addEventListener('click', () => {
+    window.silencedToggleNoiseCancellation()
+    const switchEl = noiseCancelToggle.querySelector('.toggle-switch')
+    switchEl?.classList.toggle('on', noiseCancellationActive)
+    noiseCancelToggle.classList.toggle('active', noiseCancellationActive)
+    
+    // Update toggle text
+    const title = noiseCancelToggle.querySelector('.toggle-title')
+    const desc = noiseCancelToggle.querySelector('.toggle-desc')
+    const icon = noiseCancelToggle.querySelector('.toggle-icon')
+    if (title) title.textContent = noiseCancellationActive ? 'Noise Cancellation ON' : 'Unmute the Silenced'
+    if (desc) desc.textContent = noiseCancellationActive ? 'Showing hidden voices below ↓' : 'Reveal smaller creators on this topic'
+    if (icon) icon.textContent = noiseCancellationActive ? '🎧' : '📢'
   })
   
   refreshBtn?.addEventListener('click', () => {
@@ -775,35 +1170,197 @@ function injectDashboard(data) {
     run()
   })
   
-  refreshBtn?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault()
-      refreshBtn.click()
-    }
-  })
-  
   panelInjected = true
   return true
 }
 
 // ===============================================
-// DISCOVERY MODE - Hide Monopolies, Show Equity
+// SILENCE REPORT MODAL
 // ===============================================
-async function runDiscovery(query) {
+function showSilenceReport(shadow, data) {
+  const { noiseAnalysis, video, channel } = data
+  const score = noiseAnalysis?.totalScore || 0
+  const voicesSilenced = noiseAnalysis?.voicesSilenced || { count: 0, breakdown: {} }
+  const isNoisy = score > 50
+  
+  // Create modal HTML
+  const modalHtml = `
+    <div class="silence-report-modal" id="silence-report-modal" role="dialog" aria-modal="true" aria-labelledby="report-title">
+      <div class="silence-report-content">
+        <div class="report-header">
+          <h2 class="report-title" id="report-title">
+            🔇 The Silence Report
+          </h2>
+          <button class="report-close" id="report-close" aria-label="Close report">&times;</button>
+        </div>
+        
+        <div class="report-body">
+          <div class="report-section">
+            <div class="report-section-title">Current Video Analysis</div>
+            <div class="report-stat-card">
+              <div class="report-stat-value ${isNoisy ? 'noise' : 'silenced'}">${score}/100</div>
+              <div class="report-stat-label">
+                ${isNoisy ? '🔊 Noise Level - This voice is algorithmically amplified' : '🔇 Signal Clarity - This voice struggles to be heard'}
+              </div>
+            </div>
+          </div>
+          
+          ${voicesSilenced.count > 0 ? `
+          <div class="report-section">
+            <div class="report-section-title">What You're Not Hearing</div>
+            <div class="report-chart">
+              <div class="chart-bar-container">
+                <div class="chart-bar-label">
+                  <span>Noisy Channels (${'>'}100K subs)</span>
+                  <span>~85% of recommendations</span>
+                </div>
+                <div class="chart-bar">
+                  <div class="chart-bar-fill noise" style="width: 85%"></div>
+                </div>
+              </div>
+              <div class="chart-bar-container">
+                <div class="chart-bar-label">
+                  <span>Silenced Voices (${'<'}100K subs)</span>
+                  <span>~15% of recommendations</span>
+                </div>
+                <div class="chart-bar">
+                  <div class="chart-bar-fill silenced" style="width: 15%"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="report-section">
+            <div class="report-section-title">~${voicesSilenced.count} Voices Drowned Out</div>
+            <div class="silenced-voices-list">
+              <div class="silenced-voice-item">
+                <div class="silenced-voice-icon">🌱</div>
+                <div class="silenced-voice-info">
+                  <div class="silenced-voice-type">Grassroots Activists</div>
+                  <div class="silenced-voice-count">~${voicesSilenced.breakdown.grassrootsActivists || 0} voices silenced</div>
+                </div>
+              </div>
+              <div class="silenced-voice-item">
+                <div class="silenced-voice-icon">🌍</div>
+                <div class="silenced-voice-info">
+                  <div class="silenced-voice-type">Global South Perspectives</div>
+                  <div class="silenced-voice-count">~${voicesSilenced.breakdown.globalSouthVoices || 0} voices silenced</div>
+                </div>
+              </div>
+              <div class="silenced-voice-item">
+                <div class="silenced-voice-icon">📚</div>
+                <div class="silenced-voice-info">
+                  <div class="silenced-voice-type">Local Experts & Researchers</div>
+                  <div class="silenced-voice-count">~${voicesSilenced.breakdown.localExperts || 0} voices silenced</div>
+                </div>
+              </div>
+              <div class="silenced-voice-item">
+                <div class="silenced-voice-icon">🎓</div>
+                <div class="silenced-voice-info">
+                  <div class="silenced-voice-type">Emerging Educators</div>
+                  <div class="silenced-voice-count">~${voicesSilenced.breakdown.emergingEducators || 0} voices silenced</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          ` : `
+          <div class="report-section">
+            <div class="report-stat-card" style="text-align: center;">
+              <div style="font-size: 48px; margin-bottom: 12px;">🎉</div>
+              <div class="report-stat-value silenced">Low Noise</div>
+              <div class="report-stat-label">
+                This creator is part of the solution! Supporting smaller voices helps diversify the content ecosystem.
+              </div>
+            </div>
+          </div>
+          `}
+          
+          <div class="report-section">
+            <div class="report-section-title">Take Action</div>
+            <div class="noise-cancel-toggle ${noiseCancellationActive ? 'active' : ''}"
+                 id="report-noise-toggle"
+                 role="switch"
+                 tabindex="0"
+                 style="margin: 0; border-radius: 8px;">
+              <div class="toggle-switch ${noiseCancellationActive ? 'active' : ''}">
+                <div class="toggle-thumb"></div>
+              </div>
+              <div class="toggle-label">
+                <div class="toggle-title">🎧 Activate Noise Cancellation</div>
+                <div class="toggle-hint">Mute noisy channels, unmute silenced voices</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `
+  
+  // Add modal to shadow DOM
+  const modalContainer = document.createElement('div')
+  modalContainer.innerHTML = modalHtml
+  shadow.appendChild(modalContainer.firstElementChild)
+  
+  // Get modal elements
+  const modal = shadow.getElementById('silence-report-modal')
+  const closeBtn = shadow.getElementById('report-close')
+  const reportNoiseToggle = shadow.getElementById('report-noise-toggle')
+  
+  // Close modal handlers
+  const closeModal = () => {
+    modal?.remove()
+    silenceReportOpen = false
+  }
+  
+  closeBtn?.addEventListener('click', closeModal)
+  modal?.addEventListener('click', (e) => {
+    if (e.target === modal) closeModal()
+  })
+  
+  // Escape key to close
+  const escHandler = (e) => {
+    if (e.key === 'Escape') {
+      closeModal()
+      document.removeEventListener('keydown', escHandler)
+    }
+  }
+  document.addEventListener('keydown', escHandler)
+  
+  // Noise toggle in report
+  reportNoiseToggle?.addEventListener('click', () => {
+    window.silencedToggleNoiseCancellation()
+    const switchEl = reportNoiseToggle.querySelector('.toggle-switch')
+    switchEl?.classList.toggle('active', noiseCancellationActive)
+    reportNoiseToggle.classList.toggle('active', noiseCancellationActive)
+    
+    // Also update main toggle
+    const mainToggle = shadow.getElementById('noise-cancel-toggle')
+    const mainSwitch = mainToggle?.querySelector('.toggle-switch')
+    mainSwitch?.classList.toggle('active', noiseCancellationActive)
+    mainToggle?.classList.toggle('active', noiseCancellationActive)
+  })
+  
+  silenceReportOpen = true
+}
+
+// ===============================================
+// NOISE CANCELLATION - Mute the Noise, Unmute Silenced Voices
+// ===============================================
+async function runNoiseCancellation(query) {
   if (!query) {
     query = extractCurrentQuery()
   }
   
-  console.log('[Silenced] Running Discovery for:', query)
+  console.log('[Silenced] 🎧 Activating noise cancellation for:', query)
   
   return new Promise((resolve) => {
-    chrome.runtime.sendMessage({ action: 'discover', query }, (response) => {
+    chrome.runtime.sendMessage({ action: 'cancelNoise', query }, (response) => {
       if (response?.success) {
         discoveryCache = response.data
-        console.log('[Silenced] Discovery complete:', response.data)
+        console.log('[Silenced] ✓ Noise cancellation complete:', response.data)
         resolve(response.data)
       } else {
-        console.error('[Silenced] Discovery failed:', response?.error)
+        console.error('[Silenced] ✗ Noise cancellation failed:', response?.error)
         resolve(null)
       }
     })
@@ -823,46 +1380,70 @@ function extractCurrentQuery() {
   return 'sustainability climate environment'
 }
 
-window.silencedToggleDiscovery = async function() {
-  discoveryMode = !discoveryMode
-  await saveDiscoveryState(discoveryMode)
+// Renamed and enhanced toggle function
+window.silencedToggleNoiseCancellation = async function() {
+  noiseCancellationActive = !noiseCancellationActive
+  await saveNoiseCancellationState(noiseCancellationActive)
   
   // Update toggle UI if exists in shadow DOM
   if (shadowHost) {
-    const toggle = shadowHost.shadowRoot?.querySelector('#discovery-mode-toggle')
+    const toggle = shadowHost.shadowRoot?.querySelector('#noise-cancel-toggle')
     const switchEl = toggle?.querySelector('.toggle-switch')
-    switchEl?.classList.toggle('active', discoveryMode)
-    toggle?.setAttribute('aria-checked', discoveryMode)
+    switchEl?.classList.toggle('on', noiseCancellationActive)
+    toggle?.classList.toggle('active', noiseCancellationActive)
+    
+    // Update toggle text
+    const title = toggle?.querySelector('.toggle-title')
+    const desc = toggle?.querySelector('.toggle-desc')
+    const icon = toggle?.querySelector('.toggle-icon')
+    if (title) title.textContent = noiseCancellationActive ? 'Noise Cancellation ON' : 'Unmute the Silenced'
+    if (desc) desc.textContent = noiseCancellationActive ? 'Showing hidden voices below ↓' : 'Reveal smaller creators on this topic'
+    if (icon) icon.textContent = noiseCancellationActive ? '🎧' : '📢'
   }
   
   // Update floating toggle if exists
-  const floatingToggle = document.getElementById('silenced-discovery-toggle')
+  const floatingToggle = document.getElementById('silenced-noise-toggle')
   if (floatingToggle) {
-    floatingToggle.classList.toggle('active', discoveryMode)
-    floatingToggle.querySelector('.toggle-status').textContent = discoveryMode ? 'ON' : 'OFF'
+    floatingToggle.classList.toggle('active', noiseCancellationActive)
+    const statusEl = floatingToggle.querySelector('.toggle-status')
+    if (statusEl) statusEl.textContent = noiseCancellationActive ? 'ACTIVE' : 'OFF'
   }
   
-  if (discoveryMode) {
+  if (noiseCancellationActive) {
     const query = extractCurrentQuery()
-    await runDiscovery(query)
+    await runNoiseCancellation(query)
     
-    // Hide monopoly videos in sidebar
-    hideMonopolyVideos()
+    // Mute noisy videos in sidebar
+    muteNoisyVideos()
     
-    // Inject equity alternatives
-    injectEquityAlternatives()
+    // Inject unmuted alternatives
+    injectUnmutedVoices()
     
     // Setup observer
-    setupDiscoveryObserver()
+    setupNoiseCancellationObserver()
+    
+    // Label thumbnails on homepage/search
+    if (!isWatchPage()) {
+      injectThumbnailStyles()
+      labelVideoThumbnails()
+    }
+    
+    // Update stats
+    if (discoveryCache) {
+      await updateStats(discoveryCache.unmutedVideos?.length || 0, discoveryCache.channelsToMute?.length || 0)
+    }
   } else {
-    // Show hidden videos
-    document.querySelectorAll('[data-silenced-hidden]').forEach(el => {
+    // Restore muted videos
+    document.querySelectorAll('[data-silenced-muted]').forEach(el => {
       el.style.display = ''
-      el.removeAttribute('data-silenced-hidden')
+      el.removeAttribute('data-silenced-muted')
     })
     
-    // Remove injected cards
-    document.querySelectorAll('.silenced-equity-card').forEach(el => el.remove())
+    // Remove injected unmuted cards
+    document.querySelectorAll('.silenced-unmuted-container').forEach(el => el.remove())
+    
+    // Clear thumbnail labels
+    clearThumbnailLabels()
     
     if (discoveryObserver) {
       discoveryObserver.disconnect()
@@ -870,138 +1451,302 @@ window.silencedToggleDiscovery = async function() {
     }
   }
   
-  console.log('[Silenced] Discovery Mode:', discoveryMode ? 'ON' : 'OFF')
+  console.log('[Silenced] 🎧 Noise Cancellation:', noiseCancellationActive ? 'ACTIVE' : 'OFF')
 }
 
-// Hide videos from monopoly channels (>100K subs)
-function hideMonopolyVideos() {
-  if (!discoveryCache?.monopolyChannelIds?.length) return
+// Backward compatibility alias
+window.silencedToggleDiscovery = window.silencedToggleNoiseCancellation
   
-  const monopolyIds = new Set(discoveryCache.monopolyChannelIds)
+// Mute noisy videos in sidebar (>100K subs)
+function muteNoisyVideos() {
+  const noisyIds = new Set(discoveryCache?.noisyChannelIds || discoveryCache?.monopolyChannelIds || [])
+  if (noisyIds.size === 0) return
   
   // Target sidebar recommendations
   const sidebarVideos = document.querySelectorAll('ytd-compact-video-renderer, ytd-watch-next-secondary-results-renderer ytd-item-section-renderer')
   
-  let hiddenCount = 0
+  let mutedCount = 0
   sidebarVideos.forEach(video => {
-    // Try to get channel link to check
     const channelLink = video.querySelector('a.ytd-channel-name, a[href^="/@"], a[href^="/channel/"]')
     if (channelLink) {
       const href = channelLink.getAttribute('href') || ''
       const channelId = href.match(/\/channel\/([^/]+)/)?.[1]
       
-      if (channelId && monopolyIds.has(channelId)) {
+      if (channelId && noisyIds.has(channelId)) {
         video.style.display = 'none'
-        video.setAttribute('data-silenced-hidden', 'true')
-        hiddenCount++
+        video.setAttribute('data-silenced-muted', 'noisy')
+        mutedCount++
       }
     }
   })
   
-  // Also hide first 3 sidebar videos by default (typically from large channels)
+  // Also mute first 3 sidebar videos by default (typically from noisy channels)
   const topSidebar = document.querySelectorAll('#secondary ytd-compact-video-renderer')
   topSidebar.forEach((video, i) => {
-    if (i < 3 && !video.hasAttribute('data-silenced-hidden')) {
+    if (i < 3 && !video.hasAttribute('data-silenced-muted')) {
       video.style.display = 'none'
-      video.setAttribute('data-silenced-hidden', 'true')
-      hiddenCount++
+      video.setAttribute('data-silenced-muted', 'noisy')
+      mutedCount++
     }
   })
   
-  console.log(`[Silenced] Hidden ${hiddenCount} monopoly videos`)
+  console.log(`[Silenced] 🔇 Muted ${mutedCount} noisy videos`)
 }
 
-// Inject equity alternative videos
-function injectEquityAlternatives() {
-  if (!discoveryCache?.discoveredVideos?.length) return
+// Backward compatibility
+function hideMonopolyVideos() { muteNoisyVideos() }
+
+// Inject unmuted voice alternative videos with bias snapshot and explainability
+function injectUnmutedVoices() {
+  console.log('[Silenced] Attempting to inject unmuted voices')
+  console.log('[Silenced] discoveryCache:', discoveryCache)
+  console.log('[Silenced] unmutedVideos count:', discoveryCache?.unmutedVideos?.length || 0)
+  
+  const videos = discoveryCache?.unmutedVideos || discoveryCache?.discoveredVideos || []
+  const biasSnapshot = discoveryCache?.biasSnapshot
+
+  if (videos.length === 0) {
+    console.log('[Silenced] No videos to inject - unmutedVideos is empty')
+    
+    // Show a message that no silenced voices were found for this topic
+    document.querySelectorAll('.silenced-unmuted-container').forEach(el => el.remove())
+    
+    const sidebar = document.querySelector('#secondary ytd-watch-next-secondary-results-renderer, #secondary-inner')
+    if (!sidebar) return
+    
+    const emptyContainer = document.createElement('div')
+    emptyContainer.className = 'silenced-unmuted-container'
+    emptyContainer.style.cssText = `
+      margin: 12px 0;
+      padding: 14px;
+      background: #111111;
+      border-radius: 8px;
+      border: 1px solid #262626;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      text-align: center;
+    `
+    emptyContainer.innerHTML = `
+      <div style="font-size: 11px; font-weight: 600; color: #6b7280; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">Under-represented Voices</div>
+      <div style="font-size: 12px; color: #9ca3af; line-height: 1.5;">
+        No small creators found for this topic.<br>
+        <span style="font-size: 10px; color: #6b7280;">This topic may be dominated by large channels.</span>
+      </div>
+    `
+    
+    const shadowHost = document.querySelector('#silenced-shadow-host')
+    if (shadowHost) {
+      shadowHost.after(emptyContainer)
+    } else {
+      sidebar.insertBefore(emptyContainer, sidebar.firstChild)
+    }
+    return
+  }
+
+  // Inject bias receipt styles (outside shadow DOM)
+  injectBiasReceiptStyles()
   
   // Remove existing injected cards
-  document.querySelectorAll('.silenced-equity-card').forEach(el => el.remove())
+  document.querySelectorAll('.silenced-unmuted-container, .silenced-equity-container').forEach(el => el.remove())
   
   // Find sidebar
   const sidebar = document.querySelector('#secondary ytd-watch-next-secondary-results-renderer, #secondary-inner')
-  if (!sidebar) return
+  if (!sidebar) {
+    console.log('[Silenced] Could not find sidebar element')
+    return
+  }
+  console.log('[Silenced] Found sidebar, injecting', videos.length, 'videos')
   
-  // Create container for equity videos
-  const equityContainer = document.createElement('div')
-  equityContainer.className = 'silenced-equity-container'
-  equityContainer.style.cssText = 'margin: 12px 0; padding: 12px; background: #0a1a0a; border-radius: 8px; border: 1px solid #00E67633;'
-  
-  // Title
-  const title = document.createElement('div')
-  title.style.cssText = 'font-size: 14px; font-weight: 600; color: #00E676; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;'
-  title.innerHTML = `
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="#00E676">
-      <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/>
-    </svg>
-    <span>Equity Alternatives</span>
-    <span style="font-size: 11px; color: #888; font-weight: 400;">(Under 100K subs)</span>
+  // Create container
+  const container = document.createElement('div')
+  container.className = 'silenced-unmuted-container'
+  container.style.cssText = `
+    margin: 12px 0;
+    padding: 14px;
+    background: #111111;
+    border-radius: 8px;
+    border: 1px solid #262626;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   `
-  equityContainer.appendChild(title)
-  
-  // Add equity video cards
-  const videos = discoveryCache.discoveredVideos.slice(0, 5)
-  videos.forEach(video => {
+
+  // Bias Snapshot (if available)
+  if (biasSnapshot) {
+    const snapshot = document.createElement('div')
+    snapshot.style.cssText = `
+      padding: 10px;
+      background: #0a0a0a;
+      border-radius: 6px;
+      margin-bottom: 12px;
+    `
+    const concentrationClass = biasSnapshot.topicConcentration > 70 ? 'color: #f59e0b;' : 'color: #10b981;'
+    snapshot.innerHTML = `
+      <div style="font-size: 9px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Topic Bias Snapshot</div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+        <div style="padding: 6px 8px; background: #171717; border-radius: 4px;">
+          <div style="font-size: 14px; font-weight: 700; ${concentrationClass}">${biasSnapshot.topicConcentration}%</div>
+          <div style="font-size: 8px; color: #6b7280;">Top 10 concentration</div>
+        </div>
+        <div style="padding: 6px 8px; background: #171717; border-radius: 4px;">
+          <div style="font-size: 14px; font-weight: 700; color: #10b981;">${biasSnapshot.underAmplifiedRate}%</div>
+          <div style="font-size: 8px; color: #6b7280;">Under-amplified</div>
+        </div>
+      </div>
+    `
+    container.appendChild(snapshot)
+  }
+
+  // Header
+  const header = document.createElement('div')
+  header.style.cssText = 'font-size: 11px; font-weight: 600; color: #10b981; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px;'
+  header.textContent = 'Under-represented Voices'
+  container.appendChild(header)
+
+  // Add video cards with Bias Receipt
+  videos.slice(0, 5).forEach((video, index) => {
+    const isRising = video.isRisingSignal || video.isRisingStar
+    const biasReceipt = video.biasReceipt
+
     const card = document.createElement('div')
-    card.className = 'silenced-equity-card'
     card.style.cssText = `
       background: #1a1a1a;
-      border: 2px solid ${video.isRisingStar ? '#FFD700' : '#00E676'};
-      border-radius: 8px;
+      border-radius: 6px;
       margin-bottom: 8px;
       overflow: hidden;
-      transition: transform 0.2s ease;
+      border-left: 3px solid ${isRising ? '#f59e0b' : '#10b981'};
     `
+
+    // Build Bias Receipt HTML if available
+    let biasReceiptHtml = ''
+    if (biasReceipt) {
+      const whyNotShown = biasReceipt.whyNotShown || []
+      const whySurfaced = biasReceipt.whySurfaced || []
+      const confidence = biasReceipt.confidence || 'medium'
+      const method = biasReceipt.method || 'heuristic'
+      const receiptId = `receipt-${video.videoId}-${index}`
+
+      // Confidence dots
+      const confidenceDots = ['low', 'medium', 'high'].map((level, i) => {
+        const filled = (confidence === 'low' && i === 0) ||
+                       (confidence === 'medium' && i <= 1) ||
+                       (confidence === 'high')
+        return `<span class="silenced-confidence-dot ${filled ? `filled ${confidence}` : ''}"></span>`
+      }).join('')
+
+      biasReceiptHtml = `
+        <div class="silenced-bias-receipt" data-receipt-id="${receiptId}">
+          <div class="silenced-bias-receipt-toggle">
+            <span class="silenced-receipt-title">
+              Bias Receipt
+              ${method === 'heuristic' ? '<span class="silenced-receipt-method fallback">Fallback</span>' : ''}
+            </span>
+            <span class="silenced-receipt-arrow">▼</span>
+          </div>
+          <div class="silenced-receipt-content">
+            ${whyNotShown.length > 0 ? `
+              <div class="silenced-receipt-section">
+                <div class="silenced-receipt-section-title">Why you didn't see this</div>
+                <ul class="silenced-receipt-bullets">
+                  ${whyNotShown.map(b => `<li>${esc(b)}</li>`).join('')}
+                </ul>
+              </div>
+            ` : ''}
+            ${whySurfaced.length > 0 ? `
+              <div class="silenced-receipt-section">
+                <div class="silenced-receipt-section-title surfaced">Why we surfaced it</div>
+                <ul class="silenced-receipt-bullets">
+                  ${whySurfaced.map(b => `<li>${esc(b)}</li>`).join('')}
+                </ul>
+              </div>
+            ` : ''}
+            <div class="silenced-receipt-confidence">
+              <span class="silenced-confidence-label">Confidence:</span>
+              <span class="silenced-confidence-indicator">${confidenceDots}</span>
+            </div>
+          </div>
+        </div>
+      `
+    }
     
     card.innerHTML = `
-      <a href="/watch?v=${video.videoId}" style="display: flex; gap: 8px; padding: 8px; text-decoration: none;">
-        <img src="${video.thumbnail}" style="width: 120px; height: 68px; border-radius: 4px; object-fit: cover; flex-shrink: 0;" alt="${esc(video.title)}">
+      <a href="/watch?v=${video.videoId}" class="video-link" style="display: block; padding: 10px; text-decoration: none;">
+        <div style="display: flex; gap: 10px;">
+          <img src="${video.thumbnail}" style="width: 100px; height: 56px; border-radius: 4px; object-fit: cover; flex-shrink: 0; background: #262626;" alt="">
         <div style="flex: 1; min-width: 0;">
-          <div style="font-size: 12px; font-weight: 500; color: #f1f1f1; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-bottom: 4px;">
+            <div style="font-size: 12px; font-weight: 500; color: #e5e5e5; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
             ${esc(video.title)}
           </div>
-          <div style="font-size: 11px; color: #aaa; margin-bottom: 4px;">${esc(video.channelTitle)}</div>
-          <div style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; background: ${video.isRisingStar ? 'linear-gradient(90deg, #FFD700, #FFA000)' : 'linear-gradient(90deg, #00E676, #00C853)'}; border-radius: 4px; font-size: 10px; font-weight: 600; color: #000;">
-            ${video.isRisingStar ? '⭐ Rising Star' : '🌱 Equity Creator'} · ${fmt(video.subscriberCount)} subs
+            <div style="font-size: 10px; color: #9ca3af; margin-top: 3px;">${esc(video.channelTitle)} · ${fmt(video.subscriberCount)} subs</div>
           </div>
         </div>
       </a>
+      ${biasReceipt ? `<div style="padding: 0 10px 10px;">${biasReceiptHtml}</div>` : ''}
     `
     
+    // Add hover effects
     card.addEventListener('mouseenter', () => {
-      card.style.transform = 'translateX(-4px)'
-      card.style.boxShadow = `4px 0 12px ${video.isRisingStar ? 'rgba(255,215,0,0.3)' : 'rgba(0,230,118,0.3)'}`
+      card.style.background = '#222222'
     })
-    
     card.addEventListener('mouseleave', () => {
-      card.style.transform = ''
-      card.style.boxShadow = ''
+      card.style.background = '#1a1a1a'
     })
-    
-    equityContainer.appendChild(card)
+
+    // Add toggle functionality for bias receipt
+    if (biasReceipt) {
+      const receiptEl = card.querySelector('.silenced-bias-receipt')
+      const toggleEl = card.querySelector('.silenced-bias-receipt-toggle')
+      if (toggleEl && receiptEl) {
+        toggleEl.addEventListener('click', (e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          receiptEl.classList.toggle('open')
+        })
+      }
+    }
+
+    container.appendChild(card)
   })
-  
-  // Insert at top of sidebar
-  sidebar.insertBefore(equityContainer, sidebar.firstChild)
+
+  // Footer with muted count
+  const mutedChannels = discoveryCache?.channelsToMute || []
+  if (mutedChannels.length > 0) {
+    const footer = document.createElement('div')
+    footer.style.cssText = 'font-size: 10px; color: #6b7280; margin-top: 10px; padding-top: 8px; border-top: 1px solid #262626;'
+    footer.textContent = `${mutedChannels.length} dominant channels de-prioritized`
+    container.appendChild(footer)
+  }
+
+  // Insert after shadow host
+  const shadowHost = document.querySelector('#silenced-shadow-host')
+  if (shadowHost && shadowHost.nextSibling) {
+    sidebar.insertBefore(container, shadowHost.nextSibling)
+  } else if (shadowHost) {
+    shadowHost.after(container)
+  } else {
+    sidebar.insertBefore(container, sidebar.firstChild)
+  }
+
+  console.log('[Silenced] Injected', videos.length, 'unmuted voices with explainability')
 }
 
+// Backward compatibility
+function injectEquityAlternatives() { injectUnmutedVoices() }
+
 // ===============================================
-// MUTATION OBSERVER
+// MUTATION OBSERVER - Re-mute new noisy videos
 // ===============================================
-function setupDiscoveryObserver() {
+function setupNoiseCancellationObserver() {
   if (discoveryObserver) {
     discoveryObserver.disconnect()
   }
   
   discoveryObserver = new MutationObserver((mutations) => {
-    if (!discoveryMode) return
+    if (!noiseCancellationActive) return
     
     for (const mutation of mutations) {
       for (const node of mutation.addedNodes) {
         if (node.nodeType === Node.ELEMENT_NODE) {
-          // Re-hide any new monopoly videos
+          // Re-mute any new noisy videos
           if (node.matches?.('ytd-compact-video-renderer')) {
-            setTimeout(() => hideMonopolyVideos(), 100)
+            setTimeout(() => muteNoisyVideos(), 100)
           }
         }
       }
@@ -1011,44 +1756,47 @@ function setupDiscoveryObserver() {
   discoveryObserver.observe(document.body, { childList: true, subtree: true })
 }
 
+// Backward compatibility
+function setupDiscoveryObserver() { setupNoiseCancellationObserver() }
+
 // ===============================================
 // FLOATING TOGGLE (for non-watch pages)
 // ===============================================
 function createFloatingToggle() {
-  const existing = document.getElementById('silenced-discovery-toggle')
+  const existing = document.getElementById('silenced-noise-toggle')
   if (existing) {
-    existing.classList.toggle('active', discoveryMode)
-    existing.querySelector('.toggle-status').textContent = discoveryMode ? 'ON' : 'OFF'
+    existing.classList.toggle('active', noiseCancellationActive)
+    const statusEl = existing.querySelector('.toggle-status')
+    if (statusEl) statusEl.textContent = noiseCancellationActive ? 'ACTIVE' : 'OFF'
     return
   }
   
+  // Also remove old toggle if exists
+  document.getElementById('silenced-discovery-toggle')?.remove()
+  
   const toggle = document.createElement('div')
-  toggle.id = 'silenced-discovery-toggle'
-  toggle.className = discoveryMode ? 'active' : ''
+  toggle.id = 'silenced-noise-toggle'
+  toggle.className = noiseCancellationActive ? 'active' : ''
   toggle.setAttribute('role', 'switch')
-  toggle.setAttribute('aria-checked', discoveryMode)
-  toggle.setAttribute('aria-label', 'Toggle Discovery Mode to find underrepresented creators')
+  toggle.setAttribute('aria-checked', noiseCancellationActive)
+  toggle.setAttribute('aria-label', 'Toggle Noise Cancellation to unmute silenced voices')
   toggle.setAttribute('tabindex', '0')
   
   toggle.innerHTML = `
     <div class="toggle-inner">
-      <div class="toggle-icon">
-        <svg viewBox="0 0 24 24">
-          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
-        </svg>
-      </div>
+      <div class="toggle-icon">◉</div>
       <div class="toggle-label">
-        <span class="toggle-title">Discovery Mode</span>
-        <span class="toggle-status">${discoveryMode ? 'ON' : 'OFF'}</span>
+        <span class="toggle-title">Surface Silenced</span>
+        <span class="toggle-status">${noiseCancellationActive ? 'ACTIVE' : 'OFF'}</span>
       </div>
     </div>
   `
   
-  toggle.addEventListener('click', () => window.silencedToggleDiscovery())
+  toggle.addEventListener('click', () => window.silencedToggleNoiseCancellation())
   toggle.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
-      window.silencedToggleDiscovery()
+      window.silencedToggleNoiseCancellation()
     }
   })
   
@@ -1065,6 +1813,7 @@ async function run() {
   currentVideoId = videoId
   panelInjected = false
   breakdownOpen = false
+  silenceReportOpen = false
   
   // Wait for sidebar
   for (let i = 0; i < 15; i++) {
@@ -1082,18 +1831,16 @@ async function run() {
   shadowHost = host
   
   container.innerHTML = `
-    <div class="silenced-dashboard">
-      <div class="dashboard-header">
-        <div class="header-left">
-          <div class="logo-icon"><svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg></div>
-          <span class="logo-text">Silenced</span>
+    <div class="silenced-panel">
+      <div class="panel-header">
+        <div class="header-brand">
+          <span class="brand-icon">🔊</span>
+          <span class="brand-name">silenced</span>
         </div>
       </div>
-      <div class="dashboard-body open">
         <div class="loading-state">
           <div class="spinner"></div>
-          <div class="loading-text">Analyzing algorithmic bias...</div>
-        </div>
+        <div class="loading-text">Analyzing video...</div>
       </div>
     </div>
   `
@@ -1113,30 +1860,28 @@ async function run() {
   if (response?.success && response?.data) {
     injectDashboard(response.data)
     
-    // If discovery mode is on, run discovery
-    if (discoveryMode) {
+    // If noise cancellation is active, run it
+    if (noiseCancellationActive) {
       const query = extractCurrentQuery()
-      await runDiscovery(query)
-      hideMonopolyVideos()
-      injectEquityAlternatives()
+      await runNoiseCancellation(query)
+      muteNoisyVideos()
+      injectUnmutedVoices()
     }
   } else {
     // Show error
     container.innerHTML = `
-      <div class="silenced-dashboard">
-        <div class="dashboard-header">
-          <div class="header-left">
-            <div class="logo-icon"><svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg></div>
-            <span class="logo-text">Silenced</span>
+      <div class="silenced-panel">
+        <div class="panel-header">
+          <div class="header-brand">
+            <span class="brand-icon">📡</span>
+            <span class="brand-name">silenced</span>
           </div>
         </div>
-        <div class="dashboard-body open">
           <div style="padding: 24px; text-align: center; color: #888;">
             <div style="margin-bottom: 12px;">Could not analyze this video</div>
-            <button onclick="window.silencedRetry()" style="background: #00E676; color: #000; border: none; padding: 8px 16px; border-radius: 8px; font-weight: 600; cursor: pointer;">
+          <button onclick="window.silencedRetry()" style="background: #10b981; color: #000; border: none; padding: 8px 16px; border-radius: 8px; font-weight: 600; cursor: pointer;">
               Try Again
             </button>
-          </div>
         </div>
       </div>
     `
@@ -1181,9 +1926,9 @@ window.silencedRetry = () => {
 // MESSAGE HANDLER
 // ===============================================
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === 'toggleDiscoveryMode') {
-    window.silencedToggleDiscovery()
-    sendResponse({ success: true, discoveryMode })
+  if (request.action === 'toggleDiscoveryMode' || request.action === 'toggleNoiseCancellation') {
+    window.silencedToggleNoiseCancellation()
+    sendResponse({ success: true, noiseCancellationActive })
   }
   return false
 })
@@ -1201,7 +1946,7 @@ new MutationObserver(() => {
     
     // Remove old UI
     document.querySelector('#silenced-shadow-host')?.remove()
-    document.querySelectorAll('.silenced-equity-container').forEach(el => el.remove())
+    document.querySelectorAll('.silenced-unmuted-container, .silenced-equity-container').forEach(el => el.remove())
     
     if (isWatchPage()) {
       setTimeout(run, 1500)
@@ -1210,14 +1955,14 @@ new MutationObserver(() => {
     // Update floating toggle
     createFloatingToggle()
     
-    // Re-run discovery on navigation
-    if (discoveryMode) {
+    // Re-run noise cancellation on navigation
+    if (noiseCancellationActive) {
       setTimeout(async () => {
         const query = extractCurrentQuery()
-        await runDiscovery(query)
+        await runNoiseCancellation(query)
         if (isWatchPage()) {
-          hideMonopolyVideos()
-          injectEquityAlternatives()
+          muteNoisyVideos()
+          injectUnmutedVoices()
         }
       }, 2000)
     }
@@ -1228,17 +1973,25 @@ window.addEventListener('yt-navigate-finish', () => {
   currentVideoId = null
   panelInjected = false
   processedVideoCards.clear()
+  processedThumbnails.clear()
   
   if (isWatchPage()) setTimeout(run, 1500)
   createFloatingToggle()
   
-  if (discoveryMode) {
+  // Label thumbnails on homepage/search when noise cancellation is active
+  if (noiseCancellationActive && !isWatchPage()) {
+    injectThumbnailStyles()
+    setTimeout(() => labelVideoThumbnails(), 2000)
+    setTimeout(() => labelVideoThumbnails(), 4000) // Re-run for lazy-loaded content
+  }
+  
+  if (noiseCancellationActive) {
     setTimeout(async () => {
       const query = extractCurrentQuery()
-      await runDiscovery(query)
+      await runNoiseCancellation(query)
       if (isWatchPage()) {
-        hideMonopolyVideos()
-        injectEquityAlternatives()
+        muteNoisyVideos()
+        injectUnmutedVoices()
       }
     }, 2000)
   }
@@ -1248,8 +2001,13 @@ window.addEventListener('yt-navigate-finish', () => {
 // INITIALIZATION
 // ===============================================
 async function init() {
-  // Load persisted discovery state
-  await loadDiscoveryState()
+  // Load persisted noise cancellation state
+  await loadNoiseCancellationState()
+  
+  // Load session stats
+  const stored = await chrome.storage.local.get(['discoveredCount', 'hiddenCount'])
+  stats.voicesUnmuted = stored.discoveredCount || 0
+  stats.noiseMuted = stored.hiddenCount || 0
   
   // Create floating toggle
   setTimeout(createFloatingToggle, 2000)
@@ -1259,14 +2017,20 @@ async function init() {
     setTimeout(run, 2000)
   }
   
-  // Auto-enable discovery if it was on
-  if (discoveryMode) {
+  // Label thumbnails on homepage/search if noise cancellation is active
+  if (noiseCancellationActive && !isWatchPage()) {
+    injectThumbnailStyles()
+    setTimeout(() => labelVideoThumbnails(), 2500)
+  }
+  
+  // Auto-enable noise cancellation if it was on
+  if (noiseCancellationActive) {
     setTimeout(async () => {
       const query = extractCurrentQuery()
-      await runDiscovery(query)
+      await runNoiseCancellation(query)
       if (isWatchPage()) {
-        hideMonopolyVideos()
-        injectEquityAlternatives()
+        muteNoisyVideos()
+        injectUnmutedVoices()
       }
     }, 3000)
   }
@@ -1274,4 +2038,4 @@ async function init() {
 
 init()
 
-console.log('[Silenced] YouTube Equity Filter v2.0 loaded')
+console.log('[Silenced] 🔇→🔊 Noise Cancellation Engine v3.0 loaded - Hear the voices the algorithm drowns out')

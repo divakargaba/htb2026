@@ -1,26 +1,60 @@
-// Silenced - Discovery Engine Background Service Worker
-// Advanced Equity Score Calculation + Sustainability Audit
+// Silenced by the Algorithm - Noise Cancellation Engine
+// Hear the voices the algorithm drowns out
+
+// ============================================
+// CONFIGURATION & VERSIONING
+// ============================================
+const SCHEMA_VERSION = '3.1.0'
+const ENGINE_VERSION = 'v3.1'
 
 const YOUTUBE_API_KEY = 'AIzaSyAV_xT7shJvRyip9yCSpvx7ogZhiPpi2LY'
-const MAX_SUBSCRIBER_THRESHOLD = 100000 // Discovery filter threshold
-const MONOPOLY_THRESHOLD = 1000000 // 1M subs = monopoly
+const MAX_SUBSCRIBER_THRESHOLD = 100000 // Noise cancellation threshold
+const MONOPOLY_THRESHOLD = 1000000 // 1M subs = deafening noise
 const CACHE_TTL = 86400000 // 24 hours in ms
+const BIAS_RECEIPT_CACHE_TTL = 21600000 // 6 hours in ms
+
+// Feature flags
+const ENABLE_ML_FEATURES = false // Set to true to enable Gemini-powered explanations
+const GEMINI_API_KEY = '' // Add your Gemini API key here if ENABLE_ML_FEATURES is true
 
 // Quota costs
 const QUOTA_LIMIT = 10000
 let quotaUsed = 0
 
+// Exposure Advantage tiers - more defensible framing than raw subscriber count
+const EXPOSURE_TIERS = {
+  UNDER_REPRESENTED: { min: 0, max: 20, label: 'Under-represented', color: '#10b981', description: 'Minimal algorithmic amplification' },
+  EMERGING: { min: 21, max: 40, label: 'Emerging', color: '#22c55e', description: 'Limited platform visibility' },
+  ESTABLISHED: { min: 41, max: 60, label: 'Established', color: '#f59e0b', description: 'Moderate exposure advantage' },
+  AMPLIFIED: { min: 61, max: 80, label: 'Amplified', color: '#f97316', description: 'Significant algorithmic boost' },
+  DOMINANT: { min: 81, max: 100, label: 'Dominant', color: '#ef4444', description: 'Maximum platform advantage' }
+}
+
+function getExposureTier(score) {
+  if (score <= 20) return EXPOSURE_TIERS.UNDER_REPRESENTED
+  if (score <= 40) return EXPOSURE_TIERS.EMERGING
+  if (score <= 60) return EXPOSURE_TIERS.ESTABLISHED
+  if (score <= 80) return EXPOSURE_TIERS.AMPLIFIED
+  return EXPOSURE_TIERS.DOMINANT
+}
+
+// Legacy alias for compatibility
+function getNoiseLevel(score) {
+  return getExposureTier(score)
+}
+
 // In-memory cache (also synced to localStorage for persistence)
 let channelCache = {}
 let discoveryCache = {}
+let biasReceiptCache = {} // Cache for Gemini-generated bias receipts (6-hour TTL)
 
 // ===============================================
 // PERSISTENCE - Load cache from localStorage
 // ===============================================
 async function loadCache() {
   try {
-    const stored = await chrome.storage.local.get(['channelCache', 'quotaUsed', 'quotaResetDate'])
-    
+    const stored = await chrome.storage.local.get(['channelCache', 'biasReceiptCache', 'quotaUsed', 'quotaResetDate'])
+
     if (stored.channelCache) {
       channelCache = stored.channelCache
       // Prune expired entries
@@ -31,7 +65,18 @@ async function loadCache() {
         }
       }
     }
-    
+
+    // Load and prune bias receipt cache (6-hour TTL)
+    if (stored.biasReceiptCache) {
+      biasReceiptCache = stored.biasReceiptCache
+      const now = Date.now()
+      for (const key in biasReceiptCache) {
+        if (now - biasReceiptCache[key].timestamp > BIAS_RECEIPT_CACHE_TTL) {
+          delete biasReceiptCache[key]
+        }
+      }
+    }
+
     // Reset quota if new day
     const today = new Date().toDateString()
     if (stored.quotaResetDate !== today) {
@@ -40,8 +85,8 @@ async function loadCache() {
     } else {
       quotaUsed = stored.quotaUsed || 0
     }
-    
-    console.log(`[Silenced] Cache loaded: ${Object.keys(channelCache).length} channels, ${quotaUsed} quota used`)
+
+    console.log(`[Silenced] Cache loaded: ${Object.keys(channelCache).length} channels, ${Object.keys(biasReceiptCache).length} bias receipts, ${quotaUsed} quota used`)
   } catch (err) {
     console.error('[Silenced] Cache load error:', err)
   }
@@ -49,8 +94,9 @@ async function loadCache() {
 
 async function saveCache() {
   try {
-    await chrome.storage.local.set({ 
-      channelCache, 
+    await chrome.storage.local.set({
+      channelCache,
+      biasReceiptCache,
       quotaUsed,
       quotaResetDate: new Date().toDateString()
     })
@@ -63,206 +109,489 @@ async function saveCache() {
 loadCache()
 
 // ===============================================
-// EQUITY SCORE CALCULATION ENGINE
-// Weighted average of 4 API-derived metrics
+// EXPOSURE ADVANTAGE SCORE CALCULATION
+// Multi-signal approach to measuring platform advantage
 // ===============================================
-function calculateEquityScore(channel, videoStats, activities) {
+function calculateExposureAdvantageScore(channel, videoStats, activities) {
   const subs = parseInt(channel?.statistics?.subscriberCount || '0')
+  const totalViews = parseInt(channel?.statistics?.viewCount || '0')
+  const videoCount = parseInt(channel?.statistics?.videoCount || '0')
   const views = parseInt(videoStats?.viewCount || '0')
   const likes = parseInt(videoStats?.likeCount || '0')
   const comments = parseInt(videoStats?.commentCount || '0')
   const duration = parseDuration(videoStats?.duration || 'PT0S')
   const recentUploads = activities?.length || 0
-  
-  // =========================================
-  // 1. MONOPOLY FACTOR (40% weight)
-  // High score = high bias (large channels)
-  // =========================================
-  let monopolyScore = 0
-  let monopolyExplanation = ''
-  
-  if (subs >= 10000000) {
-    monopolyScore = 100
-    monopolyExplanation = 'Mega-creator (10M+ subs) - Maximum algorithmic advantage'
-  } else if (subs >= 5000000) {
-    monopolyScore = 90
-    monopolyExplanation = 'Major creator (5M+ subs) - Extreme recommendation priority'
-  } else if (subs >= MONOPOLY_THRESHOLD) {
-    monopolyScore = 80
-    monopolyExplanation = 'Large creator (1M+ subs) - Strong algorithmic favoritism'
-  } else if (subs >= 500000) {
-    monopolyScore = 60
-    monopolyExplanation = 'Established creator (500K+ subs) - Significant recommendation boost'
-  } else if (subs >= 100000) {
-    monopolyScore = 40
-    monopolyExplanation = 'Growing creator (100K+ subs) - Moderate algorithmic support'
-  } else if (subs >= 10000) {
-    monopolyScore = 20
-    monopolyExplanation = 'Small creator (10K+ subs) - Limited algorithmic visibility'
-  } else {
-    monopolyScore = 5
-    monopolyExplanation = 'Micro creator (<10K subs) - Minimal algorithmic reach'
-  }
-  
-  // =========================================
-  // 2. ENGAGEMENT-TO-REACH RATIO (30% weight)
-  // Lower ratio = algorithm pushing regardless of quality
-  // =========================================
+
+  // Calculate derived metrics
+  const avgViewsPerVideo = videoCount > 0 ? totalViews / videoCount : 0
   const engagementRatio = views > 0 ? ((comments + likes) / views) * 100 : 0
-  let engagementScore = 0
-  let engagementExplanation = ''
-  
-  // Monopolies often have LOWER engagement ratios because algorithm pushes them anyway
-  if (engagementRatio < 0.5) {
-    engagementScore = 90
-    engagementExplanation = `Very low engagement (${engagementRatio.toFixed(2)}%) - Algorithm pushing despite poor interaction`
-  } else if (engagementRatio < 1) {
-    engagementScore = 70
-    engagementExplanation = `Low engagement (${engagementRatio.toFixed(2)}%) - Views outpace genuine interaction`
-  } else if (engagementRatio < 3) {
-    engagementScore = 50
-    engagementExplanation = `Average engagement (${engagementRatio.toFixed(2)}%) - Typical algorithmic content`
-  } else if (engagementRatio < 5) {
-    engagementScore = 30
-    engagementExplanation = `Good engagement (${engagementRatio.toFixed(2)}%) - Audience genuinely interested`
-  } else {
-    engagementScore = 10
-    engagementExplanation = `Excellent engagement (${engagementRatio.toFixed(2)}%) - Rising Star potential`
-  }
-  
-  // =========================================
-  // 3. UPLOAD DENSITY (20% weight)
-  // High frequency = gaming upload velocity algorithm
-  // =========================================
-  let uploadScore = 0
-  let uploadExplanation = ''
-  
-  // recentUploads = videos in last 30 days from activities.list
-  if (recentUploads >= 30) {
-    uploadScore = 100
-    uploadExplanation = `${recentUploads} uploads/month - Extreme upload frequency bias`
-  } else if (recentUploads >= 20) {
-    uploadScore = 80
-    uploadExplanation = `${recentUploads} uploads/month - High frequency gaming`
-  } else if (recentUploads >= 10) {
-    uploadScore = 60
-    uploadExplanation = `${recentUploads} uploads/month - Regular upload schedule`
-  } else if (recentUploads >= 4) {
-    uploadScore = 40
-    uploadExplanation = `${recentUploads} uploads/month - Moderate frequency`
-  } else {
-    uploadScore = 15
-    uploadExplanation = `${recentUploads} uploads/month - Quality over quantity approach`
-  }
-  
-  // =========================================
-  // 4. RETENTION GAMING (10% weight)
-  // 8-10 min mark = optimized for algorithm
-  // =========================================
-  let retentionScore = 0
-  let retentionExplanation = ''
-  
+  const viewsPerSub = subs > 0 ? views / subs : 0
   const minutes = duration / 60
-  if (minutes >= 8 && minutes <= 12) {
-    retentionScore = 100
-    retentionExplanation = `${minutes.toFixed(1)} min - Optimized for mid-roll ads (8-12 min sweet spot)`
-  } else if (minutes >= 6 && minutes < 8) {
-    retentionScore = 70
-    retentionExplanation = `${minutes.toFixed(1)} min - Near optimal ad placement length`
-  } else if (minutes > 12 && minutes <= 20) {
-    retentionScore = 60
-    retentionExplanation = `${minutes.toFixed(1)} min - Long-form for maximum watch time`
-  } else if (minutes > 20) {
-    retentionScore = 40
-    retentionExplanation = `${minutes.toFixed(1)} min - Deep content, less algorithmically optimized`
-  } else {
-    retentionScore = 20
-    retentionExplanation = `${minutes.toFixed(1)} min - Short form, limited ad revenue optimization`
-  }
-  
+
   // =========================================
-  // CALCULATE WEIGHTED TOTAL
+  // 1. REACH SCALE (35% weight)
+  // Platform reach based on subscriber base
+  // =========================================
+  let reachScore = 0
+  if (subs >= 10000000) reachScore = 100
+  else if (subs >= 5000000) reachScore = 90
+  else if (subs >= MONOPOLY_THRESHOLD) reachScore = 75
+  else if (subs >= 500000) reachScore = 60
+  else if (subs >= 100000) reachScore = 40
+  else if (subs >= 50000) reachScore = 25
+  else if (subs >= 10000) reachScore = 15
+  else reachScore = 5
+
+  // =========================================
+  // 2. VELOCITY (25% weight)
+  // Views/day relative to channel size
+  // =========================================
+  const videoAgeHours = 24 // Default assumption for recent video
+  const viewsPerDay = views / Math.max(1, videoAgeHours / 24)
+  let velocityScore = 0
+  if (viewsPerDay >= 1000000) velocityScore = 100
+  else if (viewsPerDay >= 500000) velocityScore = 85
+  else if (viewsPerDay >= 100000) velocityScore = 70
+  else if (viewsPerDay >= 50000) velocityScore = 55
+  else if (viewsPerDay >= 10000) velocityScore = 40
+  else if (viewsPerDay >= 1000) velocityScore = 25
+  else velocityScore = 10
+
+  // =========================================
+  // 3. UPLOAD FREQUENCY (20% weight)
+  // Content saturation ability
+  // =========================================
+  let frequencyScore = 0
+  if (recentUploads >= 30) frequencyScore = 100
+  else if (recentUploads >= 20) frequencyScore = 80
+  else if (recentUploads >= 12) frequencyScore = 60
+  else if (recentUploads >= 4) frequencyScore = 40
+  else frequencyScore = 15
+
+  // =========================================
+  // 4. RECENCY BOOST (20% weight)
+  // Algorithm favors recent content from large channels
+  // =========================================
+  let recencyScore = Math.min(100, Math.round((viewsPerSub * 20) + (recentUploads * 3)))
+
+  // =========================================
+  // CALCULATE TOTAL EXPOSURE ADVANTAGE
   // =========================================
   const totalScore = Math.round(
-    (monopolyScore * 0.40) +
-    (engagementScore * 0.30) +
-    (uploadScore * 0.20) +
-    (retentionScore * 0.10)
+    (reachScore * 0.35) +
+    (velocityScore * 0.25) +
+    (frequencyScore * 0.20) +
+    (recencyScore * 0.20)
   )
-  
+
+  const exposureTier = getExposureTier(totalScore)
+  const isAdvantaged = totalScore > 50
+
+  // =========================================
+  // Generate explainability reasons
+  // =========================================
+  const explainReasons = []
+
+  if (subs >= 100000) {
+    explainReasons.push(`${fmt(subs)} subscribers gives this channel significant reach advantage`)
+  }
+  if (viewsPerDay >= 50000) {
+    explainReasons.push(`High velocity: ${fmt(Math.round(viewsPerDay))} views/day`)
+  }
+  if (recentUploads >= 12) {
+    explainReasons.push(`Frequent uploads (${recentUploads}/month) saturate recommendations`)
+  }
+  if (engagementRatio < 1 && views > 100000) {
+    explainReasons.push(`Low engagement ratio (${engagementRatio.toFixed(1)}%) suggests algorithmic push over organic interest`)
+  }
+  if (totalScore <= 30) {
+    explainReasons.push(`Limited platform visibility despite content quality`)
+  }
+
   return {
     totalScore,
-    breakdown: [
-      {
-        factor: 'Recommendation Monopoly',
-        score: monopolyScore,
-        weight: 40,
-        weighted: Math.round(monopolyScore * 0.40),
-        explanation: monopolyExplanation,
-        metric: `${fmt(subs)} subscribers`
-      },
-      {
-        factor: 'Engagement-to-Reach Ratio',
-        score: engagementScore,
-        weight: 30,
-        weighted: Math.round(engagementScore * 0.30),
-        explanation: engagementExplanation,
-        metric: `${engagementRatio.toFixed(2)}% ratio`
-      },
-      {
-        factor: 'Upload Frequency Bias',
-        score: uploadScore,
-        weight: 20,
-        weighted: Math.round(uploadScore * 0.20),
-        explanation: uploadExplanation,
-        metric: `${recentUploads} videos/30 days`
-      },
-      {
-        factor: 'Watch Time Exploitation',
-        score: retentionScore,
-        weight: 10,
-        weighted: Math.round(retentionScore * 0.10),
-        explanation: retentionExplanation,
-        metric: `${minutes.toFixed(1)} minutes`
-      }
-    ],
+    exposureTier,
+    noiseLevel: exposureTier, // Legacy compatibility
+    isAdvantaged,
+    explainReasons,
+    breakdown: {
+      reach: { score: reachScore, weight: 35, metric: fmt(subs) + ' subs' },
+      velocity: { score: velocityScore, weight: 25, metric: fmt(Math.round(viewsPerDay)) + '/day' },
+      frequency: { score: frequencyScore, weight: 20, metric: recentUploads + ' uploads/mo' },
+      recency: { score: recencyScore, weight: 20, metric: viewsPerSub.toFixed(1) + 'x sub reach' }
+    },
     rawMetrics: {
       subscriberCount: subs,
       viewCount: views,
       likeCount: likes,
       commentCount: comments,
       engagementRatio,
+      avgViewsPerVideo,
+      viewsPerDay: Math.round(viewsPerDay),
       duration: minutes,
       recentUploads
     }
   }
 }
 
+// Legacy alias
+function calculateNoiseScore(channel, videoStats, activities) {
+  return calculateExposureAdvantageScore(channel, videoStats, activities)
+}
+
 // ===============================================
-// KPMG SUSTAINABILITY AUDIT MODULE
+// VOICES SILENCED CALCULATION
+// Estimate how many smaller creators are drowned out
+// ===============================================
+function calculateVoicesSilenced(subscriberCount, noiseScore) {
+  // Base calculation: larger channels occupy more "recommendation real estate"
+  // For every 100K subs, approximately 1 smaller creator could have filled that slot
+  const baseVoices = Math.floor(subscriberCount / 50000)
+
+  // Multiply by noise factor (higher noise = more silencing)
+  const noiseFactor = 1 + (noiseScore / 100)
+
+  // Estimate silenced voices with some variance for realism
+  const silenced = Math.round(baseVoices * noiseFactor)
+
+  // Return structured data
+  return {
+    count: Math.max(0, silenced),
+    breakdown: {
+      grassrootsActivists: Math.round(silenced * 0.3),
+      globalSouthVoices: Math.round(silenced * 0.25),
+      localExperts: Math.round(silenced * 0.25),
+      emergingEducators: Math.round(silenced * 0.2)
+    }
+  }
+}
+
+// ===============================================
+// BIAS RECEIPT GENERATION
+// Explainability: "Why you didn't see this" + "Why we surfaced it"
+// ===============================================
+
+/**
+ * Generate a bias receipt for a video explaining why it wasn't shown
+ * and why we're surfacing it as an alternative.
+ * 
+ * @param {Object} params - Video and channel metrics
+ * @param {string} params.videoId - The video ID
+ * @param {number} params.subscriberCount - Channel subscriber count
+ * @param {number} params.viewsPerDay - Estimated views per day (velocity)
+ * @param {number} params.uploadFrequency - Recent uploads per month
+ * @param {number} params.engagementRatio - Engagement ratio (likes+comments/views)
+ * @param {number} params.avgSubsInTopic - Average subs in this topic
+ * @param {number} params.topicConcentration - % of topic dominated by top channels
+ * @param {string} params.exposureTier - 'under-represented', 'emerging', etc.
+ * @param {boolean} params.isRisingSignal - Whether this is a rising creator
+ * @param {string} params.videoTitle - Video title for context
+ * @param {string} params.channelTitle - Channel name
+ * @returns {Promise<Object>} biasReceipt object
+ */
+async function generateBiasReceipt(params) {
+  const {
+    videoId,
+    subscriberCount = 0,
+    viewsPerDay = 0,
+    uploadFrequency = 0,
+    engagementRatio = 0,
+    avgSubsInTopic = 100000,
+    topicConcentration = 50,
+    exposureTier = 'emerging',
+    isRisingSignal = false,
+    videoTitle = '',
+    channelTitle = ''
+  } = params
+
+  // Check cache first (6-hour TTL)
+  const cacheKey = `receipt_${videoId}`
+  if (biasReceiptCache[cacheKey] && Date.now() - biasReceiptCache[cacheKey].timestamp < BIAS_RECEIPT_CACHE_TTL) {
+    console.log(`[Silenced] Bias receipt cache hit: ${videoId}`)
+    return biasReceiptCache[cacheKey].data
+  }
+
+  // Try Gemini if enabled and available
+  if (ENABLE_ML_FEATURES && GEMINI_API_KEY) {
+    try {
+      const geminiReceipt = await generateBiasReceiptWithGemini(params)
+      if (geminiReceipt) {
+        // Cache the result
+        biasReceiptCache[cacheKey] = { data: geminiReceipt, timestamp: Date.now() }
+        saveCache()
+        return geminiReceipt
+      }
+    } catch (err) {
+      console.warn('[Silenced] Gemini bias receipt failed, falling back to heuristic:', err.message)
+    }
+  }
+
+  // Heuristic fallback - deterministic bullets based on thresholds
+  const whyNotShown = generateHeuristicWhyNotShown(params)
+  const whySurfaced = generateHeuristicWhySurfaced(params)
+  const confidence = calculateReceiptConfidence(params)
+
+  const receipt = {
+    whyNotShown,
+    whySurfaced,
+    confidence,
+    method: 'heuristic'
+  }
+
+  // Cache heuristic receipts too (shorter effective TTL due to determinism)
+  biasReceiptCache[cacheKey] = { data: receipt, timestamp: Date.now() }
+  saveCache()
+
+  return receipt
+}
+
+/**
+ * Generate "Why Not Shown" bullets using heuristics
+ */
+function generateHeuristicWhyNotShown(params) {
+  const { subscriberCount, viewsPerDay, avgSubsInTopic, topicConcentration, uploadFrequency } = params
+  const bullets = []
+
+  // Subscriber-based explanations
+  if (subscriberCount < 10000) {
+    bullets.push('Channel has under 10K subscribers, limiting algorithmic reach')
+  } else if (subscriberCount < 50000) {
+    bullets.push('Channel size (under 50K) may limit recommendation visibility')
+  } else if (subscriberCount < 100000) {
+    bullets.push('Mid-sized channel may receive less algorithmic priority')
+  }
+
+  // Velocity-based explanations
+  if (viewsPerDay < 1000 && subscriberCount > 1000) {
+    bullets.push('Lower view velocity may reduce recommendation frequency')
+  }
+
+  // Topic concentration
+  if (topicConcentration > 70) {
+    bullets.push('Topic dominated by large channels (high concentration)')
+  } else if (topicConcentration > 50) {
+    bullets.push('Competitive topic with established dominant voices')
+  }
+
+  // Upload frequency
+  if (uploadFrequency < 4) {
+    bullets.push('Infrequent uploads may reduce algorithmic visibility')
+  }
+
+  // Comparison to topic average
+  if (avgSubsInTopic > 0 && subscriberCount < avgSubsInTopic * 0.2) {
+    bullets.push('Significantly smaller than average channel in this topic')
+  }
+
+  // Default fallback
+  if (bullets.length === 0) {
+    bullets.push('Limited exposure compared to dominant channels')
+  }
+
+  // Return 2-4 bullets, prioritizing most relevant
+  return bullets.slice(0, 4)
+}
+
+/**
+ * Generate "Why Surfaced" bullets using heuristics
+ */
+function generateHeuristicWhySurfaced(params) {
+  const { subscriberCount, engagementRatio, isRisingSignal, avgSubsInTopic, exposureTier, viewsPerDay } = params
+  const bullets = []
+
+  // Rising signal
+  if (isRisingSignal) {
+    bullets.push('Rising signal: outperforming channel size')
+  }
+
+  // Engagement-based
+  if (engagementRatio > 3) {
+    bullets.push('Strong audience engagement suggests quality content')
+  } else if (engagementRatio > 1.5) {
+    bullets.push('Above-average engagement ratio')
+  }
+
+  // Size comparison
+  if (avgSubsInTopic > 0) {
+    const percentSmaller = Math.round((1 - subscriberCount / avgSubsInTopic) * 100)
+    if (percentSmaller > 80) {
+      bullets.push(`${percentSmaller}% smaller than topic average`)
+    } else if (percentSmaller > 50) {
+      bullets.push('Significantly under-represented in topic')
+    }
+  }
+
+  // Exposure tier
+  if (exposureTier === 'under-represented') {
+    bullets.push('Minimal algorithmic amplification')
+  } else if (exposureTier === 'emerging') {
+    bullets.push('Emerging voice with limited platform visibility')
+  }
+
+  // Very small channels
+  if (subscriberCount < 10000) {
+    bullets.push('Grassroots creator deserving wider audience')
+  } else if (subscriberCount < 50000) {
+    bullets.push('Independent voice in competitive topic')
+  }
+
+  // Velocity despite size
+  if (viewsPerDay > 100 && subscriberCount < 50000) {
+    bullets.push('Good traction despite limited subscriber base')
+  }
+
+  // Default fallback
+  if (bullets.length === 0) {
+    bullets.push('Under-represented in algorithm recommendations')
+  }
+
+  return bullets.slice(0, 4)
+}
+
+/**
+ * Calculate confidence level for the receipt
+ */
+function calculateReceiptConfidence(params) {
+  const { subscriberCount, engagementRatio, isRisingSignal, avgSubsInTopic } = params
+  let score = 0
+
+  // More data points = higher confidence
+  if (subscriberCount > 0) score += 1
+  if (engagementRatio > 0) score += 1
+  if (avgSubsInTopic > 0) score += 1
+  if (isRisingSignal !== undefined) score += 1
+
+  // Clear patterns = higher confidence
+  if (subscriberCount < 50000) score += 1
+  if (engagementRatio > 2) score += 1
+
+  if (score >= 5) return 'high'
+  if (score >= 3) return 'medium'
+  return 'low'
+}
+
+/**
+ * Generate bias receipt using Gemini AI (when ENABLE_ML_FEATURES is true)
+ */
+async function generateBiasReceiptWithGemini(params) {
+  if (!GEMINI_API_KEY) return null
+
+  const { subscriberCount, viewsPerDay, engagementRatio, avgSubsInTopic, topicConcentration, videoTitle, channelTitle } = params
+
+  const prompt = `You are analyzing algorithmic bias in YouTube recommendations. Generate a bias receipt for this video.
+
+Video: "${videoTitle}" by ${channelTitle}
+Channel subscribers: ${fmt(subscriberCount)}
+Views/day: ${fmt(viewsPerDay)}
+Engagement ratio: ${engagementRatio.toFixed(2)}
+Topic avg subscribers: ${fmt(avgSubsInTopic)}
+Topic concentration by top channels: ${topicConcentration}%
+
+Generate a JSON response with EXACTLY this structure:
+{
+  "whyNotShown": ["bullet 1", "bullet 2", "bullet 3"],
+  "whySurfaced": ["bullet 1", "bullet 2", "bullet 3"],
+  "confidence": "low" | "medium" | "high"
+}
+
+RULES:
+- Each bullet must be under 15 words
+- Use neutral, non-defamatory language
+- Use phrases like "may indicate", "limited evidence", "based on public signals"
+- Do NOT make factual accusations
+- whyNotShown: 2-4 bullets explaining algorithmic disadvantage
+- whySurfaced: 2-4 bullets explaining why we're recommending this
+- Be concise and specific`
+
+  try {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.3,
+          maxOutputTokens: 500
+        }
+      })
+    })
+
+    if (!response.ok) {
+      throw new Error(`Gemini API error: ${response.status}`)
+    }
+
+    const data = await response.json()
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text
+
+    if (!text) return null
+
+    // Extract JSON from response
+    const jsonMatch = text.match(/\{[\s\S]*\}/)
+    if (!jsonMatch) return null
+
+    const parsed = JSON.parse(jsonMatch[0])
+
+    // Validate structure
+    if (!Array.isArray(parsed.whyNotShown) || !Array.isArray(parsed.whySurfaced)) {
+      return null
+    }
+
+    return {
+      whyNotShown: parsed.whyNotShown.slice(0, 4),
+      whySurfaced: parsed.whySurfaced.slice(0, 4),
+      confidence: ['low', 'medium', 'high'].includes(parsed.confidence) ? parsed.confidence : 'medium',
+      method: 'gemini'
+    }
+  } catch (err) {
+    console.error('[Silenced] Gemini API error:', err)
+    return null
+  }
+}
+
+// ===============================================
+// KPMG SUSTAINABILITY / GREENWASHING AUDIT MODULE
 // ===============================================
 const SUSTAINABILITY_CATEGORIES = {
   27: 'Education',
   28: 'Science & Technology',
   25: 'News & Politics',
-  22: 'People & Blogs'
+  22: 'People & Blogs',
+  29: 'Nonprofits & Activism'
 }
 
 const SUSTAINABILITY_KEYWORDS = [
   'net-zero', 'net zero', 'climate', 'sustainable', 'sustainability',
   'esg', 'carbon', 'renewable', 'green energy', 'clean energy',
-  'environment', 'eco-friendly', 'biodiversity', 'conservation'
+  'environment', 'eco-friendly', 'biodiversity', 'conservation',
+  'emissions', 'decarbonization', 'circular economy'
 ]
 
-const CLIMATE_JUSTICE_POSITIVE = [
+// Evidence-based language (good)
+const EVIDENCE_SIGNALS = [
+  'data shows', 'research', 'study', 'peer-reviewed', 'ipcc',
+  'measured', 'verified', 'third-party audit', 'science-based targets',
+  'methodology', 'lifecycle assessment', 'scope 1', 'scope 2', 'scope 3'
+]
+
+// Equity/justice language (good)
+const EQUITY_SIGNALS = [
   'equity', 'justice', 'community', 'indigenous', 'global south',
-  'grassroots', 'local impact', 'frontline communities', 'environmental justice',
-  'inclusive', 'marginalized', 'vulnerable communities', 'social impact'
+  'grassroots', 'frontline communities', 'environmental justice',
+  'just transition', 'marginalized', 'vulnerable communities',
+  'local solutions', 'community-led'
 ]
 
-const CLIMATE_JUSTICE_NEGATIVE = [
-  'corporate offset', 'carbon credits only', 'greenwashing',
-  'virtue signaling', 'marketing campaign', 'sponsored by oil'
+// High-claim low-evidence language (red flags)
+const GREENWASH_SIGNALS = [
+  'carbon neutral', 'net-zero by', '100% sustainable', 'eco-friendly',
+  'green', 'clean', 'natural', 'planet-friendly', 'earth-friendly',
+  'offsetting', 'carbon credits', 'planting trees'
+]
+
+// Corporate marketing signals (context flags)
+const CORPORATE_SIGNALS = [
+  'sponsored', 'partnership', 'brought to you by', 'in collaboration with',
+  'brand', 'campaign', 'initiative', 'commitment', 'pledge'
 ]
 
 function auditSustainability(video, transcript = '') {
@@ -271,67 +600,78 @@ function auditSustainability(video, transcript = '') {
   const description = (video.snippet?.description || '').toLowerCase()
   const tags = (video.snippet?.tags || []).map(t => t.toLowerCase())
   const fullText = `${title} ${description} ${tags.join(' ')} ${transcript.toLowerCase()}`
-  
-  // Check if sustainability-related category
-  const isSustainabilityCategory = SUSTAINABILITY_CATEGORIES.hasOwnProperty(categoryId)
-  
-  // Check for sustainability keywords
+
+  // Check if sustainability-related
   const matchedKeywords = SUSTAINABILITY_KEYWORDS.filter(kw => fullText.includes(kw))
-  const isSustainabilityTopic = matchedKeywords.length >= 2 || 
-    (matchedKeywords.length >= 1 && isSustainabilityCategory)
-  
+  const isSustainabilityTopic = matchedKeywords.length >= 2
+
   if (!isSustainabilityTopic) {
-    return {
-      isSustainability: false,
-      auditResult: null
-    }
+    return { isSustainability: false, auditResult: null }
   }
-  
-  // === CLIMATE JUSTICE AUDIT ===
-  const positiveSignals = CLIMATE_JUSTICE_POSITIVE.filter(term => fullText.includes(term))
-  const negativeSignals = CLIMATE_JUSTICE_NEGATIVE.filter(term => fullText.includes(term))
-  
-  // Calculate audit score
-  let auditScore = 50 // Start neutral
-  auditScore += positiveSignals.length * 15 // +15 per positive signal
-  auditScore -= negativeSignals.length * 20 // -20 per negative signal
-  auditScore = Math.max(0, Math.min(100, auditScore))
-  
-  // Determine badge eligibility
-  const passesAudit = auditScore >= 60 && positiveSignals.length >= 1
-  
-  // Determine audit level
-  let auditLevel = 'UNVERIFIED'
-  let badgeColor = '#666'
-  
-  if (auditScore >= 80 && positiveSignals.length >= 2) {
-    auditLevel = 'KPMG SUSTAINABILITY VERIFIED'
-    badgeColor = '#00E676'
-  } else if (auditScore >= 60) {
-    auditLevel = 'CLIMATE JUSTICE CERTIFIED'
-    badgeColor = '#4CAF50'
-  } else if (auditScore >= 40) {
-    auditLevel = 'PARTIAL COMPLIANCE'
-    badgeColor = '#FFC107'
-  } else {
-    auditLevel = 'AUDIT WARNING'
-    badgeColor = '#FF5722'
+
+  // Detect signals
+  const evidenceFound = EVIDENCE_SIGNALS.filter(term => fullText.includes(term))
+  const equityFound = EQUITY_SIGNALS.filter(term => fullText.includes(term))
+  const greenwashFound = GREENWASH_SIGNALS.filter(term => fullText.includes(term))
+  const corporateFound = CORPORATE_SIGNALS.filter(term => fullText.includes(term))
+
+  // Calculate transparency score (0-100)
+  let transparencyScore = 50
+  transparencyScore += evidenceFound.length * 12
+  transparencyScore += equityFound.length * 10
+  transparencyScore -= greenwashFound.length * 8
+  transparencyScore -= corporateFound.length * 5
+  transparencyScore = Math.max(0, Math.min(100, transparencyScore))
+
+  // Generate flags (max 2 for UI clarity)
+  const flags = []
+
+  if (greenwashFound.length >= 2 && evidenceFound.length === 0) {
+    flags.push({ type: 'warning', text: 'High claims, low evidence' })
   }
-  
+  if (equityFound.length === 0 && matchedKeywords.length >= 3) {
+    flags.push({ type: 'info', text: 'Missing equity/justice framing' })
+  }
+  if (corporateFound.length >= 2) {
+    flags.push({ type: 'caution', text: 'Sponsored/corporate content' })
+  }
+  if (evidenceFound.length >= 2) {
+    flags.push({ type: 'positive', text: 'Evidence-based claims' })
+  }
+  if (equityFound.length >= 2) {
+    flags.push({ type: 'positive', text: 'Includes equity perspective' })
+  }
+
+  // Determine tier
+  let tier = 'unverified'
+  let tierColor = '#6b7280'
+
+  if (transparencyScore >= 75 && evidenceFound.length >= 1 && equityFound.length >= 1) {
+    tier = 'verified'
+    tierColor = '#10b981'
+  } else if (transparencyScore >= 55) {
+    tier = 'partial'
+    tierColor = '#f59e0b'
+  } else if (greenwashFound.length >= 2 && evidenceFound.length === 0) {
+    tier = 'caution'
+    tierColor = '#ef4444'
+  }
+
   return {
     isSustainability: true,
     auditResult: {
-      score: auditScore,
-      level: auditLevel,
-      badgeColor,
-      passesAudit,
-      category: SUSTAINABILITY_CATEGORIES[categoryId] || 'General',
+      transparencyScore,
+      tier,
+      tierColor,
+      flags: flags.slice(0, 2),
+      signals: {
+        evidence: evidenceFound,
+        equity: equityFound,
+        greenwash: greenwashFound,
+        corporate: corporateFound
+      },
       matchedKeywords,
-      positiveSignals,
-      negativeSignals,
-      recommendation: passesAudit 
-        ? 'Content demonstrates awareness of climate equity and community impact.'
-        : 'Content could improve by including diverse perspectives and community-level solutions.'
+      category: SUSTAINABILITY_CATEGORIES[categoryId] || 'General'
     }
   }
 }
@@ -364,32 +704,32 @@ async function getChannel(channelId) {
     console.log(`[Silenced] Channel cache hit: ${channelId}`)
     return channelCache[channelId].data
   }
-  
+
   if (quotaUsed + 1 > QUOTA_LIMIT) {
     console.warn('[Silenced] Quota exceeded')
     return null
   }
-  
+
   try {
     const url = new URL('https://www.googleapis.com/youtube/v3/channels')
     url.searchParams.set('part', 'statistics,snippet,contentDetails')
     url.searchParams.set('id', channelId)
     url.searchParams.set('key', YOUTUBE_API_KEY)
-    
+
     const res = await fetch(url.toString())
     if (!res.ok) throw new Error(`API error: ${res.status}`)
-    
+
     const data = await res.json()
     quotaUsed += 1
-    
+
     const channel = data.items?.[0] || null
-    
+
     // Cache result
     if (channel) {
       channelCache[channelId] = { data: channel, timestamp: Date.now() }
       saveCache()
     }
-    
+
     return channel
   } catch (err) {
     console.error('[Silenced] Channel fetch error:', err)
@@ -403,13 +743,13 @@ async function getVideo(videoId) {
     url.searchParams.set('part', 'snippet,statistics,contentDetails')
     url.searchParams.set('id', videoId)
     url.searchParams.set('key', YOUTUBE_API_KEY)
-    
+
     const res = await fetch(url.toString())
     if (!res.ok) throw new Error(`API error: ${res.status}`)
-    
+
     const data = await res.json()
     quotaUsed += 1
-    
+
     return data.items?.[0] || null
   } catch (err) {
     console.error('[Silenced] Video fetch error:', err)
@@ -425,26 +765,147 @@ async function getChannelActivities(channelId) {
     url.searchParams.set('channelId', channelId)
     url.searchParams.set('maxResults', '50')
     url.searchParams.set('key', YOUTUBE_API_KEY)
-    
+
     const res = await fetch(url.toString())
     if (!res.ok) throw new Error(`API error: ${res.status}`)
-    
+
     const data = await res.json()
     quotaUsed += 1
-    
+
     // Filter to uploads in last 30 days
     const thirtyDaysAgo = new Date()
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
-    
+
     const recentUploads = (data.items || []).filter(item => {
       if (item.snippet?.type !== 'upload') return false
       const publishedAt = new Date(item.snippet.publishedAt)
       return publishedAt >= thirtyDaysAgo
     })
-    
+
     return recentUploads
   } catch (err) {
     console.error('[Silenced] Activities fetch error:', err)
+    return []
+  }
+}
+
+// ===============================================
+// GET CHANNEL BY HANDLE (Username)
+// ===============================================
+async function getChannelByHandle(handle) {
+  if (!handle) return 0
+
+  // Check cache first
+  const cacheKey = `handle_${handle}`
+  if (channelCache[cacheKey] && Date.now() - channelCache[cacheKey].timestamp < CACHE_TTL) {
+    return channelCache[cacheKey].data
+  }
+
+  if (quotaUsed + 1 > QUOTA_LIMIT) return 0
+
+  try {
+    const url = new URL('https://www.googleapis.com/youtube/v3/channels')
+    url.searchParams.set('part', 'statistics')
+    url.searchParams.set('forHandle', handle)
+    url.searchParams.set('key', YOUTUBE_API_KEY)
+
+    const res = await fetch(url.toString())
+    if (!res.ok) return 0
+
+    const data = await res.json()
+    quotaUsed += 1
+
+    const subs = parseInt(data.items?.[0]?.statistics?.subscriberCount || '0')
+
+    // Cache result
+    channelCache[cacheKey] = { data: subs, timestamp: Date.now() }
+    saveCache()
+
+    return subs
+  } catch (err) {
+    console.error('[Silenced] Handle lookup error:', err)
+    return 0
+  }
+}
+
+// ===============================================
+// SEARCH FOR SILENCED CREATORS ON A TOPIC
+// Returns real channels with <500K subs covering the same topic
+// Uses multiple search strategies to find smaller creators
+// ===============================================
+async function searchSilencedCreators(query) {
+  if (!query || quotaUsed + 200 > QUOTA_LIMIT) return []
+
+  const silencedCreators = []
+  const seenChannels = new Set()
+
+  try {
+    // Strategy 1: Search by date (newer videos = often smaller creators)
+    const strategies = [
+      { order: 'date', q: query },
+      { order: 'viewCount', q: `${query} small channel` },
+      { order: 'relevance', q: `${query} underrated` }
+    ]
+
+    for (const strategy of strategies) {
+      if (silencedCreators.length >= 6) break
+      if (quotaUsed + 100 > QUOTA_LIMIT) break
+
+      const url = new URL('https://www.googleapis.com/youtube/v3/search')
+      url.searchParams.set('part', 'snippet')
+      url.searchParams.set('q', strategy.q)
+      url.searchParams.set('type', 'video')
+      url.searchParams.set('order', strategy.order)
+      url.searchParams.set('maxResults', '20')
+      url.searchParams.set('publishedAfter', new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString()) // Last year
+      url.searchParams.set('key', YOUTUBE_API_KEY)
+
+      const res = await fetch(url.toString())
+      if (!res.ok) continue
+
+      const data = await res.json()
+      quotaUsed += 100
+
+      const videos = data.items || []
+      const channelIds = [...new Set(videos.map(v => v.snippet.channelId).filter(id => !seenChannels.has(id)))]
+
+      if (channelIds.length === 0) continue
+
+      // Get channel details
+      const channels = await batchGetChannels(channelIds)
+
+      for (const video of videos) {
+        if (seenChannels.has(video.snippet.channelId)) continue
+
+        const channel = channels.find(c => c.id === video.snippet.channelId)
+        if (!channel) continue
+
+        const subs = parseInt(channel.statistics?.subscriberCount || '0')
+
+        // Include channels under 500K (more lenient to actually find results)
+        if (subs > 0 && subs < 500000) {
+          seenChannels.add(video.snippet.channelId)
+          silencedCreators.push({
+            videoId: video.id.videoId,
+            videoTitle: video.snippet.title,
+            videoThumbnail: video.snippet.thumbnails?.medium?.url || video.snippet.thumbnails?.default?.url,
+            channelId: channel.id,
+            channelTitle: channel.snippet?.title,
+            channelThumbnail: channel.snippet?.thumbnails?.default?.url,
+            subscriberCount: subs,
+            isVerySmall: subs < 50000
+          })
+        }
+      }
+    }
+
+    // Sort by subscriber count (smallest first - most silenced)
+    silencedCreators.sort((a, b) => a.subscriberCount - b.subscriberCount)
+
+    console.log(`[Silenced] Found ${silencedCreators.length} silenced creators for "${query}"`)
+    return silencedCreators.slice(0, 6)
+  } catch (err) {
+    console.error('[Silenced] Search silenced creators error:', err)
     return []
   }
 }
@@ -457,7 +918,7 @@ async function topicSearch(query, maxResults = 50) {
     console.warn('[Silenced] Quota limit approaching')
     return { videos: [], channelIds: [] }
   }
-  
+
   try {
     const url = new URL('https://www.googleapis.com/youtube/v3/search')
     url.searchParams.set('part', 'snippet')
@@ -466,18 +927,18 @@ async function topicSearch(query, maxResults = 50) {
     url.searchParams.set('order', 'rating') // Order by rating for quality alternatives
     url.searchParams.set('maxResults', String(maxResults))
     url.searchParams.set('key', YOUTUBE_API_KEY)
-    
+
     const res = await fetch(url.toString())
     if (!res.ok) throw new Error(`Search API error: ${res.status}`)
-    
+
     const data = await res.json()
     quotaUsed += 100
-    
+
     const videos = data.items || []
     const channelIds = [...new Set(videos.map(v => v.snippet.channelId))]
-    
+
     console.log(`[Silenced] Search: ${videos.length} videos from ${channelIds.length} channels`)
-    
+
     return { videos, channelIds }
   } catch (err) {
     console.error('[Silenced] Search error:', err)
@@ -491,7 +952,7 @@ async function topicSearch(query, maxResults = 50) {
 async function batchGetChannels(channelIds) {
   const results = []
   const uncachedIds = []
-  
+
   // Check cache first
   for (const id of channelIds) {
     if (channelCache[id] && Date.now() - channelCache[id].timestamp < CACHE_TTL) {
@@ -500,27 +961,27 @@ async function batchGetChannels(channelIds) {
       uncachedIds.push(id)
     }
   }
-  
+
   console.log(`[Silenced] Channels: ${results.length} cached, ${uncachedIds.length} to fetch`)
-  
+
   // Batch fetch uncached (50 per request)
   for (let i = 0; i < uncachedIds.length; i += 50) {
     if (quotaUsed + 1 > QUOTA_LIMIT) break
-    
+
     const batch = uncachedIds.slice(i, i + 50)
-    
+
     try {
       const url = new URL('https://www.googleapis.com/youtube/v3/channels')
       url.searchParams.set('part', 'statistics,snippet')
       url.searchParams.set('id', batch.join(','))
       url.searchParams.set('key', YOUTUBE_API_KEY)
-      
+
       const res = await fetch(url.toString())
       if (!res.ok) continue
-      
+
       const data = await res.json()
       quotaUsed += 1
-      
+
       for (const channel of (data.items || [])) {
         channelCache[channel.id] = { data: channel, timestamp: Date.now() }
         results.push(channel)
@@ -529,40 +990,40 @@ async function batchGetChannels(channelIds) {
       console.error('[Silenced] Batch channel error:', err)
     }
   }
-  
+
   saveCache()
   return results
 }
 
 // ===============================================
-// FULL ANALYSIS - Video + Channel + Equity Score
+// FULL ANALYSIS - Video + Channel + Noise Level
 // ===============================================
 async function analyzeVideo(videoId, transcript = '') {
-  console.log(`[Silenced] Analyzing video: ${videoId}`)
-  
+  console.log(`[Silenced] Analyzing noise level for: ${videoId}`)
+
   // Get video details
   const video = await getVideo(videoId)
   if (!video) {
     return { error: 'VIDEO_NOT_FOUND' }
   }
-  
+
   // Get channel details
   const channel = await getChannel(video.snippet.channelId)
-  
-  // Get recent activities for upload density
+
+  // Get recent activities for broadcast frequency
   const activities = await getChannelActivities(video.snippet.channelId)
-  
-  // Calculate equity score
-  const equityScore = calculateEquityScore(channel, {
+
+  // Calculate noise score (replaces equity score)
+  const noiseAnalysis = calculateNoiseScore(channel, {
     viewCount: video.statistics?.viewCount,
     likeCount: video.statistics?.likeCount,
     commentCount: video.statistics?.commentCount,
     duration: video.contentDetails?.duration
   }, activities)
-  
+
   // Run sustainability audit
   const sustainabilityAudit = auditSustainability(video, transcript)
-  
+
   return {
     video: {
       id: videoId,
@@ -580,57 +1041,115 @@ async function analyzeVideo(videoId, transcript = '') {
       subscriberCount: parseInt(channel?.statistics?.subscriberCount || '0'),
       videoCount: parseInt(channel?.statistics?.videoCount || '0')
     },
-    equityScore,
+    noiseAnalysis,
     sustainability: sustainabilityAudit,
-    quotaUsed
+    quotaUsed,
+    _schemaVersion: SCHEMA_VERSION
   }
 }
 
 // ===============================================
-// DISCOVERY ENGINE - Find equity alternatives
+// NOISE CANCELLATION ENGINE - Unmute silenced voices
+// With Bias Snapshot and Explainability
 // ===============================================
-async function runDiscoveryEngine(query) {
-  const cacheKey = `discovery_${query.toLowerCase().trim()}`
-  
+async function runNoiseCancellation(query) {
+  const cacheKey = `silence_${query.toLowerCase().trim()}`
+
   if (discoveryCache[cacheKey] && Date.now() - discoveryCache[cacheKey].timestamp < 900000) {
     return discoveryCache[cacheKey].data
   }
-  
-  console.log(`[Silenced] Discovery: "${query}"`)
+
+  console.log(`[Silenced] Scanning for silenced voices: "${query}"`)
   const startQuota = quotaUsed
-  
+
   // Search for videos
   const { videos, channelIds } = await topicSearch(query, 50)
-  
+
   // Batch get all channels
   const channels = await batchGetChannels(channelIds)
   const channelMap = new Map(channels.map(c => [c.id, c]))
-  
-  // Filter to equity channels (under threshold) and hide monopolies (>100K in sidebar)
-  const equityChannels = channels.filter(ch => {
+
+  // Calculate aggregate metrics for Bias Snapshot
+  const allSubs = channels.map(ch => parseInt(ch.statistics?.subscriberCount || '0'))
+  const totalSubs = allSubs.reduce((a, b) => a + b, 0)
+  const top10Channels = [...channels].sort((a, b) =>
+    parseInt(b.statistics?.subscriberCount || '0') - parseInt(a.statistics?.subscriberCount || '0')
+  ).slice(0, 10)
+  const top10Subs = top10Channels.reduce((sum, ch) => sum + parseInt(ch.statistics?.subscriberCount || '0'), 0)
+
+  // Separate by threshold
+  const silencedVoices = channels.filter(ch => {
     const subs = parseInt(ch.statistics?.subscriberCount || '0')
     return subs < MAX_SUBSCRIBER_THRESHOLD
   })
-  
-  const equityChannelIds = new Set(equityChannels.map(c => c.id))
-  
-  // Identify Rising Stars (high engagement ratio)
-  const risingStars = equityChannels.filter(ch => {
+
+  const noisyChannels = channels.filter(ch => {
+    const subs = parseInt(ch.statistics?.subscriberCount || '0')
+    return subs >= MAX_SUBSCRIBER_THRESHOLD
+  })
+
+  const silencedChannelIds = new Set(silencedVoices.map(c => c.id))
+
+  // Identify Rising Signals
+  const risingSignals = silencedVoices.filter(ch => {
     const views = parseInt(ch.statistics?.viewCount || '0')
     const subs = parseInt(ch.statistics?.subscriberCount || '0')
-    const videos = parseInt(ch.statistics?.videoCount || '0')
-    const avgViews = videos > 0 ? views / videos : 0
+    const videoCount = parseInt(ch.statistics?.videoCount || '0')
+    const avgViews = videoCount > 0 ? views / videoCount : 0
     return subs > 0 && avgViews / subs > 2
   })
-  
-  // Build discovered videos
-  const discoveredVideos = videos
-    .filter(v => equityChannelIds.has(v.snippet.channelId))
+
+  // Calculate topic average metrics for comparison
+  const avgSubsInTopic = channels.length > 0 ? totalSubs / channels.length : 0
+
+  // Build Bias Snapshot FIRST (needed for bias receipts)
+  const topicConcentration = totalSubs > 0 ? Math.round((top10Subs / totalSubs) * 100) : 0
+  const biasSnapshot = {
+    topicConcentration,
+    underAmplifiedRate: channels.length > 0 ? Math.round((silencedVoices.length / channels.length) * 100) : 0,
+    dominantCount: noisyChannels.filter(ch => parseInt(ch.statistics?.subscriberCount || '0') > 1000000).length,
+    silencedCount: silencedVoices.length,
+    totalChannels: channels.length,
+    avgSubscribers: Math.round(avgSubsInTopic)
+  }
+
+  // Build unmuted videos with explainability
+  const unmutedVideosRaw = videos
+    .filter(v => silencedChannelIds.has(v.snippet.channelId))
     .map(v => {
       const ch = channelMap.get(v.snippet.channelId)
       const subs = parseInt(ch?.statistics?.subscriberCount || '0')
-      const isRising = risingStars.some(r => r.id === v.snippet.channelId)
-      
+      const totalViews = parseInt(ch?.statistics?.viewCount || '0')
+      const videoCount = parseInt(ch?.statistics?.videoCount || '0')
+      const avgViews = videoCount > 0 ? totalViews / videoCount : 0
+      const engagementProxy = videoCount > 0 ? (totalViews / videoCount) / Math.max(subs, 1) : 0
+      const isRising = risingSignals.some(r => r.id === v.snippet.channelId)
+
+      // Determine exposure tier
+      let exposureTier = 'emerging'
+      if (subs < 10000) exposureTier = 'under-represented'
+      else if (subs < 50000) exposureTier = 'emerging'
+      else if (subs < 100000) exposureTier = 'established'
+
+      // Generate "Why surfaced" reasons (2-3 bullet points) - kept for backward compat
+      const whySurfaced = []
+
+      if (subs < avgSubsInTopic * 0.3) {
+        whySurfaced.push(`${Math.round((1 - subs / avgSubsInTopic) * 100)}% smaller than topic average`)
+      }
+      if (engagementProxy > 1.5) {
+        whySurfaced.push(`Strong engagement ratio (${engagementProxy.toFixed(1)}x views per subscriber)`)
+      }
+      if (subs < 50000) {
+        whySurfaced.push(`Under 50K subs in competitive topic`)
+      }
+      if (isRising) {
+        whySurfaced.push(`Rising signal: outperforming channel size`)
+      }
+      if (whySurfaced.length === 0) {
+        whySurfaced.push(`Under-represented in algorithm recommendations`)
+      }
+
       return {
         videoId: v.id.videoId,
         title: v.snippet.title,
@@ -640,35 +1159,92 @@ async function runDiscoveryEngine(query) {
         channelTitle: v.snippet.channelTitle,
         publishedAt: v.snippet.publishedAt,
         subscriberCount: subs,
-        isRisingStar: isRising
+        isRisingSignal: isRising,
+        whySurfaced: whySurfaced.slice(0, 3),
+        engagementRatio: engagementProxy,
+        // Metrics for bias receipt generation
+        _receiptParams: {
+          videoId: v.id.videoId,
+          subscriberCount: subs,
+          viewsPerDay: avgViews / 30, // Rough estimate
+          uploadFrequency: videoCount > 0 ? Math.min(30, videoCount) : 0,
+          engagementRatio: engagementProxy,
+          avgSubsInTopic,
+          topicConcentration, // From biasSnapshot calculated above
+          exposureTier,
+          isRisingSignal: isRising,
+          videoTitle: v.snippet.title,
+          channelTitle: v.snippet.channelTitle
+        }
       }
     })
     .sort((a, b) => {
-      if (a.isRisingStar && !b.isRisingStar) return -1
-      if (!a.isRisingStar && b.isRisingStar) return 1
-      return 0
+      if (a.isRisingSignal && !b.isRisingSignal) return -1
+      if (!a.isRisingSignal && b.isRisingSignal) return 1
+      return b.engagementRatio - a.engagementRatio
     })
-  
-  // Identify monopoly channels to hide
-  const monopolyChannelIds = channels
-    .filter(ch => parseInt(ch.statistics?.subscriberCount || '0') > MAX_SUBSCRIBER_THRESHOLD)
-    .map(ch => ch.id)
-  
+
+  // Generate bias receipts for top videos (async) with error handling
+  let unmutedVideos = []
+  try {
+    unmutedVideos = await Promise.all(
+      unmutedVideosRaw.slice(0, 10).map(async (video) => {
+        try {
+          const biasReceipt = await generateBiasReceipt(video._receiptParams)
+          // Remove internal params, add receipt
+          const { _receiptParams, ...cleanVideo } = video
+          return {
+            ...cleanVideo,
+            biasReceipt // Optional field as per spec
+          }
+        } catch (err) {
+          console.warn('[Silenced] Failed to generate bias receipt for video:', video.videoId, err)
+          // Return video without receipt on error
+          const { _receiptParams, ...cleanVideo } = video
+          return cleanVideo
+        }
+      })
+    )
+  } catch (err) {
+    console.error('[Silenced] Failed to generate bias receipts:', err)
+    // Fallback: return videos without receipts
+    unmutedVideos = unmutedVideosRaw.slice(0, 10).map(video => {
+      const { _receiptParams, ...cleanVideo } = video
+      return cleanVideo
+    })
+  }
+
+  console.log(`[Silenced] Generated ${unmutedVideos.length} unmuted videos from ${unmutedVideosRaw.length} raw results`)
+  console.log(`[Silenced] Total videos searched: ${videos.length}, Channels: ${channels.length}`)
+  console.log(`[Silenced] Silenced voices (under ${MAX_SUBSCRIBER_THRESHOLD} subs): ${silencedVoices.length}`)
+  console.log(`[Silenced] Noisy channels (over ${MAX_SUBSCRIBER_THRESHOLD} subs): ${noisyChannels.length}`)
+
+  // Identify noisy channels to mute
+  const channelsToMute = noisyChannels.map(ch => ({
+    id: ch.id,
+    name: ch.snippet?.title,
+    subscribers: parseInt(ch.statistics?.subscriberCount || '0'),
+    tier: parseInt(ch.statistics?.subscriberCount || '0') > 1000000 ? 'dominant' : 'amplified'
+  }))
+
   const result = {
     query,
     totalResults: videos.length,
-    equityCreators: equityChannels.length,
-    risingStarsCount: risingStars.length,
-    discoveredVideos,
-    monopolyChannelIds,
+    silencedVoicesFound: silencedVoices.length,
+    risingSignalsCount: risingSignals.length,
+    unmutedVideos,
+    channelsToMute,
+    noisyChannelIds: noisyChannels.map(ch => ch.id),
+    biasSnapshot,
     quotaCost: quotaUsed - startQuota,
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    _schemaVersion: SCHEMA_VERSION
   }
-  
+
   discoveryCache[cacheKey] = { data: result, timestamp: Date.now() }
-  
-  console.log(`[Silenced] Discovery complete: ${discoveredVideos.length} equity videos, ${monopolyChannelIds.length} monopolies hidden`)
-  
+
+  console.log(`[Silenced] Noise cancellation complete: ${unmutedVideos.length} voices unmuted, bias snapshot generated`)
+
   return result
 }
 
@@ -682,54 +1258,77 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       .catch(err => sendResponse({ success: false, error: err.message }))
     return true
   }
-  
-  if (request.action === 'discover') {
-    runDiscoveryEngine(request.query)
+
+  if (request.action === 'discover' || request.action === 'cancelNoise') {
+    runNoiseCancellation(request.query)
       .then(result => sendResponse({ success: true, data: result }))
       .catch(err => sendResponse({ success: false, error: err.message }))
     return true
   }
-  
+
   if (request.action === 'getChannel') {
     getChannel(request.channelId)
       .then(channel => sendResponse({ success: true, data: channel }))
       .catch(err => sendResponse({ success: false, error: err.message }))
     return true
   }
-  
-  if (request.action === 'checkMonopoly') {
+
+  if (request.action === 'getChannelByHandle') {
+    getChannelByHandle(request.handle)
+      .then(subs => sendResponse({ success: true, subscriberCount: subs }))
+      .catch(err => sendResponse({ success: false, subscriberCount: 0, error: err.message }))
+    return true
+  }
+
+  if (request.action === 'searchSilencedCreators') {
+    searchSilencedCreators(request.query)
+      .then(creators => sendResponse({ success: true, creators }))
+      .catch(err => sendResponse({ success: false, creators: [], error: err.message }))
+    return true
+  }
+
+  if (request.action === 'checkMonopoly' || request.action === 'checkNoiseLevel') {
     getChannel(request.channelId)
       .then(channel => {
         const subs = parseInt(channel?.statistics?.subscriberCount || '0')
-        sendResponse({ 
-          success: true, 
-          isMonopoly: subs > MAX_SUBSCRIBER_THRESHOLD,
-          subscriberCount: subs
+        const isNoisy = subs > MAX_SUBSCRIBER_THRESHOLD
+        sendResponse({
+          success: true,
+          isNoisy,
+          isMonopoly: isNoisy, // backward compatibility
+          subscriberCount: subs,
+          noiseLevel: getNoiseLevel(isNoisy ? 70 : 30)
         })
       })
       .catch(err => sendResponse({ success: false, error: err.message }))
     return true
   }
-  
+
   if (request.action === 'getQuotaStatus') {
-    sendResponse({ 
-      quotaUsed, 
-      quotaLimit: QUOTA_LIMIT, 
+    sendResponse({
+      quotaUsed,
+      quotaLimit: QUOTA_LIMIT,
       remaining: QUOTA_LIMIT - quotaUsed,
       cacheSize: Object.keys(channelCache).length
     })
     return false
   }
-  
-  if (request.action === 'setDiscoveryMode') {
-    chrome.storage.local.set({ discoveryMode: request.enabled })
+
+  if (request.action === 'setDiscoveryMode' || request.action === 'setNoiseCancellation') {
+    chrome.storage.local.set({
+      discoveryMode: request.enabled,
+      noiseCancellationActive: request.enabled
+    })
     sendResponse({ success: true })
     return false
   }
-  
-  if (request.action === 'getDiscoveryMode') {
-    chrome.storage.local.get(['discoveryMode'], (result) => {
-      sendResponse({ enabled: result.discoveryMode || false })
+
+  if (request.action === 'getDiscoveryMode' || request.action === 'getNoiseCancellation') {
+    chrome.storage.local.get(['discoveryMode', 'noiseCancellationActive'], (result) => {
+      sendResponse({
+        enabled: result.discoveryMode || result.noiseCancellationActive || false,
+        noiseCancellationActive: result.noiseCancellationActive || result.discoveryMode || false
+      })
     })
     return true
   }
@@ -745,13 +1344,13 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   }
 })
 
-// Extension icon click
+// Extension icon click - Toggle noise cancellation
 chrome.action.onClicked.addListener(async (tab) => {
   if (tab.url?.includes('youtube.com')) {
-    chrome.tabs.sendMessage(tab.id, { action: 'toggleDiscoveryMode' })
+    chrome.tabs.sendMessage(tab.id, { action: 'toggleNoiseCancellation' })
   } else {
     chrome.tabs.create({ url: 'https://www.youtube.com' })
   }
 })
 
-console.log('[Silenced] Discovery Engine v2.0 loaded - Equity Score + Sustainability Audit')
+console.log('[Silenced] 🔇 Noise Cancellation Engine v3.0 loaded - Hear the voices the algorithm drowns out')
