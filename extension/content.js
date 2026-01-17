@@ -1,953 +1,1277 @@
-// Silenced by the Algorithm - v5 YouTube Native UI
-// Clean, professional design that blends with YouTube
+// Silenced - YouTube Equity Filter with Shadow DOM Injection
+// Features: Equity Score Dashboard + Discovery Mode + KPMG Sustainability Audit
 
 const SUPABASE_URL = 'https://ntspwmgvabdpifzzebrv.supabase.co/functions/v1/recommend'
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im50c3B3bWd2YWJkcGlmenplYnJ2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg2MzIyNjIsImV4cCI6MjA4NDIwODI2Mn0.26ndaCrexA3g29FHrJB1uBKJIUW6E5yn-nbvarsBp4o'
 
-// State
+// ===============================================
+// STATE
+// ===============================================
 let currentVideoId = null
-let analysisData = null
-let transcriptData = null
-let isAnalyzing = false
 let panelInjected = false
+let isOpen = true
+let breakdownOpen = false
+let discoveryMode = false
+let discoveryCache = null
+let discoveryObserver = null
+let processedVideoCards = new Set()
+let shadowHost = null
 
-// UI State
-let uiState = {
-  detailedExpanded: false,
-  greenwashingExpanded: false,
-  alternativesExpanded: false,
-  transcriptExpanded: false,
-  expandedSubsections: new Set()
+// ===============================================
+// HELPERS
+// ===============================================
+const getVideoId = () => new URL(window.location.href).searchParams.get('v')
+const isWatchPage = () => window.location.pathname === '/watch'
+const isHomePage = () => window.location.pathname === '/' || window.location.pathname === ''
+const isSearchPage = () => window.location.pathname === '/results'
+
+function fmt(n) {
+  if (!n) return '0'
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'K'
+  return n.toString()
 }
 
-// Utilities
-function log(...args) { console.log('[BiasAnalysis]', ...args) }
-function getVideoId() { return new URL(window.location.href).searchParams.get('v') }
-function isWatchPage() { return window.location.pathname === '/watch' }
-
-// ============== TRANSCRIPT FETCHING ==============
-async function fetchTranscript(videoId) {
-  try {
-    // Method 1: Try the timedtext API directly
-    const langs = ['en', 'en-US', 'en-GB', '']
-    
-    for (const lang of langs) {
-      try {
-        const url = lang 
-          ? `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}&fmt=json3`
-          : `https://www.youtube.com/api/timedtext?v=${videoId}&fmt=json3`
-        
-        const response = await fetch(url)
-        if (response.ok) {
-          const data = await response.json()
-          if (data.events && data.events.length > 0) {
-            // Extract text from segments
-            const text = data.events
-              .filter(e => e.segs)
-              .map(e => e.segs.map(s => s.utf8 || '').join(''))
-              .join(' ')
-              .replace(/\s+/g, ' ')
-              .trim()
-            
-            if (text.length > 100) {
-              log('Transcript fetched successfully:', text.length, 'chars')
-              return { text, language: lang || 'auto' }
-            }
-          }
-        }
-      } catch (e) {
-        // Try next language
-      }
-    }
-    
-    // Method 2: Try to extract from page data
-    const ytInitialPlayerResponse = window.ytInitialPlayerResponse
-    if (ytInitialPlayerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks) {
-      const tracks = ytInitialPlayerResponse.captions.playerCaptionsTracklistRenderer.captionTracks
-      const englishTrack = tracks.find(t => t.languageCode?.startsWith('en')) || tracks[0]
-      
-      if (englishTrack?.baseUrl) {
-        const response = await fetch(englishTrack.baseUrl + '&fmt=json3')
-        if (response.ok) {
-          const data = await response.json()
-          if (data.events) {
-            const text = data.events
-              .filter(e => e.segs)
-              .map(e => e.segs.map(s => s.utf8 || '').join(''))
-              .join(' ')
-              .replace(/\s+/g, ' ')
-              .trim()
-            
-            if (text.length > 100) {
-              log('Transcript extracted from page:', text.length, 'chars')
-              return { text, language: englishTrack.languageCode }
-            }
-          }
-        }
-      }
-    }
-    
-    log('No transcript available')
-    return null
-  } catch (error) {
-    log('Transcript fetch error:', error)
-    return null
-  }
+function esc(t) {
+  if (!t) return ''
+  const d = document.createElement('div')
+  d.textContent = t
+  return d.innerHTML
 }
 
-// ============== API ==============
-async function analyzeVideo(videoId, transcript = null) {
-  if (isAnalyzing) return null
-  isAnalyzing = true
-  
-  try {
-    const body = { video_id: videoId }
-    if (transcript) {
-      // Send first 8000 chars of transcript to stay within limits
-      body.transcript = transcript.text.substring(0, 8000)
-      body.transcript_language = transcript.language
-    }
-    
-    // #region agent log
-    console.log('[DEBUG] API request starting', {videoId, url:SUPABASE_URL, body:body});
-    // #endregion
-    
-    const response = await fetch(SUPABASE_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${SUPABASE_KEY}`,
-        'apikey': SUPABASE_KEY
-      },
-      body: JSON.stringify(body)
+// ===============================================
+// PERSISTENCE - Load Discovery Mode state
+// ===============================================
+async function loadDiscoveryState() {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ action: 'getDiscoveryMode' }, (response) => {
+      discoveryMode = response?.enabled || false
+      resolve(discoveryMode)
     })
-    
-    // #region agent log
-    const responseText = await response.clone().text();
-    console.log('[DEBUG] API response received', {status:response.status, ok:response.ok, responseBody:responseText});
-    // #endregion
-    
-    if (!response.ok) {
-      console.log('[DEBUG] API returned non-ok status, body:', responseText);
-      throw new Error('Analysis failed: ' + response.status + ' - ' + responseText.substring(0, 200))
-    }
-    return JSON.parse(responseText)
-  } catch (error) {
-    // #region agent log
-    console.log('[DEBUG] API error caught', {errorMsg:error.message, errorName:error.name});
-    // #endregion
-    console.error('Analysis error:', error)
-    return null
-  } finally {
-    isAnalyzing = false
-  }
+  })
 }
 
-// ============== PANEL CREATION ==============
-function createPanel() {
-  const panel = document.createElement('div')
-  panel.id = 'silenced-panel'
-  panel.innerHTML = `
-    <div class="sp-header">
-      <div class="sp-header-title">Bias Analysis</div>
-      <button class="sp-minimize-btn" id="sp-minimize" title="Minimize">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M19 13H5v-2h14v2z"/>
+async function saveDiscoveryState(enabled) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ action: 'setDiscoveryMode', enabled }, () => {
+      resolve()
+    })
+  })
+}
+
+// ===============================================
+// SHADOW DOM INJECTION - Protects from YouTube CSS changes
+// ===============================================
+function createShadowContainer(id, hostElement) {
+  const host = document.createElement('div')
+  host.id = id
+  host.setAttribute('data-silenced', 'true')
+  
+  const shadow = host.attachShadow({ mode: 'open' })
+  
+  // Inject isolated styles
+  const style = document.createElement('style')
+  style.textContent = getShadowStyles()
+  shadow.appendChild(style)
+  
+  const container = document.createElement('div')
+  container.className = 'silenced-container'
+  shadow.appendChild(container)
+  
+  if (hostElement) {
+    hostElement.insertBefore(host, hostElement.firstChild)
+  }
+  
+  return { host, shadow, container }
+}
+
+function getShadowStyles() {
+  return `
+    /* Reset and base styles inside Shadow DOM */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    
+    .silenced-container {
+      font-family: "Roboto", "Arial", sans-serif;
+      color: #f1f1f1;
+      font-size: 14px;
+      line-height: 1.4;
+    }
+    
+    /* Dashboard Panel */
+    .silenced-dashboard {
+      background: linear-gradient(145deg, #1a1a1a 0%, #0d0d0d 100%);
+      border: 1px solid #333;
+      border-radius: 12px;
+      margin-bottom: 12px;
+      overflow: hidden;
+    }
+    
+    .dashboard-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px;
+      background: linear-gradient(90deg, #1a3a1a 0%, #1a1a1a 100%);
+      cursor: pointer;
+      border-bottom: 1px solid #333;
+    }
+    
+    .dashboard-header:hover {
+      background: linear-gradient(90deg, #1f4a1f 0%, #252525 100%);
+    }
+    
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    
+    .logo-icon {
+      width: 28px;
+      height: 28px;
+      background: linear-gradient(135deg, #00E676 0%, #00C853 100%);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    
+    .logo-icon svg {
+      width: 16px;
+      height: 16px;
+      fill: white;
+    }
+    
+    .logo-text {
+      font-size: 16px;
+      font-weight: 600;
+      color: #00E676;
+      letter-spacing: -0.3px;
+    }
+    
+    .score-chip {
+      background: #00E676;
+      color: #000;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    
+    .chevron {
+      width: 24px;
+      height: 24px;
+      fill: #aaa;
+      transition: transform 0.2s ease;
+    }
+    
+    .chevron.open {
+      transform: rotate(180deg);
+    }
+    
+    /* Score Display */
+    .score-section {
+      padding: 24px 16px;
+      text-align: center;
+      background: linear-gradient(180deg, rgba(0,230,118,0.05) 0%, transparent 100%);
+    }
+    
+    .score-ring {
+      width: 120px;
+      height: 120px;
+      margin: 0 auto 16px;
+      position: relative;
+    }
+    
+    .score-ring svg {
+      width: 100%;
+      height: 100%;
+      transform: rotate(-90deg);
+    }
+    
+    .score-ring circle {
+      fill: none;
+      stroke-width: 8;
+    }
+    
+    .score-ring .bg {
+      stroke: #333;
+    }
+    
+    .score-ring .progress {
+      stroke: #00E676;
+      stroke-linecap: round;
+      transition: stroke-dashoffset 1s ease;
+    }
+    
+    .score-value {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 32px;
+      font-weight: 700;
+      color: #00E676;
+    }
+    
+    .score-value span {
+      font-size: 16px;
+      color: #888;
+    }
+    
+    .score-label {
+      font-size: 14px;
+      color: #aaa;
+      margin-bottom: 8px;
+    }
+    
+    .score-sublabel {
+      font-size: 12px;
+      color: #666;
+    }
+    
+    /* Breakdown Items */
+    .breakdown-section {
+      border-top: 1px solid #333;
+    }
+    
+    .breakdown-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      cursor: pointer;
+    }
+    
+    .breakdown-header:hover {
+      background: #252525;
+    }
+    
+    .breakdown-title {
+      font-size: 14px;
+      font-weight: 500;
+      color: #f1f1f1;
+    }
+    
+    .breakdown-content {
+      display: none;
+      padding: 0 16px 16px;
+    }
+    
+    .breakdown-content.open {
+      display: block;
+    }
+    
+    .metric-item {
+      padding: 12px;
+      background: #1a1a1a;
+      border-radius: 8px;
+      margin-bottom: 8px;
+      border-left: 3px solid #00E676;
+    }
+    
+    .metric-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    
+    .metric-name {
+      font-size: 13px;
+      font-weight: 500;
+      color: #f1f1f1;
+    }
+    
+    .metric-score {
+      font-size: 13px;
+      font-weight: 600;
+      color: #00E676;
+    }
+    
+    .metric-bar {
+      height: 4px;
+      background: #333;
+      border-radius: 2px;
+      margin-bottom: 6px;
+      overflow: hidden;
+    }
+    
+    .metric-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #00E676 0%, #00C853 100%);
+      border-radius: 2px;
+      transition: width 0.5s ease;
+    }
+    
+    .metric-explanation {
+      font-size: 12px;
+      color: #888;
+      line-height: 1.4;
+    }
+    
+    .metric-value {
+      font-size: 11px;
+      color: #666;
+      margin-top: 4px;
+    }
+    
+    /* Sustainability Badge */
+    .sustainability-badge {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 16px;
+      margin: 12px 16px;
+      border-radius: 8px;
+      animation: badgePulse 2s ease-in-out infinite;
+    }
+    
+    .sustainability-badge.verified {
+      background: linear-gradient(135deg, rgba(0,230,118,0.2) 0%, rgba(0,200,83,0.1) 100%);
+      border: 1px solid #00E676;
+    }
+    
+    .sustainability-badge.warning {
+      background: linear-gradient(135deg, rgba(255,152,0,0.2) 0%, rgba(255,87,34,0.1) 100%);
+      border: 1px solid #FF9800;
+    }
+    
+    .badge-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+    }
+    
+    .badge-content {
+      flex: 1;
+    }
+    
+    .badge-title {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    
+    .badge-subtitle {
+      font-size: 11px;
+      color: #aaa;
+      margin-top: 2px;
+    }
+    
+    @keyframes badgePulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.85; }
+    }
+    
+    /* Discovery Mode Toggle */
+    .discovery-toggle {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      background: #1a1a1a;
+      border-top: 1px solid #333;
+      cursor: pointer;
+      transition: background 0.2s ease;
+    }
+    
+    .discovery-toggle:hover {
+      background: #252525;
+    }
+    
+    .toggle-switch {
+      width: 48px;
+      height: 26px;
+      background: #444;
+      border-radius: 13px;
+      position: relative;
+      transition: background 0.3s ease;
+    }
+    
+    .toggle-switch.active {
+      background: #00E676;
+    }
+    
+    .toggle-thumb {
+      width: 22px;
+      height: 22px;
+      background: white;
+      border-radius: 50%;
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      transition: transform 0.3s ease;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    }
+    
+    .toggle-switch.active .toggle-thumb {
+      transform: translateX(22px);
+    }
+    
+    .toggle-label {
+      flex: 1;
+    }
+    
+    .toggle-title {
+      font-size: 14px;
+      font-weight: 500;
+      color: #f1f1f1;
+    }
+    
+    .toggle-hint {
+      font-size: 11px;
+      color: #888;
+    }
+    
+    /* Footer */
+    .dashboard-footer {
+      padding: 10px 16px;
+      background: #0d0d0d;
+      border-top: 1px solid #333;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    .footer-text {
+      font-size: 11px;
+      color: #555;
+    }
+    
+    .footer-link {
+      font-size: 11px;
+      color: #00E676;
+      cursor: pointer;
+      text-decoration: none;
+    }
+    
+    .footer-link:hover {
+      text-decoration: underline;
+    }
+    
+    /* Loading State */
+    .loading-state {
+      padding: 48px 16px;
+      text-align: center;
+    }
+    
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid #333;
+      border-top-color: #00E676;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 16px;
+    }
+    
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    
+    .loading-text {
+      font-size: 14px;
+      color: #888;
+    }
+    
+    /* Body visibility */
+    .dashboard-body {
+      display: none;
+    }
+    
+    .dashboard-body.open {
+      display: block;
+    }
+    
+    /* ARIA Focus Styles */
+    button:focus, [role="button"]:focus, [tabindex="0"]:focus {
+      outline: 2px solid #00E676;
+      outline-offset: 2px;
+    }
+    
+    /* Injected Video Cards (for sidebar) */
+    .equity-video-card {
+      background: #1a1a1a;
+      border: 2px solid #00E676;
+      border-radius: 8px;
+      margin-bottom: 8px;
+      overflow: hidden;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    
+    .equity-video-card:hover {
+      transform: translateX(-4px);
+      box-shadow: 4px 0 12px rgba(0,230,118,0.3);
+    }
+    
+    .equity-video-link {
+      display: flex;
+      gap: 8px;
+      padding: 8px;
+      text-decoration: none;
+    }
+    
+    .equity-thumb {
+      width: 120px;
+      height: 68px;
+      border-radius: 4px;
+      object-fit: cover;
+      flex-shrink: 0;
+    }
+    
+    .equity-info {
+      flex: 1;
+      min-width: 0;
+    }
+    
+    .equity-title {
+      font-size: 12px;
+      font-weight: 500;
+      color: #f1f1f1;
+      line-height: 1.3;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      margin-bottom: 4px;
+    }
+    
+    .equity-channel {
+      font-size: 11px;
+      color: #aaa;
+      margin-bottom: 4px;
+    }
+    
+    .equity-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 6px;
+      background: linear-gradient(90deg, #00E676 0%, #00C853 100%);
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      color: #000;
+    }
+    
+    .rising-star-badge {
+      background: linear-gradient(90deg, #FFD700 0%, #FFA000 100%);
+    }
+  `
+}
+
+// ===============================================
+// EQUITY SCORE DASHBOARD
+// ===============================================
+function createDashboard(data) {
+  const { equityScore, sustainability, video, channel } = data
+  const score = equityScore?.totalScore || 0
+  const breakdown = equityScore?.breakdown || []
+  const circumference = 2 * Math.PI * 52
+  const offset = circumference - (score / 100) * circumference
+  
+  // Sustainability badge HTML
+  let sustainabilityHtml = ''
+  if (sustainability?.isSustainability && sustainability?.auditResult) {
+    const audit = sustainability.auditResult
+    const isVerified = audit.passesAudit
+    sustainabilityHtml = `
+      <div class="sustainability-badge ${isVerified ? 'verified' : 'warning'}"
+           role="status"
+           aria-label="${audit.level}: Score ${audit.score} out of 100">
+        <div class="badge-icon" style="background: ${audit.badgeColor}20; border: 2px solid ${audit.badgeColor}">
+          ${isVerified ? '🌿' : '⚠️'}
+        </div>
+        <div class="badge-content">
+          <div class="badge-title" style="color: ${audit.badgeColor}">${audit.level}</div>
+          <div class="badge-subtitle">${audit.recommendation}</div>
+        </div>
+      </div>
+    `
+  }
+  
+  return `
+    <div class="silenced-dashboard" role="region" aria-label="Algorithmic Bias Analysis Dashboard">
+      <div class="dashboard-header" 
+           id="dashboard-toggle"
+           role="button"
+           tabindex="0"
+           aria-expanded="${isOpen}"
+           aria-controls="dashboard-body"
+           aria-label="Toggle dashboard, current score ${score} out of 100">
+        <div class="header-left">
+          <div class="logo-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>
+          </div>
+          <span class="logo-text">Silenced</span>
+          <span class="score-chip" aria-label="Bias score">${score}/100</span>
+        </div>
+        <svg class="chevron ${isOpen ? 'open' : ''}" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/>
         </svg>
-      </button>
-    </div>
-    <div class="sp-loading" id="sp-loading">
-      <div class="sp-loading-content">
-        <div class="sp-spinner"></div>
-        <div class="sp-loading-title">Analyzing video content</div>
-        <div class="sp-loading-steps">
-          <div class="sp-step active"><span class="sp-step-dot"></span>Detecting content type</div>
-          <div class="sp-step"><span class="sp-step-dot"></span>Calculating bias metrics</div>
-          <div class="sp-step"><span class="sp-step-dot"></span>Finding alternatives</div>
+      </div>
+      
+      <div class="dashboard-body ${isOpen ? 'open' : ''}" id="dashboard-body">
+        <div class="loading-state" id="loading-state" style="display: none;">
+          <div class="spinner" aria-hidden="true"></div>
+          <div class="loading-text">Analyzing algorithmic bias...</div>
+        </div>
+        
+        <div id="dashboard-content">
+          <div class="score-section">
+            <div class="score-ring" role="img" aria-label="Bias score ${score} percent">
+              <svg viewBox="0 0 120 120">
+                <circle class="bg" cx="60" cy="60" r="52"/>
+                <circle class="progress" cx="60" cy="60" r="52"
+                        stroke-dasharray="${circumference}"
+                        stroke-dashoffset="${offset}"/>
+              </svg>
+              <div class="score-value">${score}<span>/100</span></div>
+            </div>
+            <div class="score-label">Algorithmic Bias Score</div>
+            <div class="score-sublabel">Higher = More Algorithmically Favored</div>
+          </div>
+          
+          ${sustainabilityHtml}
+          
+          <div class="breakdown-section">
+            <div class="breakdown-header"
+                 id="breakdown-toggle"
+                 role="button"
+                 tabindex="0"
+                 aria-expanded="${breakdownOpen}"
+                 aria-controls="breakdown-content"
+                 aria-label="Toggle detailed breakdown">
+              <span class="breakdown-title">Detailed Breakdown</span>
+              <svg class="chevron ${breakdownOpen ? 'open' : ''}" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/>
+              </svg>
+            </div>
+            <div class="breakdown-content ${breakdownOpen ? 'open' : ''}" id="breakdown-content" role="list">
+              ${breakdown.map((item, i) => `
+                <div class="metric-item" role="listitem" aria-label="${item.factor}: ${item.weighted} points">
+                  <div class="metric-header">
+                    <span class="metric-name">${esc(item.factor)}</span>
+                    <span class="metric-score">+${item.weighted}/${item.weight}</span>
+                  </div>
+                  <div class="metric-bar" role="progressbar" aria-valuenow="${item.score}" aria-valuemin="0" aria-valuemax="100">
+                    <div class="metric-bar-fill" style="width: ${item.score}%"></div>
+                  </div>
+                  <div class="metric-explanation">${esc(item.explanation)}</div>
+                  <div class="metric-value">${esc(item.metric)}</div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+          
+          <div class="discovery-toggle"
+               id="discovery-mode-toggle"
+               role="switch"
+               tabindex="0"
+               aria-checked="${discoveryMode}"
+               aria-label="Discovery Mode: Find underrepresented creators">
+            <div class="toggle-switch ${discoveryMode ? 'active' : ''}">
+              <div class="toggle-thumb"></div>
+            </div>
+            <div class="toggle-label">
+              <div class="toggle-title">Discovery Mode</div>
+              <div class="toggle-hint">Hide monopoly channels, show equity creators</div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="dashboard-footer">
+          <span class="footer-text">Silenced by the Algorithm v2.0</span>
+          <a class="footer-link" id="refresh-btn" role="button" tabindex="0" aria-label="Refresh analysis">Refresh</a>
         </div>
       </div>
     </div>
-    <div class="sp-content" id="sp-content" style="display: none;"></div>
-    <div class="sp-error" id="sp-error" style="display: none;"></div>
   `
-  return panel
 }
 
-function findSidebar() {
-  const selectors = ['#secondary #secondary-inner', '#secondary-inner', '#secondary']
-  for (const sel of selectors) {
-    const el = document.querySelector(sel)
-    if (el) return el
-  }
-  return null
-}
-
-function injectPanel() {
-  if (panelInjected) return true
-  const sidebar = findSidebar()
-  if (!sidebar) { setTimeout(injectPanel, 1000); return false }
+// ===============================================
+// INJECT DASHBOARD INTO SIDEBAR
+// ===============================================
+function injectDashboard(data) {
+  const sidebar = document.querySelector('#secondary-inner') || document.querySelector('#secondary')
+  if (!sidebar) return false
   
-  const existing = document.getElementById('silenced-panel')
-  if (existing) existing.remove()
+  // Remove existing
+  document.querySelector('#silenced-shadow-host')?.remove()
   
-  sidebar.insertBefore(createPanel(), sidebar.firstChild)
-  panelInjected = true
+  // Create Shadow DOM container
+  const { host, shadow, container } = createShadowContainer('silenced-shadow-host', sidebar)
+  shadowHost = host
   
-  // Add minimize handler
-  document.getElementById('sp-minimize')?.addEventListener('click', () => {
-    const content = document.getElementById('sp-content')
-    const loading = document.getElementById('sp-loading')
-    const error = document.getElementById('sp-error')
-    const btn = document.getElementById('sp-minimize')
-    
-    const isHidden = content?.style.display === 'none' && loading?.style.display === 'none'
-    
-    if (isHidden) {
-      if (analysisData) {
-        content.style.display = 'block'
-      } else if (isAnalyzing) {
-        loading.style.display = 'flex'
-      }
-      btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13H5v-2h14v2z"/></svg>'
-    } else {
-      content.style.display = 'none'
-      loading.style.display = 'none'
-      error.style.display = 'none'
-      btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>'
+  // Insert dashboard content
+  container.innerHTML = createDashboard(data)
+  
+  // Attach event listeners inside shadow DOM
+  const dashboardToggle = shadow.getElementById('dashboard-toggle')
+  const breakdownToggle = shadow.getElementById('breakdown-toggle')
+  const discoveryToggle = shadow.getElementById('discovery-mode-toggle')
+  const refreshBtn = shadow.getElementById('refresh-btn')
+  
+  dashboardToggle?.addEventListener('click', () => {
+    isOpen = !isOpen
+    const body = shadow.getElementById('dashboard-body')
+    const chevron = dashboardToggle.querySelector('.chevron')
+    body?.classList.toggle('open', isOpen)
+    chevron?.classList.toggle('open', isOpen)
+    dashboardToggle.setAttribute('aria-expanded', isOpen)
+  })
+  
+  // Keyboard support
+  dashboardToggle?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      dashboardToggle.click()
     }
   })
   
+  breakdownToggle?.addEventListener('click', () => {
+    breakdownOpen = !breakdownOpen
+    const content = shadow.getElementById('breakdown-content')
+    const chevron = breakdownToggle.querySelector('.chevron')
+    content?.classList.toggle('open', breakdownOpen)
+    chevron?.classList.toggle('open', breakdownOpen)
+    breakdownToggle.setAttribute('aria-expanded', breakdownOpen)
+  })
+  
+  breakdownToggle?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      breakdownToggle.click()
+    }
+  })
+  
+  discoveryToggle?.addEventListener('click', () => {
+    window.silencedToggleDiscovery()
+    const switchEl = discoveryToggle.querySelector('.toggle-switch')
+    switchEl?.classList.toggle('active', discoveryMode)
+    discoveryToggle.setAttribute('aria-checked', discoveryMode)
+  })
+  
+  discoveryToggle?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      discoveryToggle.click()
+    }
+  })
+  
+  refreshBtn?.addEventListener('click', () => {
+    currentVideoId = null
+    panelInjected = false
+    run()
+  })
+  
+  refreshBtn?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      refreshBtn.click()
+    }
+  })
+  
+  panelInjected = true
   return true
 }
 
-function showLoading() {
-  const loading = document.getElementById('sp-loading')
-  const content = document.getElementById('sp-content')
-  const error = document.getElementById('sp-error')
-  if (loading) loading.style.display = 'flex'
-  if (content) content.style.display = 'none'
-  if (error) error.style.display = 'none'
-}
-
-function updateLoadingStep(step) {
-  const steps = document.querySelectorAll('.sp-step')
-  steps.forEach((el, i) => {
-    if (i < step) el.classList.add('active')
-    else if (i === step) el.classList.add('active')
-    else el.classList.remove('active')
+// ===============================================
+// DISCOVERY MODE - Hide Monopolies, Show Equity
+// ===============================================
+async function runDiscovery(query) {
+  if (!query) {
+    query = extractCurrentQuery()
+  }
+  
+  console.log('[Silenced] Running Discovery for:', query)
+  
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ action: 'discover', query }, (response) => {
+      if (response?.success) {
+        discoveryCache = response.data
+        console.log('[Silenced] Discovery complete:', response.data)
+        resolve(response.data)
+      } else {
+        console.error('[Silenced] Discovery failed:', response?.error)
+        resolve(null)
+      }
+    })
   })
 }
 
-function showError(message) {
-  const loading = document.getElementById('sp-loading')
-  const content = document.getElementById('sp-content')
-  const error = document.getElementById('sp-error')
-  if (loading) loading.style.display = 'none'
-  if (content) content.style.display = 'none'
-  if (error) {
-    error.style.display = 'block'
-    error.innerHTML = `
-      <div class="sp-error-content">
-        <div class="sp-error-icon">
-          <svg viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
-          </svg>
+function extractCurrentQuery() {
+  if (isSearchPage()) {
+    return new URLSearchParams(window.location.search).get('search_query') || ''
+  }
+  
+  if (isWatchPage()) {
+    const title = document.querySelector('h1.ytd-video-primary-info-renderer, h1.ytd-watch-metadata, yt-formatted-string.ytd-watch-metadata')?.textContent
+    return title?.split(/[-|:]/).slice(0, 2).join(' ').trim() || ''
+  }
+  
+  return 'sustainability climate environment'
+}
+
+window.silencedToggleDiscovery = async function() {
+  discoveryMode = !discoveryMode
+  await saveDiscoveryState(discoveryMode)
+  
+  // Update toggle UI if exists in shadow DOM
+  if (shadowHost) {
+    const toggle = shadowHost.shadowRoot?.querySelector('#discovery-mode-toggle')
+    const switchEl = toggle?.querySelector('.toggle-switch')
+    switchEl?.classList.toggle('active', discoveryMode)
+    toggle?.setAttribute('aria-checked', discoveryMode)
+  }
+  
+  // Update floating toggle if exists
+  const floatingToggle = document.getElementById('silenced-discovery-toggle')
+  if (floatingToggle) {
+    floatingToggle.classList.toggle('active', discoveryMode)
+    floatingToggle.querySelector('.toggle-status').textContent = discoveryMode ? 'ON' : 'OFF'
+  }
+  
+  if (discoveryMode) {
+    const query = extractCurrentQuery()
+    await runDiscovery(query)
+    
+    // Hide monopoly videos in sidebar
+    hideMonopolyVideos()
+    
+    // Inject equity alternatives
+    injectEquityAlternatives()
+    
+    // Setup observer
+    setupDiscoveryObserver()
+  } else {
+    // Show hidden videos
+    document.querySelectorAll('[data-silenced-hidden]').forEach(el => {
+      el.style.display = ''
+      el.removeAttribute('data-silenced-hidden')
+    })
+    
+    // Remove injected cards
+    document.querySelectorAll('.silenced-equity-card').forEach(el => el.remove())
+    
+    if (discoveryObserver) {
+      discoveryObserver.disconnect()
+      discoveryObserver = null
+    }
+  }
+  
+  console.log('[Silenced] Discovery Mode:', discoveryMode ? 'ON' : 'OFF')
+}
+
+// Hide videos from monopoly channels (>100K subs)
+function hideMonopolyVideos() {
+  if (!discoveryCache?.monopolyChannelIds?.length) return
+  
+  const monopolyIds = new Set(discoveryCache.monopolyChannelIds)
+  
+  // Target sidebar recommendations
+  const sidebarVideos = document.querySelectorAll('ytd-compact-video-renderer, ytd-watch-next-secondary-results-renderer ytd-item-section-renderer')
+  
+  let hiddenCount = 0
+  sidebarVideos.forEach(video => {
+    // Try to get channel link to check
+    const channelLink = video.querySelector('a.ytd-channel-name, a[href^="/@"], a[href^="/channel/"]')
+    if (channelLink) {
+      const href = channelLink.getAttribute('href') || ''
+      const channelId = href.match(/\/channel\/([^/]+)/)?.[1]
+      
+      if (channelId && monopolyIds.has(channelId)) {
+        video.style.display = 'none'
+        video.setAttribute('data-silenced-hidden', 'true')
+        hiddenCount++
+      }
+    }
+  })
+  
+  // Also hide first 3 sidebar videos by default (typically from large channels)
+  const topSidebar = document.querySelectorAll('#secondary ytd-compact-video-renderer')
+  topSidebar.forEach((video, i) => {
+    if (i < 3 && !video.hasAttribute('data-silenced-hidden')) {
+      video.style.display = 'none'
+      video.setAttribute('data-silenced-hidden', 'true')
+      hiddenCount++
+    }
+  })
+  
+  console.log(`[Silenced] Hidden ${hiddenCount} monopoly videos`)
+}
+
+// Inject equity alternative videos
+function injectEquityAlternatives() {
+  if (!discoveryCache?.discoveredVideos?.length) return
+  
+  // Remove existing injected cards
+  document.querySelectorAll('.silenced-equity-card').forEach(el => el.remove())
+  
+  // Find sidebar
+  const sidebar = document.querySelector('#secondary ytd-watch-next-secondary-results-renderer, #secondary-inner')
+  if (!sidebar) return
+  
+  // Create container for equity videos
+  const equityContainer = document.createElement('div')
+  equityContainer.className = 'silenced-equity-container'
+  equityContainer.style.cssText = 'margin: 12px 0; padding: 12px; background: #0a1a0a; border-radius: 8px; border: 1px solid #00E67633;'
+  
+  // Title
+  const title = document.createElement('div')
+  title.style.cssText = 'font-size: 14px; font-weight: 600; color: #00E676; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;'
+  title.innerHTML = `
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="#00E676">
+      <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/>
+    </svg>
+    <span>Equity Alternatives</span>
+    <span style="font-size: 11px; color: #888; font-weight: 400;">(Under 100K subs)</span>
+  `
+  equityContainer.appendChild(title)
+  
+  // Add equity video cards
+  const videos = discoveryCache.discoveredVideos.slice(0, 5)
+  videos.forEach(video => {
+    const card = document.createElement('div')
+    card.className = 'silenced-equity-card'
+    card.style.cssText = `
+      background: #1a1a1a;
+      border: 2px solid ${video.isRisingStar ? '#FFD700' : '#00E676'};
+      border-radius: 8px;
+      margin-bottom: 8px;
+      overflow: hidden;
+      transition: transform 0.2s ease;
+    `
+    
+    card.innerHTML = `
+      <a href="/watch?v=${video.videoId}" style="display: flex; gap: 8px; padding: 8px; text-decoration: none;">
+        <img src="${video.thumbnail}" style="width: 120px; height: 68px; border-radius: 4px; object-fit: cover; flex-shrink: 0;" alt="${esc(video.title)}">
+        <div style="flex: 1; min-width: 0;">
+          <div style="font-size: 12px; font-weight: 500; color: #f1f1f1; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-bottom: 4px;">
+            ${esc(video.title)}
+          </div>
+          <div style="font-size: 11px; color: #aaa; margin-bottom: 4px;">${esc(video.channelTitle)}</div>
+          <div style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; background: ${video.isRisingStar ? 'linear-gradient(90deg, #FFD700, #FFA000)' : 'linear-gradient(90deg, #00E676, #00C853)'}; border-radius: 4px; font-size: 10px; font-weight: 600; color: #000;">
+            ${video.isRisingStar ? '⭐ Rising Star' : '🌱 Equity Creator'} · ${fmt(video.subscriberCount)} subs
+          </div>
         </div>
-        <div class="sp-error-title">Analysis Unavailable</div>
-        <p>${message}</p>
-        <button class="sp-btn sp-btn-primary" onclick="window.silencedRetry()">Try Again</button>
+      </a>
+    `
+    
+    card.addEventListener('mouseenter', () => {
+      card.style.transform = 'translateX(-4px)'
+      card.style.boxShadow = `4px 0 12px ${video.isRisingStar ? 'rgba(255,215,0,0.3)' : 'rgba(0,230,118,0.3)'}`
+    })
+    
+    card.addEventListener('mouseleave', () => {
+      card.style.transform = ''
+      card.style.boxShadow = ''
+    })
+    
+    equityContainer.appendChild(card)
+  })
+  
+  // Insert at top of sidebar
+  sidebar.insertBefore(equityContainer, sidebar.firstChild)
+}
+
+// ===============================================
+// MUTATION OBSERVER
+// ===============================================
+function setupDiscoveryObserver() {
+  if (discoveryObserver) {
+    discoveryObserver.disconnect()
+  }
+  
+  discoveryObserver = new MutationObserver((mutations) => {
+    if (!discoveryMode) return
+    
+    for (const mutation of mutations) {
+      for (const node of mutation.addedNodes) {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          // Re-hide any new monopoly videos
+          if (node.matches?.('ytd-compact-video-renderer')) {
+            setTimeout(() => hideMonopolyVideos(), 100)
+          }
+        }
+      }
+    }
+  })
+  
+  discoveryObserver.observe(document.body, { childList: true, subtree: true })
+}
+
+// ===============================================
+// FLOATING TOGGLE (for non-watch pages)
+// ===============================================
+function createFloatingToggle() {
+  const existing = document.getElementById('silenced-discovery-toggle')
+  if (existing) {
+    existing.classList.toggle('active', discoveryMode)
+    existing.querySelector('.toggle-status').textContent = discoveryMode ? 'ON' : 'OFF'
+    return
+  }
+  
+  const toggle = document.createElement('div')
+  toggle.id = 'silenced-discovery-toggle'
+  toggle.className = discoveryMode ? 'active' : ''
+  toggle.setAttribute('role', 'switch')
+  toggle.setAttribute('aria-checked', discoveryMode)
+  toggle.setAttribute('aria-label', 'Toggle Discovery Mode to find underrepresented creators')
+  toggle.setAttribute('tabindex', '0')
+  
+  toggle.innerHTML = `
+    <div class="toggle-inner">
+      <div class="toggle-icon">
+        <svg viewBox="0 0 24 24">
+          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+        </svg>
+      </div>
+      <div class="toggle-label">
+        <span class="toggle-title">Discovery Mode</span>
+        <span class="toggle-status">${discoveryMode ? 'ON' : 'OFF'}</span>
+      </div>
+    </div>
+  `
+  
+  toggle.addEventListener('click', () => window.silencedToggleDiscovery())
+  toggle.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      window.silencedToggleDiscovery()
+    }
+  })
+  
+  document.body.appendChild(toggle)
+}
+
+// ===============================================
+// MAIN ANALYSIS FUNCTION
+// ===============================================
+async function run() {
+  const videoId = getVideoId()
+  if (!videoId || (videoId === currentVideoId && panelInjected)) return
+  
+  currentVideoId = videoId
+  panelInjected = false
+  breakdownOpen = false
+  
+  // Wait for sidebar
+  for (let i = 0; i < 15; i++) {
+    if (document.querySelector('#secondary')) break
+    await new Promise(r => setTimeout(r, 1000))
+  }
+  
+  // Show loading state (inject minimal dashboard first)
+  const sidebar = document.querySelector('#secondary-inner') || document.querySelector('#secondary')
+  if (!sidebar) return
+  
+  // Create shadow host with loading state
+  document.querySelector('#silenced-shadow-host')?.remove()
+  const { host, shadow, container } = createShadowContainer('silenced-shadow-host', sidebar)
+  shadowHost = host
+  
+  container.innerHTML = `
+    <div class="silenced-dashboard">
+      <div class="dashboard-header">
+        <div class="header-left">
+          <div class="logo-icon"><svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg></div>
+          <span class="logo-text">Silenced</span>
+        </div>
+      </div>
+      <div class="dashboard-body open">
+        <div class="loading-state">
+          <div class="spinner"></div>
+          <div class="loading-text">Analyzing algorithmic bias...</div>
+        </div>
+      </div>
+    </div>
+  `
+  
+  // Fetch transcript
+  const transcript = await getTranscript(videoId)
+  
+  // Get analysis from background script
+  const response = await new Promise(resolve => {
+    chrome.runtime.sendMessage({ 
+      action: 'analyze', 
+      videoId, 
+      transcript: transcript?.substring(0, 8000) 
+    }, resolve)
+  })
+  
+  if (response?.success && response?.data) {
+    injectDashboard(response.data)
+    
+    // If discovery mode is on, run discovery
+    if (discoveryMode) {
+      const query = extractCurrentQuery()
+      await runDiscovery(query)
+      hideMonopolyVideos()
+      injectEquityAlternatives()
+    }
+  } else {
+    // Show error
+    container.innerHTML = `
+      <div class="silenced-dashboard">
+        <div class="dashboard-header">
+          <div class="header-left">
+            <div class="logo-icon"><svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg></div>
+            <span class="logo-text">Silenced</span>
+          </div>
+        </div>
+        <div class="dashboard-body open">
+          <div style="padding: 24px; text-align: center; color: #888;">
+            <div style="margin-bottom: 12px;">Could not analyze this video</div>
+            <button onclick="window.silencedRetry()" style="background: #00E676; color: #000; border: none; padding: 8px 16px; border-radius: 8px; font-weight: 600; cursor: pointer;">
+              Try Again
+            </button>
+          </div>
+        </div>
       </div>
     `
   }
 }
 
-function showResults(data) {
-  const loading = document.getElementById('sp-loading')
-  const content = document.getElementById('sp-content')
-  const error = document.getElementById('sp-error')
-  
-  if (loading) loading.style.display = 'none'
-  if (error) error.style.display = 'none'
-  if (content) {
-    content.style.display = 'block'
-    content.innerHTML = renderSummaryView(data)
-    attachEventListeners()
-  }
+// ===============================================
+// TRANSCRIPT FETCHING
+// ===============================================
+async function getTranscript(videoId) {
+  try {
+    for (const lang of ['en', 'en-US', '']) {
+      const url = `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}&fmt=json3`
+      const res = await fetch(url)
+      if (res.ok) {
+        const data = await res.json()
+        if (data.events?.length) {
+          const text = data.events
+            .filter(e => e.segs)
+            .flatMap(e => e.segs.map(s => s.utf8 || ''))
+            .join(' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+          if (text.length > 100) return text
+        }
+      }
+    }
+  } catch {}
+  return null
 }
 
-// ============== RENDER FUNCTIONS ==============
-
-function getScoreClass(score) {
-  if (score <= 35) return 'low'
-  if (score <= 70) return 'moderate'
-  return 'high'
-}
-
-function getVerdictText(score) {
-  if (score <= 35) return 'Minimal Bias'
-  if (score <= 70) return 'Moderate Bias'
-  return 'High Bias'
-}
-
-function getVerdictDesc(score) {
-  if (score <= 35) return 'This video shows minimal signs of algorithmic promotion.'
-  if (score <= 70) return 'This video has some algorithmic advantages over similar content.'
-  return 'This video shows significant signs of algorithmic promotion.'
-}
-
-function renderSummaryView(data) {
-  const { bias_analysis, content_analysis, sustainability, silenced_alternatives, transcript_analysis } = data
-  const isSustainability = sustainability?.is_sustainability
-  const score = bias_analysis.total_score
-  const scoreClass = getScoreClass(score)
-  
-  // Get top contributing factor
-  const topFactor = bias_analysis.breakdown.reduce((a, b) => 
-    (b.points / b.maxPoints) > (a.points / a.maxPoints) ? b : a
-  )
-  
-  // Greenwashing metrics
-  const gwScore = sustainability?.greenwashing?.score ? Math.round(sustainability.greenwashing.score * 100) : 0
-  const gwRisk = sustainability?.greenwashing?.risk_level || 'low'
-  
-  return `
-    <!-- HEADER WITH MODE -->
-    <div class="sp-header">
-      <div class="sp-header-title">
-        Bias Analysis
-        ${isSustainability ? '<span class="sp-header-badge sustainability">Sustainability</span>' : ''}
-      </div>
-    </div>
-    
-    <!-- SCORE SECTION -->
-    <div class="sp-score-section">
-      <div class="sp-score-label">Algorithmic Bias Score</div>
-      <div class="sp-score-display">
-        <span class="sp-score-value ${scoreClass}">${score}</span>
-        <span class="sp-score-max">/100</span>
-      </div>
-      <div class="sp-score-bar">
-        <div class="sp-score-fill ${scoreClass}" style="width: ${score}%"></div>
-      </div>
-      <div class="sp-verdict ${scoreClass}">
-        <span class="sp-verdict-dot"></span>
-        ${getVerdictText(score)}
-      </div>
-      <div class="sp-score-desc">${getVerdictDesc(score)}</div>
-    </div>
-    
-    ${isSustainability ? `
-      <!-- DUAL SCORES (Sustainability Mode) -->
-      <div class="sp-dual-scores">
-        <div class="sp-dual-score">
-          <div class="sp-dual-score-label">Bias Score</div>
-          <div class="sp-dual-score-value ${scoreClass}">
-            <span class="sp-verdict-dot"></span>
-            ${score}/100
-          </div>
-        </div>
-        <div class="sp-dual-score">
-          <div class="sp-dual-score-label">Greenwashing Risk</div>
-          <div class="sp-dual-score-value ${gwRisk}">
-            <span class="sp-verdict-dot"></span>
-            ${gwScore}/100
-          </div>
-        </div>
-      </div>
-      
-      ${sustainability.greenwashing?.flags?.length > 0 ? `
-        <div class="sp-issues">
-          <div class="sp-issues-title">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>
-            </svg>
-            Key Issues Detected
-          </div>
-          <ul class="sp-issues-list">
-            ${sustainability.greenwashing.flags.slice(0, 2).map(f => `<li>${escapeHtml(f)}</li>`).join('')}
-          </ul>
-        </div>
-      ` : ''}
-    ` : `
-      <!-- KEY INSIGHT (General Mode) -->
-      <div class="sp-insight-box">
-        <div class="sp-insight-title">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/>
-          </svg>
-          Primary Bias Factor
-        </div>
-        <div class="sp-insight-content">
-          <div class="sp-insight-factor">${topFactor.factor}</div>
-          <div class="sp-insight-explanation">${topFactor.explanation}</div>
-        </div>
-      </div>
-    `}
-    
-    <!-- METRICS GRID -->
-    <div class="sp-metrics-grid">
-      ${bias_analysis.breakdown.slice(0, 4).map(item => `
-        <div class="sp-metric-card">
-          <div class="sp-metric-label">${item.factor.replace(' Advantage', '').replace(' Optimization', '')}</div>
-          <div class="sp-metric-value">${item.points > item.maxPoints/2 ? 'High' : item.points > item.maxPoints/4 ? 'Moderate' : 'Low'}</div>
-          <div class="sp-metric-bar">
-            <div class="sp-metric-fill bias" style="width: ${(item.points/item.maxPoints)*100}%"></div>
-          </div>
-          <div class="sp-metric-points">+${item.points}/${item.maxPoints} pts</div>
-        </div>
-      `).join('')}
-    </div>
-    
-    <!-- ALTERNATIVES PREVIEW -->
-    ${silenced_alternatives?.length > 0 ? `
-      <div class="sp-alternatives-preview">
-        <div class="sp-alternatives-header">
-          <div class="sp-alternatives-title">Underrepresented Alternatives</div>
-        </div>
-        <div class="sp-alternatives-row">
-          ${silenced_alternatives.slice(0, 3).map(alt => `
-            <a href="https://youtube.com/watch?v=${alt.video_id}" class="sp-alt-thumb" title="${escapeHtml(alt.title)}">
-              <img src="${alt.thumbnail}" alt="" loading="lazy">
-              <div class="sp-alt-overlay">
-                <span class="sp-alt-views">${formatNumber(alt.view_count)}</span>
-              </div>
-            </a>
-          `).join('')}
-        </div>
-        <button class="sp-view-all" data-action="expand-alternatives">
-          View all ${silenced_alternatives.length} alternatives
-        </button>
-      </div>
-    ` : ''}
-    
-    <!-- EXPAND BUTTONS -->
-    <div class="sp-expand-buttons">
-      ${isSustainability ? `
-        <button class="sp-btn sp-btn-success" data-action="toggle-greenwashing">
-          <span class="sp-btn-icon">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M17 8l-1.41 1.41L17.17 11H9v2h8.17l-1.58 1.58L17 16l4-4-4-4zM5 5h7V3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h7v-2H5V5z"/>
-            </svg>
-          </span>
-          Greenwashing Report
-          <span class="sp-btn-arrow">+</span>
-        </button>
-      ` : ''}
-      <button class="sp-btn sp-btn-secondary" data-action="toggle-detailed">
-        <span class="sp-btn-icon">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/>
-          </svg>
-        </span>
-        Detailed Analysis
-        <span class="sp-btn-arrow">+</span>
-      </button>
-      ${transcript_analysis ? `
-        <button class="sp-btn sp-btn-secondary" data-action="toggle-transcript">
-          <span class="sp-btn-icon">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm4 18H6V4h7v5h5v11z"/>
-            </svg>
-          </span>
-          Transcript Analysis
-          <span class="sp-btn-arrow">+</span>
-        </button>
-      ` : ''}
-    </div>
-    
-    <!-- EXPANDABLE: GREENWASHING REPORT -->
-    ${isSustainability ? `
-      <div class="sp-expandable" id="sp-greenwashing" style="display: none;">
-        ${renderGreenwashingReport(sustainability)}
-      </div>
-    ` : ''}
-    
-    <!-- EXPANDABLE: DETAILED ANALYSIS -->
-    <div class="sp-expandable" id="sp-detailed" style="display: none;">
-      ${renderDetailedAnalysis(data)}
-    </div>
-    
-    <!-- EXPANDABLE: TRANSCRIPT ANALYSIS -->
-    ${transcript_analysis ? `
-      <div class="sp-expandable" id="sp-transcript" style="display: none;">
-        ${renderTranscriptAnalysis(transcript_analysis)}
-      </div>
-    ` : ''}
-    
-    <!-- EXPANDABLE: FULL ALTERNATIVES -->
-    <div class="sp-expandable" id="sp-alternatives-full" style="display: none;">
-      ${renderFullAlternatives(silenced_alternatives, content_analysis)}
-    </div>
-    
-    <!-- FOOTER -->
-    <div class="sp-footer">
-      <span>AI-Powered Analysis</span>
-      <a href="#" onclick="window.silencedRetry(); return false;">Refresh</a>
-    </div>
-  `
-}
-
-function renderGreenwashingReport(sustainability) {
-  const gw = sustainability?.greenwashing
-  if (!gw) return '<p class="sp-empty">Greenwashing analysis not available for this content.</p>'
-  
-  const cred = sustainability?.credibility
-  const gwScore = Math.round((gw.score || 0) * 100)
-  const riskLevel = gw.risk_level || 'low'
-  
-  return `
-    <div class="sp-section-header">
-      <span class="sp-section-title">Greenwashing Analysis</span>
-      <button class="sp-collapse-btn" data-action="collapse-greenwashing">Collapse</button>
-    </div>
-    
-    <div class="sp-gw-overview ${riskLevel}">
-      <div class="sp-gw-ring" style="--score: ${gwScore}">
-        <span>${gwScore}</span>
-      </div>
-      <div class="sp-gw-info">
-        <div class="sp-gw-risk">Risk Level: <strong>${riskLevel.toUpperCase()}</strong></div>
-        <div class="sp-gw-explanation">${escapeHtml(gw?.explanation || 'No significant greenwashing indicators detected.')}</div>
-      </div>
-    </div>
-    
-    <!-- Red Flags -->
-    <div class="sp-subsection">
-      <button class="sp-subsection-header" data-subsection="gw-flags">
-        <span>Red Flags Detected</span>
-        ${gw?.flags?.length > 0 ? `<span class="sp-subsection-count">${gw.flags.length}</span>` : ''}
-        <span class="sp-subsection-arrow">›</span>
-      </button>
-      <div class="sp-subsection-content" id="gw-flags">
-        ${gw?.flags?.length > 0 ? `
-          <ul class="sp-list">
-            ${gw.flags.map(f => `<li>${escapeHtml(f)}</li>`).join('')}
-          </ul>
-        ` : '<p class="sp-empty">No red flags detected</p>'}
-      </div>
-    </div>
-    
-    <!-- Credibility -->
-    <div class="sp-subsection">
-      <button class="sp-subsection-header" data-subsection="gw-cred">
-        <span>Source Credibility</span>
-        <span class="sp-subsection-score">${Math.round((cred?.score || 0.5) * 100)}%</span>
-        <span class="sp-subsection-arrow">›</span>
-      </button>
-      <div class="sp-subsection-content" id="gw-cred">
-        ${cred?.signals?.length > 0 ? `
-          <div class="sp-cred-section positive">
-            <strong>Positive Signals</strong>
-            <ul>${cred.signals.map(s => `<li>${escapeHtml(s)}</li>`).join('')}</ul>
-          </div>
-        ` : ''}
-        ${cred?.concerns?.length > 0 ? `
-          <div class="sp-cred-section negative">
-            <strong>Concerns</strong>
-            <ul>${cred.concerns.map(c => `<li>${escapeHtml(c)}</li>`).join('')}</ul>
-          </div>
-        ` : ''}
-        ${!cred?.signals?.length && !cred?.concerns?.length ? '<p class="sp-empty">No credibility data available</p>' : ''}
-      </div>
-    </div>
-    
-    <!-- Claims to Verify -->
-    ${sustainability.fact_check_needed?.length > 0 ? `
-      <div class="sp-subsection">
-        <button class="sp-subsection-header" data-subsection="gw-claims">
-          <span>Claims Requiring Verification</span>
-          <span class="sp-subsection-count">${sustainability.fact_check_needed.length}</span>
-          <span class="sp-subsection-arrow">›</span>
-        </button>
-        <div class="sp-subsection-content" id="gw-claims">
-          <ul class="sp-list">
-            ${sustainability.fact_check_needed.map(c => `<li>${escapeHtml(c)}</li>`).join('')}
-          </ul>
-        </div>
-      </div>
-    ` : ''}
-  `
-}
-
-function renderDetailedAnalysis(data) {
-  const { bias_analysis, content_analysis } = data
-  
-  return `
-    <div class="sp-section-header">
-      <span class="sp-section-title">Detailed Bias Analysis</span>
-      <button class="sp-collapse-btn" data-action="collapse-detailed">Collapse</button>
-    </div>
-    
-    <!-- Bias Breakdown -->
-    <div class="sp-subsection">
-      <button class="sp-subsection-header" data-subsection="bias-breakdown">
-        <span>Bias Score Breakdown</span>
-        <span class="sp-subsection-score">${bias_analysis.total_score}/100</span>
-        <span class="sp-subsection-arrow">›</span>
-      </button>
-      <div class="sp-subsection-content" id="bias-breakdown">
-        ${bias_analysis.breakdown.map(item => `
-          <div class="sp-breakdown-item">
-            <div class="sp-breakdown-header">
-              <span class="sp-breakdown-name">${item.factor}</span>
-              <span class="sp-breakdown-points ${item.points > item.maxPoints/2 ? 'high' : 'low'}">
-                +${item.points}/${item.maxPoints}
-              </span>
-            </div>
-            <div class="sp-breakdown-bar">
-              <div class="sp-breakdown-fill" style="width: ${(item.points/item.maxPoints)*100}%"></div>
-            </div>
-            <div class="sp-breakdown-explanation">${item.explanation}</div>
-            <div class="sp-breakdown-insight">${item.insight}</div>
-          </div>
-        `).join('')}
-      </div>
-    </div>
-    
-    <!-- Content Quality -->
-    <div class="sp-subsection">
-      <button class="sp-subsection-header" data-subsection="content-quality">
-        <span>Content Quality Analysis</span>
-        <span class="sp-subsection-arrow">›</span>
-      </button>
-      <div class="sp-subsection-content" id="content-quality">
-        <div class="sp-content-metric">
-          <span class="sp-content-metric-label">Educational Value</span>
-          <div class="sp-content-metric-bar">
-            <div class="sp-content-metric-fill green" style="width: ${content_analysis.educational_value || 0}%"></div>
-          </div>
-          <span class="sp-content-metric-value">${content_analysis.educational_value || 0}%</span>
-        </div>
-        <div class="sp-content-metric">
-          <span class="sp-content-metric-label">Content Depth</span>
-          <div class="sp-content-metric-bar">
-            <div class="sp-content-metric-fill blue" style="width: ${content_analysis.depth_score || 0}%"></div>
-          </div>
-          <span class="sp-content-metric-value">${content_analysis.depth_score || 0}%</span>
-        </div>
-        <div class="sp-content-metric">
-          <span class="sp-content-metric-label">Sensationalism</span>
-          <div class="sp-content-metric-bar">
-            <div class="sp-content-metric-fill orange" style="width: ${content_analysis.sensationalism || 0}%"></div>
-          </div>
-          <span class="sp-content-metric-value">${content_analysis.sensationalism || 0}%</span>
-        </div>
-        
-        ${content_analysis.clickbait_indicators?.length > 0 ? `
-          <div class="sp-warning-box">
-            <strong>Clickbait Indicators Detected</strong>
-            <div class="sp-tags">
-              ${content_analysis.clickbait_indicators.map(i => `<span class="sp-tag warning">${escapeHtml(i)}</span>`).join('')}
-            </div>
-          </div>
-        ` : ''}
-        
-        <div class="sp-content-tags">
-          <span class="sp-tag topic">${escapeHtml(content_analysis.topic || 'Unknown')}</span>
-          <span class="sp-tag type">${escapeHtml(content_analysis.content_type || 'Unknown')}</span>
-        </div>
-      </div>
-    </div>
-  `
-}
-
-function renderTranscriptAnalysis(analysis) {
-  if (!analysis) return '<p class="sp-empty">No transcript analysis available</p>'
-  
-  return `
-    <div class="sp-section-header">
-      <span class="sp-section-title">Transcript Analysis</span>
-      <button class="sp-collapse-btn" data-action="collapse-transcript">Collapse</button>
-    </div>
-    
-    <div class="sp-subsection-content" style="display: block;">
-      <div class="sp-transcript-metrics">
-        <div class="sp-transcript-stat">
-          <div class="sp-transcript-stat-value">${analysis.claims_count || 0}</div>
-          <div class="sp-transcript-stat-label">Claims Found</div>
-        </div>
-        <div class="sp-transcript-stat">
-          <div class="sp-transcript-stat-value">${analysis.sources_cited || 0}</div>
-          <div class="sp-transcript-stat-label">Sources Cited</div>
-        </div>
-        <div class="sp-transcript-stat">
-          <div class="sp-transcript-stat-value">${analysis.specificity_score || 0}%</div>
-          <div class="sp-transcript-stat-label">Specificity</div>
-        </div>
-      </div>
-      
-      ${analysis.key_claims?.length > 0 ? `
-        <div class="sp-claims-section">
-          <div class="sp-claims-title">Key Claims Identified</div>
-          ${analysis.key_claims.slice(0, 5).map(claim => `
-            <div class="sp-claim-item">${escapeHtml(claim)}</div>
-          `).join('')}
-        </div>
-      ` : ''}
-      
-      ${analysis.topic_coverage ? `
-        <div class="sp-content-metric" style="margin-top: 16px;">
-          <span class="sp-content-metric-label">Topic Coverage</span>
-          <div class="sp-content-metric-bar">
-            <div class="sp-content-metric-fill blue" style="width: ${analysis.topic_coverage}%"></div>
-          </div>
-          <span class="sp-content-metric-value">${analysis.topic_coverage}%</span>
-        </div>
-      ` : ''}
-    </div>
-  `
-}
-
-function renderFullAlternatives(alternatives, content_analysis) {
-  if (!alternatives?.length) return '<p class="sp-empty">No alternatives found</p>'
-  
-  return `
-    <div class="sp-section-header">
-      <span class="sp-section-title">Underrepresented Alternatives</span>
-      <button class="sp-collapse-btn" data-action="collapse-alternatives">Collapse</button>
-    </div>
-    
-    <p class="sp-section-desc">Videos covering "${escapeHtml(content_analysis?.topic || 'this topic')}" that may be algorithmically underrepresented:</p>
-    
-    <div class="sp-alternatives-list">
-      ${alternatives.map((alt) => `
-        <div class="sp-alt-card">
-          <a href="https://youtube.com/watch?v=${alt.video_id}" class="sp-alt-card-thumb">
-            <img src="${alt.thumbnail}" alt="" loading="lazy">
-          </a>
-          <div class="sp-alt-card-info">
-            <a href="https://youtube.com/watch?v=${alt.video_id}" class="sp-alt-card-title">
-              ${escapeHtml(alt.title)}
-            </a>
-            <div class="sp-alt-card-channel">${escapeHtml(alt.channel)}</div>
-            <div class="sp-alt-card-stats">
-              ${formatNumber(alt.view_count)} views · ${formatNumber(alt.subscriber_count)} subscribers
-            </div>
-            <div class="sp-alt-card-suppression">
-              <div class="sp-suppression-bar">
-                <div class="sp-suppression-fill" style="width: ${alt.silence_score}%"></div>
-              </div>
-              <span class="sp-suppression-label">${alt.silence_score}% underrepresented</span>
-            </div>
-            ${alt.reasons?.length > 0 ? `
-              <div class="sp-alt-card-reasons">
-                ${alt.reasons.slice(0, 2).map(r => `<span class="sp-reason-tag">${escapeHtml(r)}</span>`).join('')}
-              </div>
-            ` : ''}
-          </div>
-        </div>
-      `).join('')}
-    </div>
-  `
-}
-
-// ============== EVENT HANDLERS ==============
-
-function attachEventListeners() {
-  // Expand buttons
-  document.querySelectorAll('[data-action]').forEach(btn => {
-    btn.addEventListener('click', handleAction)
-  })
-  
-  // Subsection toggles
-  document.querySelectorAll('[data-subsection]').forEach(btn => {
-    btn.addEventListener('click', () => toggleSubsection(btn.dataset.subsection))
-  })
-}
-
-function handleAction(e) {
-  const action = e.currentTarget.dataset.action
-  
-  switch(action) {
-    case 'toggle-detailed':
-      toggleSection('sp-detailed', 'detailedExpanded')
-      break
-    case 'toggle-greenwashing':
-      toggleSection('sp-greenwashing', 'greenwashingExpanded')
-      break
-    case 'toggle-transcript':
-      toggleSection('sp-transcript', 'transcriptExpanded')
-      break
-    case 'expand-alternatives':
-    case 'collapse-alternatives':
-      toggleSection('sp-alternatives-full', 'alternativesExpanded')
-      break
-    case 'collapse-detailed':
-      toggleSection('sp-detailed', 'detailedExpanded')
-      break
-    case 'collapse-greenwashing':
-      toggleSection('sp-greenwashing', 'greenwashingExpanded')
-      break
-    case 'collapse-transcript':
-      toggleSection('sp-transcript', 'transcriptExpanded')
-      break
-  }
-}
-
-function toggleSection(sectionId, stateKey) {
-  const section = document.getElementById(sectionId)
-  if (!section) return
-  
-  uiState[stateKey] = !uiState[stateKey]
-  
-  if (uiState[stateKey]) {
-    section.style.display = 'block'
-    section.classList.add('expanded')
-    section.style.maxHeight = '0'
-    section.style.opacity = '0'
-    requestAnimationFrame(() => {
-      section.style.maxHeight = section.scrollHeight + 'px'
-      section.style.opacity = '1'
-    })
-  } else {
-    section.style.maxHeight = '0'
-    section.style.opacity = '0'
-    setTimeout(() => {
-      section.style.display = 'none'
-      section.classList.remove('expanded')
-    }, 300)
-  }
-  
-  // Update button arrow
-  const btn = document.querySelector(`[data-action="toggle-${sectionId.replace('sp-', '')}"]`)
-  if (btn) {
-    const arrow = btn.querySelector('.sp-btn-arrow')
-    if (arrow) arrow.textContent = uiState[stateKey] ? '−' : '+'
-  }
-}
-
-function toggleSubsection(subsectionId) {
-  const content = document.getElementById(subsectionId)
-  const header = document.querySelector(`[data-subsection="${subsectionId}"]`)
-  if (!content || !header) return
-  
-  const isExpanded = uiState.expandedSubsections.has(subsectionId)
-  
-  if (isExpanded) {
-    uiState.expandedSubsections.delete(subsectionId)
-    content.classList.remove('expanded')
-    header.classList.remove('expanded')
-  } else {
-    uiState.expandedSubsections.add(subsectionId)
-    content.classList.add('expanded')
-    header.classList.add('expanded')
-  }
-}
-
-// ============== HELPERS ==============
-
-function formatNumber(num) {
-  if (!num) return '0'
-  if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M'
-  if (num >= 1000) return (num / 1000).toFixed(1) + 'K'
-  return num.toString()
-}
-
-function escapeHtml(text) {
-  if (!text) return ''
-  const div = document.createElement('div')
-  div.textContent = text
-  return div.innerHTML
-}
-
-// ============== MAIN LOGIC ==============
-
-async function handleVideoPage() {
-  const videoId = getVideoId()
-  // #region agent log
-  console.log('[DEBUG] Video page handling started', {videoId, currentVideoId, panelInjected, url:window.location.href, supabaseUrl:SUPABASE_URL});
-  // #endregion
-  if (!videoId || (videoId === currentVideoId && panelInjected)) return
-  
-  currentVideoId = videoId
-  panelInjected = false
-  transcriptData = null
-  uiState = { 
-    detailedExpanded: false, 
-    greenwashingExpanded: false, 
-    alternativesExpanded: false,
-    transcriptExpanded: false,
-    expandedSubsections: new Set() 
-  }
-  
-  const sidebar = await waitForElement('#secondary, #secondary-inner')
-  if (!sidebar) return
-  
-  if (!injectPanel()) return
-  showLoading()
-  
-  // Step 1: Try to fetch transcript
-  updateLoadingStep(0)
-  transcriptData = await fetchTranscript(videoId)
-  
-  // Step 2: Analyze video with transcript
-  updateLoadingStep(1)
-  const data = await analyzeVideo(videoId, transcriptData)
-  
-  // Step 3: Show results
-  updateLoadingStep(2)
-  
-  if (data && data.bias_analysis) {
-    analysisData = data
-    showResults(data)
-  } else {
-    showError('Unable to analyze this video. Please try again.')
-  }
-}
-
-function waitForElement(selector, timeout = 15000) {
-  return new Promise(resolve => {
-    const el = document.querySelector(selector)
-    if (el) return resolve(el)
-    
-    const observer = new MutationObserver(() => {
-      const el = document.querySelector(selector)
-      if (el) { observer.disconnect(); resolve(el) }
-    })
-    observer.observe(document.body, { childList: true, subtree: true })
-    setTimeout(() => { observer.disconnect(); resolve(null) }, timeout)
-  })
-}
-
-window.silencedRetry = function() {
+// ===============================================
+// RETRY FUNCTION
+// ===============================================
+window.silencedRetry = () => {
   currentVideoId = null
   panelInjected = false
-  analysisData = null
-  handleVideoPage()
+  run()
 }
 
-// ============== NAVIGATION ==============
+// ===============================================
+// MESSAGE HANDLER
+// ===============================================
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === 'toggleDiscoveryMode') {
+    window.silencedToggleDiscovery()
+    sendResponse({ success: true, discoveryMode })
+  }
+  return false
+})
 
+// ===============================================
+// NAVIGATION DETECTION
+// ===============================================
 let lastUrl = location.href
-function checkNavigation() {
+new MutationObserver(() => {
   if (location.href !== lastUrl) {
     lastUrl = location.href
     currentVideoId = null
     panelInjected = false
-    analysisData = null
+    processedVideoCards.clear()
     
-    if (isWatchPage()) setTimeout(handleVideoPage, 1500)
-    else {
-      const panel = document.getElementById('silenced-panel')
-      if (panel) panel.remove()
+    // Remove old UI
+    document.querySelector('#silenced-shadow-host')?.remove()
+    document.querySelectorAll('.silenced-equity-container').forEach(el => el.remove())
+    
+    if (isWatchPage()) {
+      setTimeout(run, 1500)
     }
+    
+    // Update floating toggle
+    createFloatingToggle()
+    
+    // Re-run discovery on navigation
+    if (discoveryMode) {
+      setTimeout(async () => {
+        const query = extractCurrentQuery()
+        await runDiscovery(query)
+        if (isWatchPage()) {
+          hideMonopolyVideos()
+          injectEquityAlternatives()
+        }
+      }, 2000)
+    }
+  }
+}).observe(document.body, { childList: true, subtree: true })
+
+window.addEventListener('yt-navigate-finish', () => {
+  currentVideoId = null
+  panelInjected = false
+  processedVideoCards.clear()
+  
+  if (isWatchPage()) setTimeout(run, 1500)
+  createFloatingToggle()
+  
+  if (discoveryMode) {
+    setTimeout(async () => {
+      const query = extractCurrentQuery()
+      await runDiscovery(query)
+      if (isWatchPage()) {
+        hideMonopolyVideos()
+        injectEquityAlternatives()
+      }
+    }, 2000)
+  }
+})
+
+// ===============================================
+// INITIALIZATION
+// ===============================================
+async function init() {
+  // Load persisted discovery state
+  await loadDiscoveryState()
+  
+  // Create floating toggle
+  setTimeout(createFloatingToggle, 2000)
+  
+  // Run analysis on watch pages
+  if (isWatchPage()) {
+    setTimeout(run, 2000)
+  }
+  
+  // Auto-enable discovery if it was on
+  if (discoveryMode) {
+    setTimeout(async () => {
+      const query = extractCurrentQuery()
+      await runDiscovery(query)
+      if (isWatchPage()) {
+        hideMonopolyVideos()
+        injectEquityAlternatives()
+      }
+    }, 3000)
   }
 }
 
-const navObserver = new MutationObserver(checkNavigation)
-navObserver.observe(document.body, { childList: true, subtree: true })
-window.addEventListener('popstate', checkNavigation)
-window.addEventListener('yt-navigate-finish', checkNavigation)
+init()
 
-// ============== INIT ==============
-
-function init() {
-  log('Extension loaded v5 - YouTube Native UI')
-  // #region agent log
-  console.log('[DEBUG] Extension initialized', {isWatchPage:isWatchPage(), url:window.location.href});
-  // #endregion
-  if (isWatchPage()) setTimeout(handleVideoPage, 2000)
-}
-
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init)
-else init()
+console.log('[Silenced] YouTube Equity Filter v2.0 loaded')
