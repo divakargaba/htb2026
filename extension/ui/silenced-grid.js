@@ -88,17 +88,22 @@ function createVideoCard(video) {
   // Extract data - support both old and new formats
   const videoId = video.videoId || video.silencedVideo?.videoId
   const title = video.title || video.silencedVideo?.title || 'Unknown'
-  const channelName = video.channel || video.channelName || video.silencedVideo?.channelName || 'Unknown Channel'
   const thumbnail = video.thumbnail || video.thumbnailUrl || video.silencedVideo?.thumbnailUrl || 
                    (videoId ? `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg` : '')
   
   // Get stats from either format
   const stats = video.stats || video.silencedVideo?.stats || {}
   const channel = video.channel || video.silencedVideo?.channel || {}
+  // Handle channel - could be object or string
+  const channelName = (typeof video.channel === 'string' ? video.channel : null) || 
+                      video.channelName || 
+                      (typeof channel === 'object' ? channel.name : null) ||
+                      video.silencedVideo?.channelName || 
+                      'Unknown Channel'
   const views = stats.views || video.views || 0
   const durationSec = stats.durationSec || video.duration || 0
   const publishedAt = stats.publishedAt || video.publishedAt || video.silencedVideo?.publishedAt || ''
-  const subs = channel.subs || video.subs || 0
+  const subs = (typeof channel === 'object' ? channel.subs : null) || video.subs || 0
   
   // Get noise video comparison data (from new pipeline)
   const noiseVideoTitle = video.noiseVideoTitle || null
@@ -252,46 +257,14 @@ function createVideoCard(video) {
     </a>
     <div class="card-summary">
       <div class="summary-badges">
-        ${qualityScore > 0 ? `<span class="badge-strength" title="Quality score based on engagement">Q: ${qualityScore}</span>` : ''}
+        ${qualityScore > 0 ? `<span class="badge-strength" title="Quality score based on engagement">Quality ${Math.round(qualityScore)}</span>` : ''}
         ${subs > 0 ? `<span class="subs-pill" title="Channel subscribers">${formatViews(subs)} subs</span>` : ''}
-        ${gap > 0 ? `<span class="badge-gap positive" title="Quality vs visibility gap">+${gap} gap</span>` : ''}
+        ${gap > 0 ? `<span class="badge-gap positive" title="Quality vs visibility gap">+${Math.round(gap)} gap</span>` : ''}
       </div>
       ${comparisonSection}
       ${aiSection}
     </div>
-    <div class="card-expand-toggle collapsed" data-expand>
-      <span class="expand-label">Why it's underexposed</span>
-      <span class="expand-chevron">▸</span>
-    </div>
-    <div class="card-details-expanded" style="display: none;">
-      ${whyBuried.length > 0 ? `
-        <div class="detail-section">
-          <div class="detail-title">Why limited reach</div>
-          ${whyBuried.slice(0, 2).map(r => `<div class="detail-bullet">• ${escapeHtml(r)}</div>`).join('')}
-        </div>
-      ` : ''}
-      ${whyGood.length > 0 ? `
-        <div class="detail-section">
-          <div class="detail-title">Why it deserves visibility</div>
-          ${whyGood.slice(0, 3).map(r => `<div class="detail-bullet">• ${escapeHtml(r)}</div>`).join('')}
-        </div>
-      ` : ''}
-    </div>
   `
-
-  // Add expand/collapse handler for "Why underexposed" section
-  const toggleEl = card.querySelector('[data-expand]')
-  const detailsEl = card.querySelector('.card-details-expanded')
-  if (toggleEl && detailsEl) {
-    toggleEl.addEventListener('click', (e) => {
-      e.preventDefault()
-      e.stopPropagation()
-      const isCollapsed = toggleEl.classList.contains('collapsed')
-      toggleEl.classList.toggle('collapsed', !isCollapsed)
-      toggleEl.querySelector('.expand-chevron').textContent = isCollapsed ? '▾' : '▸'
-      detailsEl.style.display = isCollapsed ? 'block' : 'none'
-    })
-  }
 
   // Add expand/collapse handler for AI Analysis section
   const aiExpandBtn = card.querySelector('[data-ai-expand]')
@@ -329,8 +302,8 @@ function getGridStyles() {
   return `
     .silenced-grid {
       display: none;
-      padding: 0 24px;
-      max-width: 1284px;
+      padding: 0 32px;
+      max-width: 1800px;
       margin: 0 auto;
     }
     
@@ -343,8 +316,8 @@ function getGridStyles() {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
-      padding: 12px 0;
-      margin-bottom: 12px;
+      padding: 16px 0;
+      margin-bottom: 20px;
       border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     }
     
@@ -493,22 +466,22 @@ function getGridStyles() {
       max-width: 360px;
     }
     
-    /* Video Grid - YouTube native style */
+    /* Video Grid - YouTube native style - wider block layout */
     .silenced-videos {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-      gap: 12px 12px;
+      grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+      gap: 24px 24px;
     }
     
-    @media (min-width: 1200px) {
+    @media (min-width: 1400px) {
       .silenced-videos {
-        grid-template-columns: repeat(4, 1fr);
+        grid-template-columns: repeat(3, 1fr);
       }
     }
     
-    @media (min-width: 1600px) {
+    @media (min-width: 2000px) {
       .silenced-videos {
-        grid-template-columns: repeat(5, 1fr);
+        grid-template-columns: repeat(4, 1fr);
       }
     }
     
@@ -583,19 +556,19 @@ function getGridStyles() {
     }
     
     .card-details {
-      padding: 10px;
+      padding: 12px 14px;
     }
     
     .card-title {
-      font-size: 14px;
+      font-size: 15px;
       font-weight: 500;
       color: #fff;
-      line-height: 1.3;
+      line-height: 1.4;
       display: -webkit-box;
       -webkit-line-clamp: 2;
       -webkit-box-orient: vertical;
       overflow: hidden;
-      margin-bottom: 6px;
+      margin-bottom: 8px;
     }
     
     .card-channel {
@@ -619,7 +592,7 @@ function getGridStyles() {
     
     /* Card Summary - Always visible */
     .card-summary {
-      padding: 8px 10px;
+      padding: 10px 14px;
     }
 
     .summary-badges {
