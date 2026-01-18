@@ -7,7 +7,7 @@
 const SCHEMA_VERSION = '4.0.0'
 const ENGINE_VERSION = 'v4.0'
 
-const YOUTUBE_API_KEY = 'AIzaSyAaGQRfXowsoNZe_5MV7wRwLaDqC8Ymias'
+const YOUTUBE_API_KEY = 'AIzaSyC0CzmAZVem8FiLtBSlf3TS0M5LVn1eJVU'
 const MAX_SUBSCRIBER_THRESHOLD = 100000 // Noise cancellation threshold
 const MONOPOLY_THRESHOLD = 1000000 // 1M subs = deafening noise
 const CACHE_TTL = 86400000 // 24 hours in ms
@@ -2232,7 +2232,7 @@ function detectSpam(title) {
 function isReactionVideo(title, description) {
   const lowerTitle = (title || '').toLowerCase()
   const lowerDesc = (description || '').toLowerCase().slice(0, 500)
-  
+
   const reactionPatterns = [
     /react(s|ing|ion)?\s*(to|video)/i,
     /\breaction\b/i,
@@ -2241,7 +2241,7 @@ function isReactionVideo(title, description) {
     /\breacts\b/i,
     /\breact\b/i
   ]
-  
+
   return reactionPatterns.some(p => p.test(lowerTitle) || p.test(lowerDesc))
 }
 
@@ -2291,7 +2291,7 @@ const CATEGORY_TO_GENRE = {
  */
 async function analyzeCurrentVideoContext(videoId, title) {
   console.log(`[Silenced] Analyzing context for video: ${videoId}`)
-  
+
   const context = {
     videoId,
     title,
@@ -2302,19 +2302,19 @@ async function analyzeCurrentVideoContext(videoId, title) {
     transcriptExcerpt: null,
     detectedThemes: []
   }
-  
+
   try {
     // Fetch full video metadata
     const videoUrl = new URL('https://www.googleapis.com/youtube/v3/videos')
     videoUrl.searchParams.set('part', 'snippet,contentDetails')
     videoUrl.searchParams.set('id', videoId)
     videoUrl.searchParams.set('key', YOUTUBE_API_KEY)
-    
+
     const videoRes = await fetch(videoUrl.toString())
     if (videoRes.ok) {
       const videoData = await videoRes.json()
       quotaUsed += 1
-      
+
       const snippet = videoData.items?.[0]?.snippet
       if (snippet) {
         context.categoryId = snippet.categoryId
@@ -2324,23 +2324,23 @@ async function analyzeCurrentVideoContext(videoId, title) {
         console.log(`[Silenced] Video category: ${context.genre}, Tags: ${context.tags.slice(0, 5).join(', ')}`)
       }
     }
-    
+
     // Try to fetch transcript
     const transcript = await fetchTranscriptForScoring(videoId)
     if (transcript && transcript.length > 100) {
       context.transcriptExcerpt = transcript.slice(0, 800)
       console.log(`[Silenced] Got transcript excerpt: ${context.transcriptExcerpt.length} chars`)
     }
-    
+
     // Detect themes from transcript or fallback to description
     const textToAnalyze = context.transcriptExcerpt || context.description.slice(0, 500) || title
     context.detectedThemes = detectThemes(textToAnalyze, title, context.tags)
     console.log(`[Silenced] Detected themes: ${context.detectedThemes.join(', ')}`)
-    
+
   } catch (err) {
     console.warn('[Silenced] Context analysis error:', err.message)
   }
-  
+
   return context
 }
 
@@ -2350,7 +2350,7 @@ async function analyzeCurrentVideoContext(videoId, title) {
 function detectThemes(text, title, tags) {
   const themes = new Set()
   const combined = `${title} ${text} ${tags.join(' ')}`.toLowerCase()
-  
+
   // Genre/format detection
   if (/\b(skit|sketch|comedy|funny|humor|hilarious|parody)\b/i.test(combined)) themes.add('comedy')
   if (/\b(tutorial|how to|guide|learn|explained|education)\b/i.test(combined)) themes.add('educational')
@@ -2362,17 +2362,17 @@ function detectThemes(text, title, tags) {
   if (/\b(music|song|cover|remix|beat)\b/i.test(combined)) themes.add('music')
   if (/\b(news|breaking|update|report)\b/i.test(combined)) themes.add('news')
   if (/\b(story|storytime|experience)\b/i.test(combined)) themes.add('storytelling')
-  
+
   // Sport detection
   if (/\b(basketball|nba|hoop|dunk|court)\b/i.test(combined)) themes.add('basketball')
   if (/\b(football|nfl|touchdown|quarterback)\b/i.test(combined)) themes.add('football')
   if (/\b(soccer|football|goal|match)\b/i.test(combined)) themes.add('soccer')
   if (/\b(baseball|mlb|home run)\b/i.test(combined)) themes.add('baseball')
-  
+
   // Role/character detection
   if (/\b(coach|coaching|assistant|trainer)\b/i.test(combined)) themes.add('coaching')
   if (/\b(player|athlete|team)\b/i.test(combined)) themes.add('sports')
-  
+
   return Array.from(themes)
 }
 
@@ -2383,7 +2383,7 @@ function detectThemes(text, title, tags) {
  */
 async function buildSmartSearchQuery(context) {
   console.log('[Silenced] Building smart search query...')
-  
+
   // Try DeepSeek for intelligent query generation
   if (DEEPSEEK_API_KEY) {
     try {
@@ -2410,7 +2410,7 @@ Output ONLY the search query, nothing else.`
       console.warn('[Silenced] DeepSeek query generation failed:', err.message)
     }
   }
-  
+
   // Fallback: Build query from detected themes + title keywords
   return buildFallbackSearchQuery(context)
 }
@@ -2420,7 +2420,7 @@ Output ONLY the search query, nothing else.`
  */
 function buildFallbackSearchQuery(context) {
   const queryParts = []
-  
+
   // Add genre/format keywords
   const genreKeywords = {
     'comedy': ['comedy', 'skit', 'funny'],
@@ -2433,7 +2433,7 @@ function buildFallbackSearchQuery(context) {
     'football': ['football'],
     'coaching': ['coach', 'coaching']
   }
-  
+
   // Pick first matching genre keyword
   for (const theme of context.detectedThemes) {
     if (genreKeywords[theme]) {
@@ -2441,7 +2441,7 @@ function buildFallbackSearchQuery(context) {
       break
     }
   }
-  
+
   // Extract meaningful keywords from title
   const stopwords = ['the', 'and', 'for', 'with', 'this', 'that', 'from', 'have', 'what', 'your', 'when', 'than', 'better', 'more']
   const titleWords = context.title
@@ -2449,16 +2449,16 @@ function buildFallbackSearchQuery(context) {
     .replace(/[^\w\s]/g, ' ')
     .split(/\s+/)
     .filter(w => w.length > 3 && !stopwords.includes(w))
-  
+
   // Add top 2 title keywords
   queryParts.push(...titleWords.slice(0, 2))
-  
+
   // Add a theme if we have room
   if (queryParts.length < 4 && context.detectedThemes.length > 0) {
     const themeWord = context.detectedThemes.find(t => !queryParts.includes(t))
     if (themeWord) queryParts.push(themeWord)
   }
-  
+
   const query = [...new Set(queryParts)].slice(0, 4).join(' ')
   console.log(`[Silenced] Fallback query: "${query}"`)
   return query || 'entertaining video'
@@ -2492,7 +2492,7 @@ function computeQualityScore(video, channel, transcript) {
   // === Informational Value (35 pts) ===
   // Base content score - don't punish videos just for missing transcripts
   let baseContentScore = 10  // Every video gets 10 pts baseline
-  
+
   // WPM: 120-170 is ideal for educational content (bonus on top of base)
   let wpmScore = 0
   let wpm = 0
@@ -2504,11 +2504,11 @@ function computeQualityScore(video, channel, transcript) {
       wpmScore = Math.max(0, Math.round(10 - Math.abs(wpm - 145) / 15))
     }
   }
-  
+
   // Citations: 2 points per citation, max 5 (bonus)
   const citations = countCitations(transcript)
   const citationScore = Math.min(5, citations * 2)
-  
+
   // Duration: 6-20 minutes is ideal
   let durationScore = 0
   if (durationMin >= 6 && durationMin <= 20) {
@@ -2722,20 +2722,20 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
 
   const gems = []
   const seenChannels = new Set([currentChannelId])
-  
+
   // Step 1: Analyze current video context deeply (transcript, tags, category)
   const context = await analyzeCurrentVideoContext(currentVideoId, currentTitle)
-  
+
   // Step 2: Generate smart search query using DeepSeek or fallback
   const smartQuery = await buildSmartSearchQuery(context)
   console.log(`[Silenced] Using smart search query: "${smartQuery}"`)
-  
+
   // Constraint ranges - Max 150k subs for "silenced" creators
   let subsMin = 100, subsMax = 150000
   let viewsMin = 5000, viewsMax = 300000  // 5k-300k views = hidden gem territory
   let maxResults = 50
   let useNewerVideos = true  // Search for newer videos to find smaller creators
-  
+
   // Broadening steps - gradually relax if needed
   const broadeningSteps = [
     () => { subsMax = 300000; console.log('[Silenced] Broadening: subs to 300k') },
@@ -2752,10 +2752,10 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
       searchUrl.searchParams.set('type', 'video')
       searchUrl.searchParams.set('maxResults', String(maxResults))
       searchUrl.searchParams.set('key', YOUTUBE_API_KEY)
-      
+
       // Use smart query generated from content analysis
       searchUrl.searchParams.set('q', smartQuery)
-      
+
       // Use date order to find newer videos from smaller creators
       if (useNewerVideos) {
         searchUrl.searchParams.set('order', 'date')
@@ -2831,12 +2831,12 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
       // Filter and score candidates
       const candidates = []
       const filterStats = { total: 0, noChannel: 0, subsTooLow: 0, subsTooHigh: 0, viewsTooLow: 0, viewsTooHigh: 0, tooShort: 0, isShorts: 0, isSpam: 0, isReaction: 0, passed: 0 }
-      
+
       for (const video of (videosData.items || [])) {
         filterStats.total++
         const channelId = video.snippet?.channelId
         if (!channelId || seenChannels.has(channelId)) { filterStats.noChannel++; continue }
-        
+
         const channel = channelMap.get(channelId)
         if (!channel) { filterStats.noChannel++; continue }
 
@@ -2845,7 +2845,7 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
         const durationSec = parseDurationToSeconds(video.contentDetails?.duration)
         const title = video.snippet?.title || ''
         const description = video.snippet?.description || ''
-        
+
         // Apply constraints with tracking
         if (subs < subsMin) { filterStats.subsTooLow++; continue }
         if (subs > subsMax) { filterStats.subsTooHigh++; continue }
@@ -2855,11 +2855,11 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
         if (title.toLowerCase().includes('#shorts')) { filterStats.isShorts++; continue }
         if (detectSpam(title)) { filterStats.isSpam++; continue }
         if (isReactionVideo(title, description)) { filterStats.isReaction++; continue }
-        
+
         filterStats.passed++
         candidates.push({ video, channel, subs, views, durationSec })
       }
-      
+
       console.log(`[Silenced] Filter breakdown:`, filterStats)
       console.log(`[Silenced] ${candidates.length} candidates passed filters`)
 
@@ -2873,7 +2873,7 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
 
         // Compute quality score
         const quality = computeQualityScore(candidate.video, candidate.channel, transcript)
-        
+
         // Skip if quality is too low (15 is reasonable for videos without transcripts)
         if (quality.total < 15) {
           console.log(`[Silenced] Skipping ${candidate.video.id} - low quality score: ${quality.total}`)
@@ -2936,7 +2936,7 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
   }
 
   console.log(`[Silenced] 💎 Discovered ${gems.length} hidden gems`)
-  
+
   return {
     gems,
     message: gems.length === 0

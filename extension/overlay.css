@@ -10,61 +10,71 @@
    ============================================ */
 
 :root {
-  /* Background colors */
+  /* Background colors - neutral dark grays */
   --bias-bg-primary: #0f0f0f;
-  --bias-bg-secondary: #1a1a1a;
-  --bias-bg-tertiary: #272727;
-  --bias-bg-hover: #3f3f3f;
-  --bias-bg-active: #4a4a4a;
-  
-  /* Text colors */
-  --bias-text-primary: #f1f1f1;
-  --bias-text-secondary: #aaaaaa;
-  --bias-text-muted: #717171;
-  
-  /* Accent colors */
-  --bias-accent-noise: #f97316;      /* Orange - for bias/noise indicators */
-  --bias-accent-silenced: #10b981;   /* Green - for quality/silenced indicators */
-  --bias-accent-warning: #ef4444;    /* Red - for high manipulation */
-  --bias-accent-info: #3b82f6;       /* Blue - for personalization */
-  --bias-accent-purple: #8b5cf6;     /* Purple - for engagement */
-  --bias-accent-cyan: #06b6d4;       /* Cyan - for authority */
-  --bias-accent-amber: #f59e0b;      /* Amber - for trending */
-  
-  /* Border colors */
-  --bias-border-subtle: rgba(255, 255, 255, 0.1);
-  --bias-border-medium: rgba(255, 255, 255, 0.2);
-  
-  /* Shadows */
-  --bias-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
-  --bias-shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
-  --bias-shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
-  
-  /* Typography */
-  --bias-font-family: "YouTube Sans", "Roboto", Arial, sans-serif;
-  --bias-font-size-xs: 10px;
-  --bias-font-size-sm: 11px;
-  --bias-font-size-base: 12px;
-  --bias-font-size-md: 13px;
-  --bias-font-size-lg: 14px;
-  
+  --bias-bg-secondary: #141414;
+  --bias-bg-tertiary: #1a1a1a;
+  --bias-bg-hover: #222222;
+  --bias-bg-active: #2a2a2a;
+
+  /* Text colors - 3 levels only */
+  --bias-text-primary: #e8e8e8;
+  --bias-text-secondary: #999999;
+  --bias-text-muted: #666666;
+
+  /* Accent colors - use ONE at a time */
+  --bias-accent-positive: #22c55e;   /* Green - limited reach / underrepresented */
+  --bias-accent-caution: #eab308;    /* Amber - mixed signal */
+  --bias-accent-dominant: #dc2626;   /* Red - saturated / dominant */
+
+  /* Legacy aliases for compatibility */
+  --bias-accent-noise: var(--bias-accent-caution);
+  --bias-accent-silenced: var(--bias-accent-positive);
+  --bias-accent-warning: var(--bias-accent-dominant);
+  --bias-accent-info: var(--bias-accent-positive);
+  --bias-accent-purple: var(--bias-accent-positive);
+  --bias-accent-cyan: var(--bias-accent-positive);
+  --bias-accent-amber: var(--bias-accent-caution);
+
+  /* Border colors - minimal */
+  --bias-border-subtle: rgba(255, 255, 255, 0.06);
+  --bias-border-medium: rgba(255, 255, 255, 0.1);
+
+  /* Shadows - max 8% opacity */
+  --bias-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --bias-shadow-md: 0 2px 6px rgba(0, 0, 0, 0.08);
+  --bias-shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.08);
+
+  /* Typography - 3 sizes only */
+  --bias-font-family: "YouTube Sans", "Roboto", -apple-system, sans-serif;
+  --bias-font-size-meta: 11px;       /* Small, muted */
+  --bias-font-size-body: 13px;       /* Normal body */
+  --bias-font-size-title: 15px;      /* Titles, medium weight */
+
+  /* Legacy aliases */
+  --bias-font-size-xs: var(--bias-font-size-meta);
+  --bias-font-size-sm: var(--bias-font-size-meta);
+  --bias-font-size-base: var(--bias-font-size-body);
+  --bias-font-size-md: var(--bias-font-size-body);
+  --bias-font-size-lg: var(--bias-font-size-title);
+
   /* Spacing */
   --bias-spacing-xs: 4px;
-  --bias-spacing-sm: 6px;
-  --bias-spacing-md: 8px;
-  --bias-spacing-lg: 12px;
-  --bias-spacing-xl: 16px;
-  
+  --bias-spacing-sm: 8px;
+  --bias-spacing-md: 12px;
+  --bias-spacing-lg: 16px;
+  --bias-spacing-xl: 24px;
+
   /* Border radius */
   --bias-radius-sm: 4px;
   --bias-radius-md: 8px;
   --bias-radius-lg: 12px;
   --bias-radius-full: 9999px;
-  
-  /* Transitions */
-  --bias-transition-fast: 0.15s ease;
-  --bias-transition-normal: 0.2s ease;
-  --bias-transition-slow: 0.3s ease;
+
+  /* Transitions - subtle, max 150ms */
+  --bias-transition-fast: 0.1s ease-out;
+  --bias-transition-normal: 0.12s ease-out;
+  --bias-transition-slow: 0.15s ease-out;
 }
 
 /* ============================================
@@ -213,8 +223,8 @@
   margin-top: var(--bias-spacing-sm);
   padding: var(--bias-spacing-xs) 0;
   opacity: 0;
-  transform: translateY(-4px);
-  transition: all var(--bias-transition-normal);
+  transform: translateY(2px);
+  transition: opacity var(--bias-transition-normal), transform var(--bias-transition-normal);
 }
 
 .bias-overlay.visible {
@@ -226,20 +236,19 @@
   display: inline-flex;
   align-items: center;
   gap: var(--bias-spacing-xs);
-  padding: 3px var(--bias-spacing-md);
-  border-radius: var(--bias-radius-lg);
-  background: var(--pill-color, var(--bias-text-muted));
-  color: #fff;
+  padding: 4px var(--bias-spacing-sm);
+  border-radius: var(--bias-radius-sm);
+  background: var(--pill-color, var(--bias-bg-tertiary));
+  color: var(--bias-text-primary);
   font-family: var(--bias-font-family);
-  font-size: var(--bias-font-size-sm);
-  font-weight: 600;
+  font-size: var(--bias-font-size-meta);
+  font-weight: 500;
   cursor: pointer;
-  transition: transform var(--bias-transition-fast), box-shadow var(--bias-transition-fast);
+  transition: opacity var(--bias-transition-fast);
 }
 
 .bias-score-pill:hover {
-  transform: scale(1.05);
-  box-shadow: var(--bias-shadow-sm);
+  opacity: 0.85;
 }
 
 .bias-tags {
@@ -274,16 +283,16 @@
 #bias-popover {
   position: fixed;
   z-index: 9999;
-  width: 320px;
+  width: 300px;
   background: var(--bias-bg-secondary);
   border: 1px solid var(--bias-border-subtle);
-  border-radius: var(--bias-radius-lg);
-  box-shadow: var(--bias-shadow-lg);
+  border-radius: var(--bias-radius-md);
+  box-shadow: var(--bias-shadow-md);
   font-family: var(--bias-font-family);
   opacity: 0;
   visibility: hidden;
-  transform: translateY(8px);
-  transition: all var(--bias-transition-normal);
+  transform: translateY(4px);
+  transition: opacity var(--bias-transition-normal), transform var(--bias-transition-normal);
   pointer-events: none;
 }
 
@@ -322,11 +331,10 @@
   display: flex;
   align-items: center;
   gap: var(--bias-spacing-sm);
-  font-size: var(--bias-font-size-sm);
-  font-weight: 600;
+  font-size: var(--bias-font-size-meta);
+  font-weight: 500;
   color: var(--bias-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0;
   margin-bottom: var(--bias-spacing-md);
 }
 
@@ -338,15 +346,15 @@
   position: fixed;
   top: 70px;
   right: 20px;
-  width: 280px;
+  width: 260px;
   background: var(--bias-bg-secondary);
   border: 1px solid var(--bias-border-subtle);
-  border-radius: var(--bias-radius-lg);
-  box-shadow: var(--bias-shadow-md);
+  border-radius: var(--bias-radius-md);
+  box-shadow: var(--bias-shadow-sm);
   font-family: var(--bias-font-family);
   z-index: 9998;
   overflow: hidden;
-  transition: all var(--bias-transition-slow);
+  transition: opacity var(--bias-transition-slow), transform var(--bias-transition-slow);
   display: none;
 }
 
@@ -440,37 +448,36 @@
 }
 
 .silenced-card {
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: var(--bias-radius-lg);
+  background: var(--bias-bg-secondary);
+  border: none;
+  border-radius: var(--bias-radius-md);
   overflow: hidden;
-  transition: all var(--bias-transition-normal);
+  transition: opacity var(--bias-transition-normal), transform var(--bias-transition-normal);
 }
 
 .silenced-card:hover {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(16, 185, 129, 0.3);
-  transform: translateY(-2px);
+  background: var(--bias-bg-tertiary);
+  transform: translateY(-1px);
 }
 
 .quality-pill {
-  background: rgba(16, 185, 129, 0.2);
-  color: var(--bias-accent-silenced);
+  background: rgba(34, 197, 94, 0.12);
+  color: var(--bias-accent-positive);
 }
 
 .silenced-pill {
-  background: rgba(139, 92, 246, 0.2);
-  color: var(--bias-accent-purple);
+  background: rgba(34, 197, 94, 0.08);
+  color: var(--bias-text-secondary);
 }
 
 .gap-pill {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--bias-bg-tertiary);
   color: var(--bias-text-muted);
 }
 
 .gap-pill.positive {
-  background: rgba(16, 185, 129, 0.2);
-  color: var(--bias-accent-silenced);
+  background: rgba(34, 197, 94, 0.1);
+  color: var(--bias-accent-positive);
 }
 
 /* ============================================
@@ -567,7 +574,7 @@
 @keyframes biasFadeIn {
   from {
     opacity: 0;
-    transform: translateY(-8px);
+    transform: translateY(4px);
   }
   to {
     opacity: 1;
@@ -575,16 +582,6 @@
   }
 }
 
-@keyframes biasPulse {
-  0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
-  70% { box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
-}
-
 .bias-animate-in {
-  animation: biasFadeIn 0.3s ease forwards;
-}
-
-.bias-pulse {
-  animation: biasPulse 0.6s ease-out;
+  animation: biasFadeIn 0.12s ease-out forwards;
 }

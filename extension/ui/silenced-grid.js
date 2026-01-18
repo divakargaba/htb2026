@@ -39,51 +39,41 @@ function createGridElement() {
   grid.innerHTML = `
     <div class="silenced-header">
       <div class="silenced-title-row">
-        <span class="silenced-icon">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M9 18V5l12-2v13"/>
-            <circle cx="6" cy="18" r="3"/>
-            <circle cx="18" cy="16" r="3"/>
-          </svg>
-        </span>
-        <h2 class="silenced-title">Silenced Voices</h2>
-        <span class="silenced-subtitle">High-quality videos the algorithm doesn't prioritize</span>
+        <h2 class="silenced-title">Limited Reach</h2>
+        <span class="silenced-subtitle">Content with strong engagement that gets less visibility</span>
       </div>
       <div class="silenced-stats">
         <span class="stat-item">
           <span class="stat-value" id="silenced-total">0</span>
-          <span class="stat-label">Found</span>
+          <span class="stat-label">videos</span>
         </span>
         <span class="stat-item">
           <span class="stat-value" id="silenced-avg-quality">--</span>
-          <span class="stat-label">Avg Quality</span>
+          <span class="stat-label">avg strength</span>
         </span>
         <span class="stat-item">
           <span class="stat-value" id="silenced-avg-gap">--</span>
-          <span class="stat-label">Avg Gap</span>
+          <span class="stat-label">reach gap</span>
         </span>
       </div>
     </div>
     <div class="silenced-content">
       <div class="silenced-loading">
         <div class="loading-spinner"></div>
-        <span>Discovering silenced voices...</span>
+        <span>Finding underexposed content...</span>
       </div>
       <div class="silenced-videos"></div>
       <div class="silenced-empty" style="display: none;">
-        <span class="empty-icon">🔇</span>
-        <span class="empty-text">No silenced videos found for your current topics</span>
+        <span class="empty-text">No limited-reach videos found for your current topics.</span>
       </div>
       <div class="silenced-ai-offline" style="display: none;">
-        <span class="offline-icon">⚠️</span>
-        <span class="offline-title">AI Quality Scoring Offline</span>
-        <span class="offline-text">Cannot verify video quality without AI analysis. Results would be unreliable.</span>
-        <span class="offline-hint">The backend server may be down. Try again later or check the console for details.</span>
+        <span class="offline-title">Quality verification unavailable</span>
+        <span class="offline-text">Cannot verify content quality. Results would be unreliable.</span>
+        <span class="offline-hint">The backend may be down. Try again later.</span>
       </div>
       <div class="silenced-insufficient" style="display: none;">
-        <span class="insufficient-icon">📊</span>
-        <span class="insufficient-title">Not Enough Signal</span>
-        <span class="insufficient-text">Scroll to load more videos on your homepage so we can understand your interests.</span>
+        <span class="insufficient-title">Not enough data</span>
+        <span class="insufficient-text">Scroll to load more videos so we can understand your interests.</span>
       </div>
     </div>
   `
@@ -103,6 +93,17 @@ function createVideoCard(video) {
   const gap = video.exposureGap || (video.qualityScore - video.visibilityScore)
   const gapSign = gap >= 0 ? '+' : ''
   
+  // Generate summary line based on quality and gap
+  const summaryLine = gap >= 10
+    ? 'Strong engagement despite limited distribution'
+    : gap >= 5
+      ? 'Good engagement, lower visibility'
+      : 'Solid content with reach gap'
+
+  // Get first reason as short bullet
+  const whyLimited = (video.whyBuried || [])[0] || 'Lower platform-favored signals'
+  const whyGoodList = (video.whyGood || []).slice(0, 2)
+
   card.innerHTML = `
     <a href="https://www.youtube.com/watch?v=${video.videoId}" class="card-link" target="_blank">
       <div class="card-thumbnail">
@@ -117,28 +118,45 @@ function createVideoCard(video) {
         </div>
       </div>
     </a>
-    <div class="silenced-scores">
-      <span class="quality-pill" title="Quality Score: How good the content is">
-        Quality ${video.qualityScore || '--'}
-      </span>
-      <span class="silenced-pill" title="Silenced Score: How under-exposed it is">
-        Silenced ${video.silencedScore || '--'}
-      </span>
-      <span class="gap-pill ${gap >= 0 ? 'positive' : 'negative'}" title="Exposure Gap: Quality minus Visibility">
-        Gap ${gapSign}${gap || 0}
-      </span>
+    <div class="card-summary">
+      <div class="summary-badges">
+        <span class="badge-strength">Strength ${video.qualityScore || '--'}</span>
+        <span class="badge-gap ${gap >= 0 ? 'positive' : ''}">+${gap || 0} reach gap</span>
+      </div>
+      <div class="summary-line">${summaryLine}</div>
     </div>
-    <div class="silenced-tags">
-      ${(video.whyGood || []).slice(0, 2).map(reason => 
-        `<span class="silenced-tag positive">${escapeHtml(reason)}</span>`
-      ).join('')}
+    <div class="card-expand-toggle collapsed" data-expand>
+      <span class="expand-label">Why it surfaced</span>
+      <span class="expand-chevron">▸</span>
     </div>
-    <div class="silenced-reason">
-      <span class="reason-label">Why buried:</span>
-      <span class="reason-text">${escapeHtml((video.whyBuried || [])[0] || 'Lower algorithmic advantage signals')}</span>
+    <div class="card-details-expanded" style="display: none;">
+      <div class="detail-section">
+        <div class="detail-title">Why limited</div>
+        <div class="detail-bullet">• ${escapeHtml(whyLimited)}</div>
+      </div>
+      ${whyGoodList.length > 0 ? `
+        <div class="detail-section">
+          <div class="detail-title">Why it matters</div>
+          ${whyGoodList.map(r => `<div class="detail-bullet">• ${escapeHtml(r)}</div>`).join('')}
+        </div>
+      ` : ''}
     </div>
   `
-  
+
+  // Add expand/collapse handler
+  const toggleEl = card.querySelector('[data-expand]')
+  const detailsEl = card.querySelector('.card-details-expanded')
+  if (toggleEl && detailsEl) {
+    toggleEl.addEventListener('click', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const isCollapsed = toggleEl.classList.contains('collapsed')
+      toggleEl.classList.toggle('collapsed', !isCollapsed)
+      toggleEl.querySelector('.expand-chevron').textContent = isCollapsed ? '▾' : '▸'
+      detailsEl.style.display = isCollapsed ? 'block' : 'none'
+    })
+  }
+
   return card
 }
 
@@ -174,24 +192,17 @@ function getGridStyles() {
       gap: 4px;
     }
     
-    .silenced-icon {
-      color: #10b981;
-      margin-bottom: 4px;
-    }
-    
     .silenced-title {
-      font-size: 20px;
-      font-weight: 600;
-      color: #fff;
+      font-size: 15px;
+      font-weight: 500;
+      color: #e8e8e8;
       margin: 0;
-      display: flex;
-      align-items: center;
-      gap: 8px;
     }
-    
+
     .silenced-subtitle {
       font-size: 13px;
-      color: #888;
+      color: #666;
+      margin-top: 2px;
     }
     
     .silenced-stats {
@@ -204,19 +215,19 @@ function getGridStyles() {
       flex-direction: column;
       align-items: center;
       padding: 8px 12px;
-      background: rgba(16, 185, 129, 0.1);
-      border-radius: 8px;
+      background: #1a1a1a;
+      border-radius: 6px;
     }
-    
+
     .stat-item .stat-value {
-      font-size: 18px;
-      font-weight: 700;
-      color: #10b981;
+      font-size: 15px;
+      font-weight: 500;
+      color: #e8e8e8;
     }
-    
+
     .stat-item .stat-label {
-      font-size: 10px;
-      color: #888;
+      font-size: 11px;
+      color: #666;
     }
     
     /* Content */
@@ -252,87 +263,72 @@ function getGridStyles() {
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 12px;
-      padding: 60px 0;
+      gap: 8px;
+      padding: 48px 0;
+    }
+
+    .empty-text {
+      font-size: 13px;
       color: #666;
     }
     
-    .empty-icon {
-      font-size: 48px;
-    }
-    
-    .empty-text {
-      font-size: 14px;
-    }
-    
-    /* AI Offline State */
+    /* Offline State */
     .silenced-ai-offline {
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 12px;
-      padding: 60px 20px;
-      color: #f59e0b;
-      background: rgba(245, 158, 11, 0.05);
-      border: 1px dashed rgba(245, 158, 11, 0.3);
-      border-radius: 12px;
+      gap: 8px;
+      padding: 48px 20px;
+      color: #eab308;
+      background: #141414;
+      border-radius: 8px;
       margin: 20px 0;
     }
-    
-    .offline-icon {
-      font-size: 48px;
-    }
-    
+
     .offline-title {
-      font-size: 18px;
-      font-weight: 600;
-      color: #f59e0b;
+      font-size: 15px;
+      font-weight: 500;
+      color: #e8e8e8;
     }
-    
+
     .offline-text {
-      font-size: 14px;
-      color: #888;
-      text-align: center;
-      max-width: 400px;
-    }
-    
-    .offline-hint {
-      font-size: 12px;
+      font-size: 13px;
       color: #666;
       text-align: center;
+      max-width: 360px;
     }
-    
+
+    .offline-hint {
+      font-size: 11px;
+      color: #555;
+      text-align: center;
+    }
+
     /* Insufficient Data State */
     .silenced-insufficient {
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 12px;
-      padding: 60px 20px;
-      color: #3b82f6;
-      background: rgba(59, 130, 246, 0.05);
-      border: 1px dashed rgba(59, 130, 246, 0.3);
-      border-radius: 12px;
+      gap: 8px;
+      padding: 48px 20px;
+      background: #141414;
+      border-radius: 8px;
       margin: 20px 0;
     }
-    
-    .insufficient-icon {
-      font-size: 48px;
-    }
-    
+
     .insufficient-title {
-      font-size: 18px;
-      font-weight: 600;
-      color: #3b82f6;
+      font-size: 15px;
+      font-weight: 500;
+      color: #e8e8e8;
     }
-    
+
     .insufficient-text {
-      font-size: 14px;
-      color: #888;
+      font-size: 13px;
+      color: #666;
       text-align: center;
-      max-width: 400px;
+      max-width: 360px;
     }
     
     /* Video Grid */
@@ -344,17 +340,16 @@ function getGridStyles() {
     
     /* Video Card */
     .silenced-card {
-      background: rgba(255, 255, 255, 0.03);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      border-radius: 12px;
+      background: #141414;
+      border: none;
+      border-radius: 8px;
       overflow: hidden;
-      transition: all 0.2s ease;
+      transition: opacity 0.12s ease-out, transform 0.12s ease-out;
     }
-    
+
     .silenced-card:hover {
-      background: rgba(255, 255, 255, 0.06);
-      border-color: rgba(16, 185, 129, 0.3);
-      transform: translateY(-2px);
+      background: #1a1a1a;
+      transform: translateY(-1px);
     }
     
     .card-link {
@@ -427,72 +422,94 @@ function getGridStyles() {
       flex-wrap: wrap;
     }
     
-    .quality-pill,
-    .silenced-pill,
-    .gap-pill {
-      padding: 3px 8px;
-      border-radius: 12px;
-      font-size: 11px;
-      font-weight: 600;
+    /* Card Summary - Always visible */
+    .card-summary {
+      padding: 10px 12px;
     }
-    
-    .quality-pill {
-      background: rgba(16, 185, 129, 0.2);
-      color: #10b981;
-    }
-    
-    .silenced-pill {
-      background: rgba(139, 92, 246, 0.2);
-      color: #8b5cf6;
-    }
-    
-    .gap-pill {
-      background: rgba(255, 255, 255, 0.1);
-      color: #888;
-    }
-    
-    .gap-pill.positive {
-      background: rgba(16, 185, 129, 0.2);
-      color: #10b981;
-    }
-    
-    .gap-pill.negative {
-      background: rgba(239, 68, 68, 0.2);
-      color: #ef4444;
-    }
-    
-    /* Tags */
-    .silenced-tags {
+
+    .summary-badges {
       display: flex;
-      flex-wrap: wrap;
-      gap: 4px;
-      padding: 8px 12px 0;
+      gap: 8px;
+      margin-bottom: 6px;
     }
-    
-    .silenced-tag {
-      padding: 2px 6px;
-      border-radius: 4px;
-      font-size: 10px;
-    }
-    
-    .silenced-tag.positive {
-      background: rgba(16, 185, 129, 0.15);
-      color: #10b981;
-    }
-    
-    /* Reason */
-    .silenced-reason {
-      padding: 8px 12px 12px;
+
+    .badge-strength,
+    .badge-gap {
       font-size: 11px;
+      font-weight: 500;
+      padding: 3px 8px;
+      border-radius: 3px;
     }
-    
-    .reason-label {
+
+    .badge-strength {
+      background: rgba(34, 197, 94, 0.1);
+      color: #22c55e;
+    }
+
+    .badge-gap {
+      background: #1a1a1a;
       color: #666;
-      margin-right: 4px;
     }
-    
-    .reason-text {
-      color: #f97316;
+
+    .badge-gap.positive {
+      color: #22c55e;
+    }
+
+    .summary-line {
+      font-size: 13px;
+      color: #999;
+      line-height: 1.4;
+    }
+
+    /* Expand Toggle */
+    .card-expand-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      cursor: pointer;
+      transition: background 0.1s ease-out;
+    }
+
+    .card-expand-toggle:hover {
+      background: #1a1a1a;
+    }
+
+    .expand-label {
+      font-size: 11px;
+      color: #666;
+    }
+
+    .expand-chevron {
+      font-size: 10px;
+      color: #555;
+      transition: transform 0.1s ease-out;
+    }
+
+    /* Expanded Details - Hidden by default */
+    .card-details-expanded {
+      padding: 0 12px 12px;
+    }
+
+    .detail-section {
+      margin-bottom: 10px;
+    }
+
+    .detail-section:last-child {
+      margin-bottom: 0;
+    }
+
+    .detail-title {
+      font-size: 11px;
+      color: #555;
+      margin-bottom: 4px;
+    }
+
+    .detail-bullet {
+      font-size: 13px;
+      color: #999;
+      line-height: 1.5;
+      padding-left: 2px;
     }
     
     /* Responsive */
