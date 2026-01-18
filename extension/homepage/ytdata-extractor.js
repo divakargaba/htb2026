@@ -8,22 +8,6 @@
 (function() {
   'use strict';
 
-  // Debug logging helper - sends to our debug server
-  function debugLog(location, message, data) {
-    fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        location: 'ytdata-extractor.js:' + location,
-        message,
-        data,
-        timestamp: Date.now(),
-        sessionId: 'debug-session',
-        hypothesisId: 'H6'
-      })
-    }).catch(() => {});
-  }
-  
   // Deep search for richGridRenderer contents (handles unknown structures)
   function findRichGridContents(obj, maxDepth = 3, currentDepth = 0) {
     if (!obj || typeof obj !== 'object' || currentDepth > maxDepth) return null;
@@ -51,17 +35,8 @@
     try {
       const data = window.ytInitialData;
       
-      // #region agent log H6 - Check ytInitialData existence and structure
-      debugLog('extractAndDispatch:start', 'Checking ytInitialData', {
-        exists: !!data,
-        type: typeof data,
-        hasContents: !!data?.contents,
-        topLevelKeys: data ? Object.keys(data).slice(0, 10) : []
-      });
-      // #endregion
-      
       if (!data) {
-        debugLog('extractAndDispatch:noData', 'ytInitialData is null/undefined', {});
+        console.warn('[YtDataExtractor] ytInitialData not found');
         window.dispatchEvent(new CustomEvent('bias-lens-yt-data', { 
           detail: { error: 'ytInitialData not found', seeds: [] }
         }));
@@ -113,31 +88,9 @@
           structurePath = 'deepSearch';
         }
       }
-      
-      // #region agent log H6 - Check structure paths  
-      debugLog('extractAndDispatch:structure', 'Checking data paths', {
-        hasTwoColumnRenderer: !!twoColumnRenderer,
-        tabsCount: tabs?.length,
-        hasFirstTab: !!firstTab,
-        hasTabContent: !!tabContent,
-        tabContentKeys: tabContent ? Object.keys(tabContent) : [],
-        hasRichGrid: !!richGridFromTabs,
-        richGridKeys: tabContent?.richGridRenderer ? Object.keys(tabContent.richGridRenderer) : [],
-        contentsLength: contents?.length,
-        firstContentKeys: contents?.[0] ? Object.keys(contents[0]) : [],
-        structurePath,
-        contentsTopLevelKeys: data?.contents ? Object.keys(data.contents) : []
-      });
-      // #endregion
 
       if (!contents || !Array.isArray(contents) || contents.length === 0) {
-        // Log what's actually in contents for debugging
-        debugLog('extractAndDispatch:noContents', 'No richGridRenderer contents', {
-          contentsType: typeof contents,
-          isArray: Array.isArray(contents),
-          dataContentsKeys: data?.contents ? Object.keys(data.contents) : [],
-          structurePath
-        });
+        console.warn('[YtDataExtractor] No richGridRenderer contents found via path:', structurePath);
         window.dispatchEvent(new CustomEvent('bias-lens-yt-data', { 
           detail: { error: 'No richGridRenderer contents found', seeds: [] }
         }));
@@ -146,32 +99,16 @@
 
       const seeds = [];
       let rank = 1;
-      let skipped = { noRichItem: 0, noVideoRenderer: 0, noVideoId: 0, other: 0 };
-
-      // #region agent log H6 - Log first 3 items structure
-      debugLog('extractAndDispatch:firstItems', 'First 3 content items', {
-        item0Keys: contents[0] ? Object.keys(contents[0]) : [],
-        item1Keys: contents[1] ? Object.keys(contents[1]) : [],
-        item2Keys: contents[2] ? Object.keys(contents[2]) : [],
-        item0Sample: contents[0] ? JSON.stringify(contents[0]).slice(0, 500) : null
-      });
-      // #endregion
 
       for (const item of contents) {
         if (rank > 20) break;
 
         // Extract richItemRenderer
         const richItemRenderer = item?.richItemRenderer;
-        if (!richItemRenderer) {
-          skipped.noRichItem++;
-          continue;
-        }
+        if (!richItemRenderer) continue;
         
         const content = richItemRenderer?.content;
-        if (!content) {
-          skipped.noVideoRenderer++;
-          continue;
-        }
+        if (!content) continue;
         
         // Try BOTH old (videoRenderer) AND new (lockupViewModel) structures
         const videoRenderer = content.videoRenderer;
@@ -208,7 +145,7 @@
           // Extract channel info
           const byline = metadata?.metadata?.contentMetadataViewModel?.metadataRows?.[0]?.metadataParts?.[0];
           channelName = byline?.text?.content || '';
-          channelId = byline?.enableTruncation ? '' : ''; // Channel ID harder to get in new format
+          channelId = ''; // Channel ID harder to get in new format - will be fetched via API
           
           // Extract view count and time
           const metaRow = metadata?.metadata?.contentMetadataViewModel?.metadataRows?.[1]?.metadataParts;
@@ -226,29 +163,13 @@
                               ?.thumbnailViewModel?.image?.sources || [];
           thumbnailUrl = thumbSources[thumbSources.length - 1]?.url || thumbSources[0]?.url || '';
           
-          // Log what we found from lockupViewModel
-          if (rank <= 3) {
-            debugLog('extractAndDispatch:lockupViewModel', 'Extracted from lockupViewModel', {
-              rank, videoId, title: title?.slice(0, 30), channelName
-            });
-          }
         } else {
-          // Unknown content type
-          const contentKeys = Object.keys(content);
-          if (rank <= 5) {
-            debugLog('extractAndDispatch:unknownContent', 'Unknown content type', {
-              rank, contentKeys
-            });
-          }
-          skipped.noVideoRenderer++;
+          // Unknown content type, skip
           continue;
         }
 
         // Skip if no videoId
-        if (!videoId) {
-          skipped.noVideoId++;
-          continue;
-        }
+        if (!videoId) continue;
 
         const href = '/watch?v=' + videoId;
 
@@ -266,20 +187,14 @@
         });
       }
 
-      // #region agent log H6 - Final results
-      debugLog('extractAndDispatch:result', 'Extraction complete', {
-        seedCount: seeds.length,
-        skipped,
-        firstSeed: seeds[0] ? { videoId: seeds[0].videoId, title: seeds[0].title?.slice(0, 50) } : null
-      });
-      // #endregion
+      console.log(`[YtDataExtractor] Extracted ${seeds.length} videos via ${structurePath}`);
 
       window.dispatchEvent(new CustomEvent('bias-lens-yt-data', { 
         detail: { seeds, error: null }
       }));
 
     } catch (err) {
-      debugLog('extractAndDispatch:error', 'Exception caught', { error: err.message, stack: err.stack?.slice(0, 300) });
+      console.error('[YtDataExtractor] Exception:', err.message);
       window.dispatchEvent(new CustomEvent('bias-lens-yt-data', { 
         detail: { error: err.message, seeds: [] }
       }));

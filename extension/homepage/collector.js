@@ -34,10 +34,6 @@
    * Uses external script file to bypass CSP restrictions on inline scripts
    */
   function injectYtDataExtractor() {
-    // #region agent log H1
-    fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'collector.js:injectYtDataExtractor',message:'Attempting external script injection',data:{alreadyInjected:!!document.getElementById('bias-lens-yt-extractor')},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
-    // #endregion
-
     // Check if already injected
     if (document.getElementById('bias-lens-yt-extractor')) {
       return;
@@ -48,14 +44,11 @@
     // Use external script file to bypass CSP - this is the key fix!
     script.src = chrome.runtime.getURL('homepage/ytdata-extractor.js');
 
-    // #region agent log H1
     try {
       (document.head || document.documentElement).appendChild(script);
-      fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'collector.js:injectYtDataExtractor:postAppend',message:'External script appended to DOM',data:{scriptInDOM:!!document.getElementById('bias-lens-yt-extractor'),scriptSrc:script.src},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
     } catch (err) {
-      fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'collector.js:injectYtDataExtractor:error',message:'Script injection failed',data:{error:err.message},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
+      console.error('[HomepageCollector] Script injection failed:', err);
     }
-    // #endregion
   }
 
   /**
@@ -106,16 +99,9 @@
     lastCollectionTime = now;
     console.log('[HomepageCollector] Starting collection...');
 
-    // #region agent log H3
-    fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'collector.js:collectHomepageSeeds',message:'Starting collection, setting up listener',data:{},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H3'})}).catch(()=>{});
-    // #endregion
-
     return new Promise((resolve) => {
       // Set up one-time listener for the extraction result
       const handler = (event) => {
-        // #region agent log H3
-        fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'collector.js:handler',message:'Event received!',data:{hasDetail:!!event.detail,seedCount:event.detail?.seeds?.length,error:event.detail?.error},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H3'})}).catch(()=>{});
-        // #endregion
         window.removeEventListener('bias-lens-yt-data', handler);
         isCollecting = false;
 
@@ -147,18 +133,10 @@
 
       // Timeout fallback
       setTimeout(() => {
-        // #region agent log H5
-        fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'collector.js:timeout',message:'Timeout triggered',data:{isStillCollecting:isCollecting},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H5'})}).catch(()=>{});
-        // #endregion
         window.removeEventListener('bias-lens-yt-data', handler);
         if (isCollecting) {
           isCollecting = false;
           console.error('[HomepageCollector] Timeout');
-          // #region agent log H4 - Try DOM extraction as last resort
-          const ytDataScript = document.querySelector('script:not([src])');
-          const hasYtInitialData = !!document.querySelector('script')?.textContent?.includes('ytInitialData');
-          fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'collector.js:timeout:domCheck',message:'Checking DOM for ytInitialData',data:{hasYtInitialData,scriptTagCount:document.querySelectorAll('script').length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H4'})}).catch(()=>{});
-          // #endregion
           resolve({ seeds: [], error: 'Extraction timeout' });
         }
       }, 5000);

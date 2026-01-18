@@ -51,10 +51,6 @@ function createGridElement() {
           <span class="stat-value" id="silenced-avg-quality">--</span>
           <span class="stat-label">avg strength</span>
         </span>
-        <span class="stat-item">
-          <span class="stat-value" id="silenced-avg-gap">--</span>
-          <span class="stat-label">reach gap</span>
-        </span>
       </div>
     </div>
     <div class="silenced-content">
@@ -107,6 +103,11 @@ function createVideoCard(video) {
   // Quality score
   const qualityScore = video.qualityScore || 0
   
+  // Calculate gap: difference between quality and expected visibility
+  // Higher quality with low subs = bigger positive gap (underexposed)
+  const exposureScore = subs > 0 ? Math.min(100, Math.round((subs / 100000) * 100)) : 0
+  const gap = qualityScore - exposureScore
+  
   // Why silenced data
   const whySilenced = video.whySilenced || {}
   
@@ -149,7 +150,7 @@ function createVideoCard(video) {
     ? 'Strong engagement despite limited distribution'
     : gap >= 5
       ? 'Good engagement, lower visibility'
-      : 'Solid content with reach gap'
+      : 'Good content with visibility gap'
 
   // Get first reason as short bullet
   const whyLimited = (video.whyBuried || [])[0] || 'Lower platform-favored signals'
@@ -171,7 +172,7 @@ function createVideoCard(video) {
     </a>
     <div class="card-summary">
       <div class="summary-badges">
-        <span class="badge-strength">Quality ${qualityScore || video.qualityScore || '--'}</span>
+        <span class="badge-strength">Quality ${qualityScore || '--'}</span>
         <span class="badge-gap ${gap >= 0 ? 'positive' : ''}">+${gap || 0} reach gap</span>
         <span class="subs-pill">${formatViews(subs)} subs</span>
       </div>
@@ -495,25 +496,12 @@ function getGridStyles() {
       color: #3b82f6;
     }
 
-    .badge-strength,
-    .badge-gap {
+    .badge-strength {
       font-size: 11px;
       font-weight: 500;
       padding: 3px 8px;
       border-radius: 3px;
-    }
-
-    .badge-strength {
       background: rgba(34, 197, 94, 0.1);
-      color: #22c55e;
-    }
-
-    .badge-gap {
-      background: #1a1a1a;
-      color: #666;
-    }
-
-    .badge-gap.positive {
       color: #22c55e;
     }
 
@@ -857,7 +845,6 @@ function updateStats() {
   
   const totalEl = gridElement.querySelector('#silenced-total')
   const avgQualityEl = gridElement.querySelector('#silenced-avg-quality')
-  const avgGapEl = gridElement.querySelector('#silenced-avg-gap')
   
   if (totalEl) {
     totalEl.textContent = silencedVideos.length
@@ -868,13 +855,6 @@ function updateStats() {
       silencedVideos.reduce((sum, v) => sum + (v.qualityScore || 0), 0) / silencedVideos.length
     )
     avgQualityEl.textContent = avgQuality
-  }
-  
-  if (avgGapEl) {
-    const avgGap = Math.round(
-      silencedVideos.reduce((sum, v) => sum + (v.exposureGap || 0), 0) / silencedVideos.length
-    )
-    avgGapEl.textContent = `+${avgGap}`
   }
 }
 

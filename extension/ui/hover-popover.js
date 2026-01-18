@@ -746,6 +746,13 @@
   }
 
   /**
+   * Update explanations - wrapper for context bullets
+   */
+  function updateExplanations(explanations) {
+    updateContextBullets(explanations || [])
+  }
+
+  /**
    * Update context bullets - short declarative bullets visible by default
    */
   function updateContextBullets(explanations) {

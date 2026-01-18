@@ -6,11 +6,12 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { gemini, classifyGreenwashing, checkGeminiHealth } from "../_shared/gemini_client.ts"
 import { diversifySilencedVoices, type DiversityMetadata } from "../_shared/diversify.ts"
+import { classifyPerspective } from "../_shared/deepseek_prompts.ts"
 
 // ============================================
 // CONFIGURATION & VERSIONING
 // ============================================
-const SCHEMA_VERSION = '3.1.0'
+const SCHEMA_VERSION = '3.2.0' // Updated for perspective search
 const FUNCTION_VERSION = 'v18'
 
 const YOUTUBE_API_KEY = Deno.env.get('YOUTUBE_API_KEY') || 'AIzaSyA_TCvrL72kC5xplism_FJDCtl8UshToHQ'
@@ -427,6 +428,222 @@ serve(async (req) => {
 
   try {
     const body = await req.json()
+    
+    // Handle perspective_search mode
+    if (body.mode === 'perspective_search') {
+      const query = body.query
+      const maxPerPerspective = body.maxPerPerspective || 2
+      
+      if (!query) {
+        return new Response(JSON.stringify({
+          error: 'MISSING_QUERY',
+          perspectives: [],
+          _schemaVersion: SCHEMA_VERSION
+        }), { status: 200, headers })
+      }
+
+      if (!YOUTUBE_API_KEY) {
+        return new Response(JSON.stringify({
+          perspectives: [],
+          debug: { error: 'NO_API_KEY' },
+          _schemaVersion: SCHEMA_VERSION
+        }), { status: 200, headers })
+      }
+
+      // Search for candidates
+      const searchResults = await searchRelatedVideos(query, 50)
+      if (searchResults.length === 0) {
+        return new Response(JSON.stringify({
+          perspectives: [],
+          debug: { totalCandidates: 0 },
+          _schemaVersion: SCHEMA_VERSION
+        }), { status: 200, headers })
+      }
+
+      // Fetch video and channel details
+      const videoIds = searchResults.map((v: any) => v.id.videoId)
+      const videosData = await Promise.all(
+        videoIds.slice(0, 30).map(async (id: string) => {
+          const result = await getVideoById(id)
+          if (result.error || !result.data) return null
+          const channel = await getChannelById(result.data.snippet.channelId)
+          return { video: result.data, channel }
+        })
+      )
+
+      const validVideos = videosData.filter(Boolean) as Array<{ video: any; channel: any }>
+      
+      // Calculate quality scores (simplified - in production would use full pipeline)
+      const candidatesWithScores = validVideos.map(({ video, channel }) => {
+        const subs = parseInt(channel?.statistics?.subscriberCount || '0')
+        const views = parseInt(video.statistics?.viewCount || '0')
+        const likes = parseInt(video.statistics?.likeCount || '0')
+        const comments = parseInt(video.statistics?.commentCount || '0')
+        
+        // Simple quality score
+        const likeRate = views > 0 ? likes / views : 0
+        const commentRate = views > 0 ? comments / views : 0
+        const qualityScore = Math.min(100, Math.round(
+          (likeRate * 400) + (commentRate * 1500) + (subs < 100000 ? 20 : 0)
+        ))
+
+        return {
+          video,
+          channel,
+          qualityScore,
+          subscriberCount: subs
+        }
+      })
+
+      // Sort by quality score
+      candidatesWithScores.sort((a, b) => b.qualityScore - a.qualityScore)
+
+      // Classify top 12 candidates
+      const DEEPSEEK_API_KEY = Deno.env.get('DEEPSEEK_API_KEY')
+      const candidatesToClassify = candidatesWithScores.slice(0, 12)
+      
+      const classificationPromises = candidatesToClassify.map(async (item) => {
+        if (!DEEPSEEK_API_KEY) return { item, classification: null }
+        
+        const classification = await classifyPerspective(
+          query,
+          item.video.snippet.title,
+          item.video.snippet.description || '',
+          item.video.snippet.channelTitle,
+          DEEPSEEK_API_KEY
+        )
+        return { item, classification }
+      })
+
+      const classifiedResults = await Promise.all(classificationPromises)
+      const classified = classifiedResults.filter(r => r.classification !== null)
+      const unclassified = classifiedResults.filter(r => r.classification === null).map(r => r.item)
+
+      // Group into buckets
+      const buckets = {
+        mainstream_practical: [] as Array<{ item: any; classification: any }>,
+        critical_contextual: [] as Array<{ item: any; classification: any }>,
+        alternative_longterm: [] as Array<{ item: any; classification: any }>
+      }
+
+      for (const { item, classification } of classified) {
+        if (classification && buckets[classification.bucket as keyof typeof buckets]) {
+          buckets[classification.bucket as keyof typeof buckets].push({ item, classification })
+        }
+      }
+
+      // Sort each bucket by quality score
+      for (const bucketKey in buckets) {
+        buckets[bucketKey as keyof typeof buckets].sort((a, b) => b.item.qualityScore - a.item.qualityScore)
+      }
+
+      // Build perspective buckets
+      const perspectiveBuckets = [
+        {
+          label: 'Mainstream / Practical' as const,
+          rationale: buckets.mainstream_practical.length > 0 
+            ? buckets.mainstream_practical[0].classification.oneSentenceRationale 
+            : 'Conventional, solution-focused approaches',
+          videos: buckets.mainstream_practical.slice(0, maxPerPerspective).map(({ item, classification }) => ({
+            videoId: item.video.id,
+            title: item.video.snippet.title,
+            description: item.video.snippet.description,
+            thumbnail: item.video.snippet.thumbnails?.medium?.url || item.video.snippet.thumbnails?.default?.url,
+            channelId: item.video.snippet.channelId,
+            channelTitle: item.video.snippet.channelTitle,
+            publishedAt: item.video.snippet.publishedAt,
+            subscriberCount: item.subscriberCount,
+            isRisingSignal: false,
+            whySurfaced: [`Quality score: ${item.qualityScore}`],
+            engagementRatio: 0,
+            qualityScore: item.qualityScore,
+            perspectiveRationale: classification.oneSentenceRationale
+          }))
+        },
+        {
+          label: 'Critical / Contextual' as const,
+          rationale: buckets.critical_contextual.length > 0
+            ? buckets.critical_contextual[0].classification.oneSentenceRationale
+            : 'Questioning assumptions, analyzing systems',
+          videos: buckets.critical_contextual.slice(0, maxPerPerspective).map(({ item, classification }) => ({
+            videoId: item.video.id,
+            title: item.video.snippet.title,
+            description: item.video.snippet.description,
+            thumbnail: item.video.snippet.thumbnails?.medium?.url || item.video.snippet.thumbnails?.default?.url,
+            channelId: item.video.snippet.channelId,
+            channelTitle: item.video.snippet.channelTitle,
+            publishedAt: item.video.snippet.publishedAt,
+            subscriberCount: item.subscriberCount,
+            isRisingSignal: false,
+            whySurfaced: [`Quality score: ${item.qualityScore}`],
+            engagementRatio: 0,
+            qualityScore: item.qualityScore,
+            perspectiveRationale: classification.oneSentenceRationale
+          }))
+        },
+        {
+          label: 'Alternative / Long-term' as const,
+          rationale: buckets.alternative_longterm.length > 0
+            ? buckets.alternative_longterm[0].classification.oneSentenceRationale
+            : 'Alternative viewpoints, long-term thinking',
+          videos: buckets.alternative_longterm.slice(0, maxPerPerspective).map(({ item, classification }) => ({
+            videoId: item.video.id,
+            title: item.video.snippet.title,
+            description: item.video.snippet.description,
+            thumbnail: item.video.snippet.thumbnails?.medium?.url || item.video.snippet.thumbnails?.default?.url,
+            channelId: item.video.snippet.channelId,
+            channelTitle: item.video.snippet.channelTitle,
+            publishedAt: item.video.snippet.publishedAt,
+            subscriberCount: item.subscriberCount,
+            isRisingSignal: false,
+            whySurfaced: [`Quality score: ${item.qualityScore}`],
+            engagementRatio: 0,
+            qualityScore: item.qualityScore,
+            perspectiveRationale: classification.oneSentenceRationale
+          }))
+        }
+      ]
+
+      // Fallback for empty buckets
+      for (let i = 0; i < perspectiveBuckets.length; i++) {
+        const bucket = perspectiveBuckets[i]
+        if (bucket.videos.length === 0 && unclassified.length > 0) {
+          const fallbackVideos = unclassified
+            .sort((a, b) => b.qualityScore - a.qualityScore)
+            .slice(0, maxPerPerspective)
+            .map(item => ({
+              videoId: item.video.id,
+              title: item.video.snippet.title,
+              description: item.video.snippet.description,
+              thumbnail: item.video.snippet.thumbnails?.medium?.url || item.video.snippet.thumbnails?.default?.url,
+              channelId: item.video.snippet.channelId,
+              channelTitle: item.video.snippet.channelTitle,
+              publishedAt: item.video.snippet.publishedAt,
+              subscriberCount: item.subscriberCount,
+              isRisingSignal: false,
+              whySurfaced: [`Quality score: ${item.qualityScore}`],
+              engagementRatio: 0,
+              qualityScore: item.qualityScore,
+              perspectiveRationale: 'Fallback (AI unavailable)'
+            }))
+          bucket.videos = fallbackVideos
+          bucket.rationale = 'Fallback (AI classification unavailable)'
+        }
+      }
+
+      const finalBuckets = perspectiveBuckets.filter(b => b.videos.length > 0)
+
+      return new Response(JSON.stringify({
+        perspectives: finalBuckets,
+        debug: {
+          totalCandidates: validVideos.length,
+          classifiedCount: classified.length,
+          fallbackUsed: unclassified.length > 0
+        },
+        _schemaVersion: SCHEMA_VERSION
+      }), { status: 200, headers })
+    }
+
     video_id = body.video_id
     const transcript = body.transcript
 
