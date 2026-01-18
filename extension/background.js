@@ -7,7 +7,7 @@
 const SCHEMA_VERSION = '4.0.0'
 const ENGINE_VERSION = 'v4.0'
 
-const YOUTUBE_API_KEY = 'AIzaSyChcGwR7639r4SA-DxAOgoBkAml5KT736U'
+const YOUTUBE_API_KEY = 'AIzaSyAonDMfoKXNqtvuFE1IyB8H3Ab0Saszn5c'
 const MAX_SUBSCRIBER_THRESHOLD = 100000 // Noise cancellation threshold
 const MONOPOLY_THRESHOLD = 1000000 // 1M subs = deafening noise
 const CACHE_TTL = 86400000 // 24 hours in ms
@@ -3398,7 +3398,7 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
         const videoDescription = candidate.video.snippet?.description || ''
         const channelTitle = candidate.video.snippet?.channelTitle || ''
         
-        // Don't await AI explanation - add gem immediately, update explanation async
+        // Create explanation promise - we'll await all of them before returning
         const explanationPromise = getAIExplanation(
           quality.metrics,
           candidate.video.snippet.title,
@@ -3424,17 +3424,13 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
           underexposureScore: quality.underexposureScore,
           breakdown: quality.breakdown,
           metrics: quality.metrics,
-          explanation: null, // Will be filled async
-          hasTranscript: !!transcript
+          explanation: null, // Will be filled after Promise.all
+          hasTranscript: !!transcript,
+          _explanationPromise: explanationPromise // Store promise for later resolution
         }
 
         gems.push(gem)
         console.log(`[Silenced] 💎 Found gem: "${candidate.video.snippet.title}" (Q:${quality.total}, U:${quality.underexposureScore})`)
-
-        // Update explanation async (don't block)
-        explanationPromise.then(explanation => {
-          gem.explanation = explanation
-        })
       }
 
       // If we still need more, try broadening
@@ -3465,6 +3461,16 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
     // This is a simplified fallback - in practice, you might want to store candidates
     // For now, we'll just log that we tried
   }
+
+  // Await all AI explanation promises before returning (fixes async race condition)
+  console.log(`[Silenced] Waiting for ${gems.length} AI explanations...`)
+  await Promise.all(gems.map(async (gem) => {
+    if (gem._explanationPromise) {
+      gem.explanation = await gem._explanationPromise
+      delete gem._explanationPromise // Clean up internal property
+    }
+  }))
+  console.log(`[Silenced] AI explanations complete`)
 
   return {
     gems,

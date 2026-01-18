@@ -1800,20 +1800,32 @@ function getShadowStyles() {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 8px 10px;
+      padding: 10px 14px;
+      margin: 8px 10px 10px;
       cursor: pointer;
-      font-size: 11px;
-      color: #666;
-      transition: background 0.1s ease-out;
+      font-size: 12px;
+      font-weight: 500;
+      color: #aaa;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      transition: all 0.15s ease-out;
     }
 
     .gem-expand-toggle:hover {
-      background: #1a1a1a;
-      color: #999;
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(255, 255, 255, 0.15);
+      color: #fff;
     }
 
     .gem-expand-toggle .chevron {
-      font-size: 10px;
+      font-size: 11px;
+      color: #888;
+      transition: color 0.15s ease-out;
+    }
+
+    .gem-expand-toggle:hover .chevron {
+      color: #fff;
     }
 
     /* Breakdown - Hidden by default */
@@ -2693,7 +2705,7 @@ function injectHiddenGemsPanel(shadow, container, gemsData, analysisData) {
         e.stopPropagation()
         const isHidden = breakdown.style.display === 'none'
         breakdown.style.display = isHidden ? 'block' : 'none'
-        expandToggle.querySelector('span:first-child').textContent = isHidden ? 'Hide details' : 'Show details'
+        expandToggle.querySelector('span:first-child').textContent = isHidden ? 'Hide' : 'Why we recommended this'
         expandToggle.querySelector('.chevron').textContent = isHidden ? '▾' : '▸'
       })
     }
@@ -2726,11 +2738,6 @@ function createGemCard(gem, index) {
     ? 'Strong engagement despite limited distribution'
     : 'Good content with visibility gap'
 
-  // Short context bullet from explanation
-  const contextBullet = gem.explanation
-    ? gem.explanation.split('.')[0].slice(0, 70) + (gem.explanation.length > 70 ? '...' : '')
-    : 'Lower platform-favored signals'
-
   return `
     <div class="gem-card" id="gem-card-${index}">
       <a href="/watch?v=${gem.videoId}" class="gem-link">
@@ -2750,11 +2757,8 @@ function createGemCard(gem, index) {
         </div>
         <div class="gem-summary-line">${summaryLine}</div>
       </div>
-      <div class="gem-context-preview">
-        <span class="context-bullet">• ${contextBullet}</span>
-      </div>
       <div class="gem-expand-toggle" data-gem-expand="${index}">
-        <span>Show details</span>
+        <span>Why we recommended this</span>
         <span class="chevron">▸</span>
       </div>
       <div class="gem-breakdown" style="display: none;">
