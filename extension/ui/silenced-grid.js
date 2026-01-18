@@ -1067,6 +1067,10 @@ function injectStyles() {
  * Show the silenced grid and hide YouTube's feed
  */
 function show() {
+  // #region agent log H2
+  fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'silenced-grid.js:show',message:'show() called',data:{gridExists:!!gridElement,currentVisibility:isVisible},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H2'})}).catch(()=>{});
+  // #endregion
+
   if (!gridElement) {
     injectGrid()
   }
@@ -1074,10 +1078,14 @@ function show() {
   if (gridElement) {
     gridElement.classList.add('visible')
     isVisible = true
+    // #region agent log H4
+    fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'silenced-grid.js:show:visible',message:'Grid set to visible',data:{hasVisibleClass:gridElement.classList.contains('visible')},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H4'})}).catch(()=>{});
+    // #endregion
   }
   
-  // Hide YouTube's native video items (not our injected elements)
-  hideNativeVideos()
+  // DO NOT hide YouTube's native feed - silenced grid shows ON TOP of the feed
+  // The original feed should always remain visible
+  // hideNativeVideos() - REMOVED
 }
 
 /**
@@ -1121,7 +1129,7 @@ function showNativeVideos() {
 }
 
 /**
- * Hide the silenced grid and show YouTube's feed
+ * Hide the silenced grid (YouTube's feed stays visible always)
  */
 function hide() {
   if (gridElement) {
@@ -1129,14 +1137,18 @@ function hide() {
     isVisible = false
   }
   
-  // Restore YouTube's native video items
-  showNativeVideos()
+  // YouTube's feed is always visible, no need to restore
+  // showNativeVideos() - REMOVED
 }
 
 /**
  * Update the grid with silenced videos
  */
 function updateVideos(videos) {
+  // #region agent log H3
+  fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'silenced-grid.js:updateVideos:entry',message:'updateVideos called',data:{videosCount:videos?.length||0,gridExists:!!gridElement,firstVideoId:videos?.[0]?.videoId||'none'},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H3'})}).catch(()=>{});
+  // #endregion
+
   if (!gridElement) {
     injectGrid()
   }
@@ -1156,6 +1168,9 @@ function updateVideos(videos) {
   }
   
   if (silencedVideos.length === 0) {
+    // #region agent log H5
+    fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'silenced-grid.js:updateVideos:empty',message:'No videos to show',data:{},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H5'})}).catch(()=>{});
+    // #endregion
     // Show empty state
     if (emptyEl) emptyEl.style.display = 'flex'
     // Reset stats to show 0
@@ -1172,6 +1187,9 @@ function updateVideos(videos) {
   if (emptyEl) emptyEl.style.display = 'none'
   
   // Add video cards
+  // #region agent log H3
+  fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'silenced-grid.js:updateVideos:addCards',message:'Adding video cards',data:{count:silencedVideos.length,containerExists:!!videosContainer},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H3'})}).catch(()=>{});
+  // #endregion
   for (const video of silencedVideos) {
     const card = createVideoCard(video)
     videosContainer.appendChild(card)

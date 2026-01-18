@@ -7,7 +7,7 @@
 const SCHEMA_VERSION = '4.0.0'
 const ENGINE_VERSION = 'v4.0'
 
-const YOUTUBE_API_KEY = 'AIzaSyC05-_CD7VnZ8w8DFQMu-lWByJzcXccty0'
+const YOUTUBE_API_KEY = 'AIzaSyCHazLbHh0p4PYOMzxu7TtFYuVDQJ-j2YQ'
 const MAX_SUBSCRIBER_THRESHOLD = 100000 // Noise cancellation threshold
 const MONOPOLY_THRESHOLD = 1000000 // 1M subs = deafening noise
 const CACHE_TTL = 86400000 // 24 hours in ms
@@ -4208,64 +4208,129 @@ async function analyzeHomepageVideos(videoIds, feedContext = {}) {
     const videoAgeHours = getVideoAgeHours(video.snippet?.publishedAt)
     const viewsPerHour = videoAgeHours > 0 ? views / videoAgeHours : views
 
-    // Map to bias score format
-    const biasScore = noiseAnalysis.totalScore
-    const confidence = activities.length > 0 ? 0.85 : 0.6 // Higher if we have activities
+    // Calculate engagement metrics
+    const likes = parseInt(video.statistics?.likeCount || '0')
+    const comments = parseInt(video.statistics?.commentCount || '0')
+    const likeRate = views > 0 ? (likes / views) * 100 : 0
+    const commentRate = views > 0 ? (comments / views) * 100 : 0
 
-    // Generate contributions/tags - IMPROVED: Lower threshold + more factors
-    const contributions = []
+    // Calculate 6-category bias breakdown (0-100 each)
+    // EA: Exposure Advantage (channel size + velocity)
+    let EA = 0
+    if (subs >= 10000000) EA = 95
+    else if (subs >= 1000000) EA = 80
+    else if (subs >= 500000) EA = 65
+    else if (subs >= 100000) EA = 45
+    else if (subs >= 50000) EA = 30
+    else if (subs >= 10000) EA = 15
+    else EA = 5
+    // Add velocity bonus
+    if (viewsPerHour > 50000) EA = Math.min(100, EA + 20)
+    else if (viewsPerHour > 10000) EA = Math.min(100, EA + 12)
+    else if (viewsPerHour > 1000) EA = Math.min(100, EA + 5)
 
-    // Channel size contribution (always show for transparency)
-    if (subs >= 10000000) {
-      contributions.push({ factor: 'Mega Channel', value: 35, color: '#dc2626', description: '10M+ subscribers dominates algorithm' })
-    } else if (subs >= 1000000) {
-      contributions.push({ factor: 'Authority Boost', value: 28, color: '#ef4444', description: '1M+ subs get algorithmic advantage' })
-    } else if (subs >= 500000) {
-      contributions.push({ factor: 'High Authority', value: 20, color: '#f97316', description: '500K+ subs compete for visibility' })
-    } else if (subs >= 100000) {
-      contributions.push({ factor: 'Established', value: 12, color: '#f59e0b', description: '100K+ subs has some advantage' })
-    } else if (subs < 50000 && subs > 0) {
-      contributions.push({ factor: 'Small Creator', value: -15, color: '#10b981', description: 'Under 50K - algorithm disadvantage' })
-    }
+    // CM: Click Magnet (title/thumbnail signals - inferred from engagement)
+    let CM = 30 // Base
+    if (likeRate > 5) CM = Math.min(100, CM + 30)
+    else if (likeRate > 3) CM = Math.min(100, CM + 15)
+    if (video.snippet?.title?.match(/[!?]{2,}|😱|🔥|💀|SHOCKING|INSANE/i)) CM = Math.min(100, CM + 25)
 
-    // Velocity contribution
-    if (viewsPerHour > 50000) {
-      contributions.push({ factor: 'Viral Velocity', value: 25, color: '#8b5cf6', description: 'Extremely fast view accumulation' })
-    } else if (viewsPerHour > 10000) {
-      contributions.push({ factor: 'Trend Spike', value: 18, color: '#a855f7', description: 'High velocity views' })
-    } else if (viewsPerHour > 1000) {
-      contributions.push({ factor: 'Rising Fast', value: 10, color: '#c084fc', description: 'Above average view velocity' })
-    }
+    // RP: Retention Proxy (satisfaction signals)
+    let RP = 40 // Base
+    if (likeRate > 5) RP = Math.min(100, RP + 35)
+    else if (likeRate > 3) RP = Math.min(100, RP + 20)
+    if (commentRate > 1) RP = Math.min(100, RP + 15)
 
-    // Upload frequency (if we have activities)
-    if (activities.length > 0) {
-      const uploadsPerWeek = activities.length / 4 // Approximate (activities are last ~month)
-      if (uploadsPerWeek >= 7) {
-        contributions.push({ factor: 'Daily Poster', value: 15, color: '#06b6d4', description: 'Frequent uploads boost algorithm favor' })
-      } else if (uploadsPerWeek >= 3) {
-        contributions.push({ factor: 'Active Channel', value: 8, color: '#22d3d1', description: 'Regular uploads help visibility' })
+    // EN: Engagement strength
+    let EN = Math.min(100, Math.round(likeRate * 15 + commentRate * 30))
+
+    // TR: Topic Reinforcement (how much this topic dominates feed - placeholder)
+    let TR = 30 // Would need feed context to compute properly
+
+    // CI: Commercial Influence (sponsor detection - simplified)
+    let CI = 0
+    const desc = video.snippet?.description || ''
+    if (desc.match(/sponsored by|thanks to .+ for sponsoring|promo code|affiliate/i)) CI = 60
+
+    // Calculate weighted bias score
+    const biasScore = Math.round(0.25 * EA + 0.25 * CM + 0.25 * RP + 0.10 * EN + 0.10 * TR + 0.05 * CI)
+    const confidence = activities.length > 0 ? 0.85 : 0.6
+
+    // Store breakdown for UI
+    const breakdown = { EA, CM, RP, EN, TR, CI }
+
+    // Generate contributions/tags from breakdown categories
+    const contributions = [
+      { 
+        factor: 'Exposure Advantage', 
+        value: EA, 
+        color: EA > 70 ? '#ef4444' : EA > 40 ? '#f97316' : '#22c55e', 
+        description: 'Algorithmic head start from channel size + velocity',
+        icon: '📊'
+      },
+      { 
+        factor: 'Click Magnet', 
+        value: CM, 
+        color: CM > 70 ? '#ef4444' : CM > 40 ? '#f97316' : '#22c55e', 
+        description: 'Thumbnail/title optimized for clicks',
+        icon: '🎯'
+      },
+      { 
+        factor: 'Retention Signals', 
+        value: RP, 
+        color: RP > 70 ? '#ef4444' : RP > 40 ? '#f97316' : '#22c55e', 
+        description: 'Signals that predict watch time',
+        icon: '⏱️'
+      },
+      { 
+        factor: 'Engagement', 
+        value: EN, 
+        color: EN > 70 ? '#22c55e' : EN > 40 ? '#f59e0b' : '#6b7280', 
+        description: `${likeRate.toFixed(1)}% likes, ${commentRate.toFixed(2)}% comments`,
+        icon: '💬'
       }
+    ]
+
+    // Add activity-based contribution if available
+    if (activities.length > 0) {
+      const uploadsPerWeek = activities.length / 4
+      contributions.push({ 
+        factor: 'Upload Frequency', 
+        value: uploadsPerWeek >= 7 ? 80 : uploadsPerWeek >= 3 ? 50 : 20, 
+        color: uploadsPerWeek >= 5 ? '#06b6d4' : '#22d3d1', 
+        description: `~${uploadsPerWeek.toFixed(1)} uploads/week`,
+        icon: '📅'
+      })
     }
 
-    // Recency boost
-    if (videoAgeHours < 24) {
-      contributions.push({ factor: 'Fresh Upload', value: 12, color: '#22c55e', description: 'New videos get temporary boost' })
-    } else if (videoAgeHours < 72) {
-      contributions.push({ factor: 'Recent', value: 6, color: '#4ade80', description: 'Still in newness window' })
+    // Add recency
+    if (videoAgeHours < 72) {
+      contributions.push({ 
+        factor: 'Recency Boost', 
+        value: videoAgeHours < 24 ? 70 : 40, 
+        color: '#22c55e', 
+        description: videoAgeHours < 24 ? 'Fresh upload (<24h)' : 'Recent upload (<3 days)',
+        icon: '🆕'
+      })
     }
 
-    // Engagement signals
-    const likeRatio = views > 0 ? parseInt(video.statistics?.likeCount || '0') / views : 0
-    if (likeRatio > 0.05) {
-      contributions.push({ factor: 'High Engagement', value: 10, color: '#f472b6', description: '5%+ like ratio signals quality' })
+    // Add commercial if detected
+    if (CI > 0) {
+      contributions.push({ 
+        factor: 'Sponsored Content', 
+        value: CI, 
+        color: '#f97316', 
+        description: 'Detected sponsorship/affiliate signals',
+        icon: '💰'
+      })
     }
 
-    // Sort by absolute value
-    contributions.sort((a, b) => Math.abs(b.value) - Math.abs(a.value))
+    // Sort by value (highest first)
+    contributions.sort((a, b) => b.value - a.value)
 
     // Generate tags from top contributions
     const tags = contributions.slice(0, 4).map(c => ({
-      text: c.value > 0 ? `${c.factor} +${c.value}` : `${c.factor} ${c.value}`,
+      text: `${c.icon} ${c.factor}: ${c.value}`,
       color: c.color,
       key: c.factor.toLowerCase().replace(/\s+/g, '_'),
       value: c.value,
@@ -4279,22 +4344,29 @@ async function analyzeHomepageVideos(videoIds, feedContext = {}) {
       channelId: video.snippet?.channelId,
       biasScore,
       confidence,
+      // 6-category breakdown (0-100 each)
+      breakdown,
       scores: {
         aas: noiseAnalysis.totalScore,
         channelSize: subs,
         velocity: Math.round(viewsPerHour),
         ms: 0,
-        cis: 0
+        cis: CI
       },
       contributions,
       tags,
       metrics: {
         views,
         subs,
+        likes,
+        comments,
+        likeRate: Math.round(likeRate * 10) / 10,
+        commentRate: Math.round(commentRate * 100) / 100,
         age: getVideoAge(video.snippet?.publishedAt),
+        ageHours: Math.round(videoAgeHours),
         velocity: viewsPerHour > 10000 ? 'high' : viewsPerHour > 1000 ? 'medium' : 'low',
-        thumbAbuse: 0,
-        sponsorDetected: false
+        viewsPerHour: Math.round(viewsPerHour),
+        sponsorDetected: CI > 0
       },
       exposureTier: noiseAnalysis.exposureTier
     })

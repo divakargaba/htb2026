@@ -345,6 +345,10 @@ function deactivateBiasLens() {
 function showNoiseView() {
   console.log('[BiasLens] Showing Noise view')
 
+  // #region agent log H1
+  fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'content.js:showNoiseView:entry',message:'Tab switch to Noise',data:{scoredVideosCount:scoredVideos?.length||0,feedAnalysisExists:!!feedAnalysisData,homepageAnalysisComplete:homepageAnalysisComplete,firstScoredId:scoredVideos?.[0]?.videoId||'none'},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
+  // #endregion
+
   if (window.SilencedGrid) {
     window.SilencedGrid.hide()
   }
@@ -356,6 +360,9 @@ function showNoiseView() {
   
   // DON'T re-analyze - use cached data if available
   if (feedAnalysisData && window.BiasCardOverlay) {
+    // #region agent log H2
+    fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'content.js:showNoiseView:updateUI',message:'Updating UI with cached data',data:{videosCount:feedAnalysisData?.videos?.length||0,firstVideoId:feedAnalysisData?.videos?.[0]?.videoId||'none'},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H2'})}).catch(()=>{});
+    // #endregion
     updateBiasLensUIWithAnalysis(feedAnalysisData)
   }
   
@@ -366,6 +373,10 @@ function showNoiseView() {
 
 function showSilencedView() {
   console.log('[BiasLens] Showing Silenced view')
+
+  // #region agent log H2
+  fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'content.js:showSilencedView',message:'Tab switch to Silenced',data:{silencedPairsCount:silencedPairs?.length||0,silencedVideosDataCount:silencedVideosData?.length||0,gridExists:!!window.SilencedGrid},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H2'})}).catch(()=>{});
+  // #endregion
 
   if (window.BiasCardOverlay) {
     window.BiasCardOverlay.disable()
@@ -397,15 +408,27 @@ function showSilencedView() {
           qualityScore: p.qualityScore,
           engagementScore: p.engagementScore
         }))
+      // #region agent log H1
+      fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'content.js:showSilencedView:pairs',message:'Using silencedPairs',data:{count:silencedToShow.length,firstVideo:silencedToShow[0]?.title||'none',hasAI:!!silencedToShow[0]?.aiExplanation},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
+      // #endregion
     } else {
       silencedToShow = silencedVideosData
+      // #region agent log H1
+      fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'content.js:showSilencedView:legacy',message:'Using legacy silencedVideosData',data:{count:silencedToShow?.length||0},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
+      // #endregion
     }
     
     if (silencedToShow && silencedToShow.length > 0) {
       console.log(`[BiasLens] Showing ${silencedToShow.length} cached silenced videos`)
+      // #region agent log H3
+      fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'content.js:showSilencedView:update',message:'Calling updateVideos',data:{count:silencedToShow.length,sample:silencedToShow[0]},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H3'})}).catch(()=>{});
+      // #endregion
       window.SilencedGrid.updateVideos(silencedToShow)
     } else {
       // Only discover if we have NO cached data at all
+      // #region agent log H1
+      fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'content.js:showSilencedView:discover',message:'No cached data, discovering',data:{},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
+      // #endregion
       window.SilencedGrid.showLoading()
       discoverSilencedVideos()
     }
@@ -562,10 +585,17 @@ async function analyzeHomepageFeed() {
     }
 
     // Step 5: Find silenced counterparts (parallel)
+    // #region agent log H1
+    fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'content.js:analyzeHomepageFeed:findSilenced',message:'Requesting silenced pairs',data:{scoredVideosCount:scoredVideos.length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
+    // #endregion
     const silencedResponse = await safeSendMessage({
       type: 'FIND_SILENCED',
       scoredVideos: scoredVideos.slice(0, 10)
     })
+
+    // #region agent log H1
+    fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'content.js:analyzeHomepageFeed:silencedResponse',message:'Silenced response received',data:{success:silencedResponse?.success,pairsCount:silencedResponse?.pairs?.length||0,error:silencedResponse?.error||null},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
+    // #endregion
 
     if (silencedResponse?.success && silencedResponse?.pairs) {
       silencedPairs = silencedResponse.pairs
@@ -592,6 +622,9 @@ async function analyzeHomepageFeed() {
             qualityScore: p.qualityScore,
             engagementScore: p.engagementScore
           }))
+        // #region agent log H5
+        fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'content.js:analyzeHomepageFeed:updateGrid',message:'Updating silenced grid after fetch',data:{count:silencedWithContext.length,hasVideos:silencedWithContext.filter(v=>v.videoId).length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H5'})}).catch(()=>{});
+        // #endregion
         window.SilencedGrid.updateVideos(silencedWithContext)
       }
     }

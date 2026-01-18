@@ -50,14 +50,43 @@ function createOverlayElement(videoId, scoreData) {
   overlay.className = OVERLAY_CLASS
   overlay.dataset.videoId = videoId
   
+  // Main row with pill and tags
+  const mainRow = document.createElement('div')
+  mainRow.className = 'bias-overlay-main'
+  mainRow.style.cssText = 'display: flex; align-items: center; gap: 8px; flex-wrap: wrap;'
+  
   // Bias score pill
   const scorePill = createScorePill(scoreData.biasScore, scoreData.confidence)
   
   // Tags container
   const tagsContainer = createTagsContainer(scoreData.tags || [])
   
-  overlay.appendChild(scorePill)
-  overlay.appendChild(tagsContainer)
+  mainRow.appendChild(scorePill)
+  mainRow.appendChild(tagsContainer)
+  overlay.appendChild(mainRow)
+  
+  // Add breakdown chart if available (collapsible)
+  if (scoreData.breakdown) {
+    const breakdownToggle = document.createElement('div')
+    breakdownToggle.className = 'breakdown-toggle'
+    breakdownToggle.innerHTML = '<span class="toggle-icon">📊</span><span class="toggle-text">Details</span>'
+    breakdownToggle.style.cssText = 'display: flex; align-items: center; gap: 4px; font-size: 10px; color: #888; cursor: pointer; margin-top: 4px;'
+    
+    const chart = createBreakdownChart(scoreData.breakdown)
+    if (chart) {
+      chart.style.display = 'none'
+      
+      breakdownToggle.addEventListener('click', (e) => {
+        e.stopPropagation()
+        const isHidden = chart.style.display === 'none'
+        chart.style.display = isHidden ? 'flex' : 'none'
+        breakdownToggle.querySelector('.toggle-text').textContent = isHidden ? 'Hide' : 'Details'
+      })
+      
+      overlay.appendChild(breakdownToggle)
+      overlay.appendChild(chart)
+    }
+  }
   
   // Add hover handler for popover
   overlay.addEventListener('mouseenter', (e) => handleOverlayHover(e, videoId, scoreData))
@@ -100,7 +129,7 @@ function createScorePill(score, confidence = 1) {
 }
 
 /**
- * Create tags container with micro-tags
+ * Create tags container with micro-tags showing breakdown categories
  */
 function createTagsContainer(tags) {
   const container = document.createElement('div')
@@ -113,15 +142,17 @@ function createTagsContainer(tags) {
     const tagEl = document.createElement('span')
     tagEl.className = 'bias-tag'
     
-    // Determine color based on value (negative = green, high positive = red)
+    // Use tag color or determine based on value (0-100 scale now)
     let color = tag.color || CARD_TAG_COLORS.default
-    if (tag.value !== undefined) {
-      if (tag.value < 0) {
-        color = '#10b981' // Green for under-represented
-      } else if (tag.value > 25) {
-        color = '#ef4444' // Red for high advantage
-      } else if (tag.value > 15) {
-        color = '#f97316' // Orange for medium advantage
+    if (tag.value !== undefined && !tag.color) {
+      if (tag.value >= 70) {
+        color = '#ef4444' // Red for high
+      } else if (tag.value >= 50) {
+        color = '#f97316' // Orange for medium-high
+      } else if (tag.value >= 30) {
+        color = '#f59e0b' // Yellow for medium
+      } else {
+        color = '#22c55e' // Green for low
       }
     }
     
@@ -129,6 +160,51 @@ function createTagsContainer(tags) {
     tagEl.textContent = tag.text || tag.label || 'Unknown'
     tagEl.title = tag.description || tag.text || ''
     container.appendChild(tagEl)
+  }
+  
+  return container
+}
+
+/**
+ * Create breakdown bar chart for 6 bias categories
+ */
+function createBreakdownChart(breakdown) {
+  if (!breakdown) return null
+  
+  const container = document.createElement('div')
+  container.className = 'bias-breakdown-chart'
+  
+  const categories = [
+    { key: 'EA', label: 'Exposure', icon: '📊', desc: 'Algorithmic advantage from channel size' },
+    { key: 'CM', label: 'Click Magnet', icon: '🎯', desc: 'Title/thumbnail click optimization' },
+    { key: 'RP', label: 'Retention', icon: '⏱️', desc: 'Watch time prediction signals' },
+    { key: 'EN', label: 'Engagement', icon: '💬', desc: 'Like/comment ratios' },
+    { key: 'TR', label: 'Topic', icon: '🏷️', desc: 'Topic clustering in feed' },
+    { key: 'CI', label: 'Commercial', icon: '💰', desc: 'Sponsor/affiliate signals' }
+  ]
+  
+  for (const cat of categories) {
+    const value = breakdown[cat.key] || 0
+    const row = document.createElement('div')
+    row.className = 'breakdown-row'
+    row.title = `${cat.label}: ${value}/100 - ${cat.desc}`
+    
+    // Determine bar color
+    let barColor = '#22c55e'
+    if (value >= 70) barColor = '#ef4444'
+    else if (value >= 50) barColor = '#f97316'
+    else if (value >= 30) barColor = '#f59e0b'
+    
+    row.innerHTML = `
+      <span class="breakdown-icon">${cat.icon}</span>
+      <span class="breakdown-label">${cat.key}</span>
+      <div class="breakdown-bar-bg">
+        <div class="breakdown-bar-fill" style="width: ${value}%; background: ${barColor};"></div>
+      </div>
+      <span class="breakdown-value">${value}</span>
+    `
+    
+    container.appendChild(row)
   }
   
   return container
@@ -222,6 +298,59 @@ function getOverlayStyles() {
     .bias-tag:hover {
       background: rgba(255, 255, 255, 0.12);
       color: #fff;
+    }
+    
+    /* Breakdown Chart Styles */
+    .bias-breakdown-chart {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 8px;
+      background: rgba(0, 0, 0, 0.4);
+      border-radius: 6px;
+      margin-top: 8px;
+    }
+    
+    .breakdown-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 10px;
+    }
+    
+    .breakdown-icon {
+      width: 14px;
+      text-align: center;
+      font-size: 11px;
+    }
+    
+    .breakdown-label {
+      width: 24px;
+      color: #888;
+      font-weight: 600;
+      font-family: monospace;
+    }
+    
+    .breakdown-bar-bg {
+      flex: 1;
+      height: 6px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    
+    .breakdown-bar-fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.3s ease;
+    }
+    
+    .breakdown-value {
+      width: 24px;
+      text-align: right;
+      color: #aaa;
+      font-weight: 600;
+      font-family: monospace;
     }
     
     /* Hide overlays when Bias Lens is off */
@@ -605,6 +734,11 @@ function _doProcessAllCards() {
   
   // Only process first 20 visible cards to avoid slowness
   const visibleCards = cards.slice(0, 20)
+  
+  // #region agent log H3
+  const foundIds = visibleCards.slice(0,5).map(c => extractVideoId(c)).filter(Boolean);
+  fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'card-overlay.js:_doProcessAllCards',message:'Processing cards',data:{totalCards:cards.length,visibleCards:visibleCards.length,first5Ids:foundIds,scoresMapSize:videoScores.size},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H3'})}).catch(()=>{});
+  // #endregion
   
   for (const card of visibleCards) {
     addOverlayToCard(card)
