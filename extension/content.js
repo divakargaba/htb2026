@@ -1552,6 +1552,8 @@ function injectUnmutedVoices() {
 
   videos.slice(0, 5).forEach((video, index) => {
     const isRising = video.isRisingSignal || video.isRisingStar
+    const receipt = video.biasReceipt
+    const hasReceipt = receipt && (receipt.whySurfaced?.length > 0 || receipt.whyNotShown?.length > 0)
 
     const card = document.createElement('div')
     card.style.cssText = `
@@ -1561,6 +1563,59 @@ function injectUnmutedVoices() {
       overflow: hidden;
       border-left: 3px solid ${isRising ? '#f59e0b' : '#10b981'};
     `
+
+    // Build bias receipt HTML if available
+    let receiptHtml = ''
+    if (hasReceipt) {
+      const methodLabel = receipt.method === 'gemini' ? 'AI' : 'AUTO'
+      const methodClass = receipt.method === 'gemini' ? '' : 'fallback'
+
+      const surfacedBullets = (receipt.whySurfaced || [])
+        .map(reason => `<li>${esc(reason)}</li>`)
+        .join('')
+
+      receiptHtml = `
+        <div class="silenced-bias-receipt" data-receipt-id="${video.videoId}">
+          <div class="silenced-bias-receipt-toggle">
+            <span class="silenced-receipt-title">
+              Why Surfaced
+              <span class="silenced-receipt-method ${methodClass}">${methodLabel}</span>
+            </span>
+            <span class="silenced-receipt-arrow">▼</span>
+          </div>
+          <div class="silenced-receipt-content">
+            <div class="silenced-receipt-section">
+              <div class="silenced-receipt-section-title surfaced">Surfaced Because</div>
+              <ul class="silenced-receipt-bullets">
+                ${surfacedBullets || '<li>Under-represented voice on this topic</li>'}
+              </ul>
+            </div>
+          </div>
+        </div>
+      `
+    } else if (video.qualityReason || video.diversityNote) {
+      // Fallback to qualityReason/diversityNote if no biasReceipt
+      const reason = video.qualityReason || video.diversityNote || 'Under-represented voice'
+      receiptHtml = `
+        <div class="silenced-bias-receipt" data-receipt-id="${video.videoId}">
+          <div class="silenced-bias-receipt-toggle">
+            <span class="silenced-receipt-title">
+              Why Surfaced
+              <span class="silenced-receipt-method fallback">AUTO</span>
+            </span>
+            <span class="silenced-receipt-arrow">▼</span>
+          </div>
+          <div class="silenced-receipt-content">
+            <div class="silenced-receipt-section">
+              <div class="silenced-receipt-section-title surfaced">Surfaced Because</div>
+              <ul class="silenced-receipt-bullets">
+                <li>${esc(reason)}</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      `
+    }
 
     card.innerHTML = `
       <a href="/watch?v=${video.videoId}" class="video-link" style="display: block; padding: 10px; text-decoration: none;">
@@ -1574,7 +1629,19 @@ function injectUnmutedVoices() {
           </div>
         </div>
       </a>
+      ${receiptHtml ? `<div style="padding: 0 10px 10px;">${receiptHtml}</div>` : ''}
     `
+
+    // Add toggle functionality for bias receipt
+    const receiptToggle = card.querySelector('.silenced-bias-receipt-toggle')
+    if (receiptToggle) {
+      receiptToggle.addEventListener('click', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        const receiptEl = card.querySelector('.silenced-bias-receipt')
+        receiptEl?.classList.toggle('open')
+      })
+    }
 
     card.addEventListener('mouseenter', () => {
       card.style.background = '#222222'
