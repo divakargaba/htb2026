@@ -1246,14 +1246,52 @@ function scoreVideoQualityHeuristic(video, searchQuery, transcript = null) {
     combinedScore = (relevanceScore * 0.6) + (qualityScore * 0.4)
   }
 
+  // Generate meaningful description if no specific reasons were found
+  if (reasons.length === 0) {
+    // Build a contextual description based on available data
+    const subscriberCount = video.subscriberCount || 0
+    const channel = video.channelTitle || 'Independent creator'
+
+    // Generate description based on video characteristics
+    if (subscriberCount > 0 && subscriberCount < 10000) {
+      reasons.push(`Micro-creator with ${fmtSubs(subscriberCount)} subscribers offering alternative perspective`)
+    } else if (subscriberCount >= 10000 && subscriberCount < 50000) {
+      reasons.push(`Emerging voice with ${fmtSubs(subscriberCount)} subscribers`)
+    } else if (subscriberCount >= 50000 && subscriberCount < 100000) {
+      reasons.push(`Growing creator with ${fmtSubs(subscriberCount)} subscribers`)
+    } else if (relevanceScore > 0.3) {
+      reasons.push(`Content relevant to topic from ${channel}`)
+    } else if (titleMatchRatio > 0) {
+      reasons.push(`Covers topic keywords in title`)
+    } else {
+      reasons.push(`Alternative perspective from smaller creator`)
+    }
+
+    // Add query-based context if available
+    if (queryTerms.length > 0 && titleMatchRatio > 0.3) {
+      const matchedTerms = queryTerms.filter(t => title.includes(t)).slice(0, 2)
+      if (matchedTerms.length > 0) {
+        reasons.push(`Discusses: ${matchedTerms.join(', ')}`)
+      }
+    }
+  }
+
   return {
     score: combinedScore,
     relevance: relevanceScore,
     quality: qualityScore,
     contentDepth: contentDepthScore,
-    reason: reasons.length > 0 ? reasons.join(', ') : 'Heuristic evaluation',
+    reason: reasons.join(', '),
     method: contentDepthScore !== null ? 'heuristic-transcript' : 'heuristic'
   }
+}
+
+// Helper for subscriber formatting in heuristic scoring
+function fmtSubs(n) {
+  if (!n) return '0'
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'K'
+  return n.toString()
 }
 
 /**
