@@ -414,6 +414,20 @@ async function analyzeHomepageFeed() {
     return
   }
   
+  // If we already have good data, don't re-analyze (prevents clobbering)
+  // Check both stats.views (from enrichment) and metrics.views (from scoring)
+  const hasValidData = scoredVideos && scoredVideos.length > 0 && 
+    ((scoredVideos[0]?.stats?.views > 0) || (scoredVideos[0]?.metrics?.views > 0))
+  
+  if (hasValidData) {
+    console.log('[BiasLens] Already have valid analysis data, skipping re-analysis')
+    // Just update the UI with existing data
+    if (feedAnalysisData) {
+      updateBiasLensUIWithAnalysis(feedAnalysisData)
+    }
+    return
+  }
+  
   isAnalyzing = true
   console.log('[BiasLens] 🚀 Starting new homepage analysis pipeline...')
   const startTime = Date.now()
@@ -625,6 +639,39 @@ function extractHomepageVideoIdsFallback() {
   }
   
   return videoIds
+}
+
+/**
+ * Extract video titles from homepage for query building
+ * Used as fallback when topic extraction fails
+ */
+function extractHomepageVideoTitles() {
+  // First try to use cached scored videos
+  if (scoredVideos && scoredVideos.length > 0) {
+    return scoredVideos.map(v => v.title).filter(Boolean)
+  }
+  
+  // Next try homepage seeds
+  if (homepageSeeds && homepageSeeds.length > 0) {
+    return homepageSeeds.map(s => s.title).filter(Boolean)
+  }
+  
+  // Finally fall back to DOM scraping
+  const titles = []
+  const titleElements = document.querySelectorAll(`
+    ytd-rich-item-renderer #video-title,
+    ytd-video-renderer #video-title,
+    ytd-grid-video-renderer #video-title
+  `)
+  
+  for (const el of titleElements) {
+    const title = (el.textContent || el.getAttribute('title') || '').trim()
+    if (title && titles.length < 20) {
+      titles.push(title)
+    }
+  }
+  
+  return titles
 }
 
 /**

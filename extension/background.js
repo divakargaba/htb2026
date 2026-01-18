@@ -7,7 +7,7 @@
 const SCHEMA_VERSION = '4.0.0'
 const ENGINE_VERSION = 'v4.0'
 
-const YOUTUBE_API_KEY = 'AIzaSyAaGQRfXowsoNZe_5MV7wRwLaDqC8Ymias'
+const YOUTUBE_API_KEY = 'AIzaSyBDwfJr87Q366hIzsmUe1lJ7JDevxcApsA'
 const MAX_SUBSCRIBER_THRESHOLD = 100000 // Noise cancellation threshold
 const MONOPOLY_THRESHOLD = 1000000 // 1M subs = deafening noise
 const CACHE_TTL = 86400000 // 24 hours in ms
