@@ -1497,8 +1497,38 @@ function muteNoisyVideos() {
   console.log(`[Silenced] 🔇 Muted ${mutedCount} noisy videos`)
 }
 
+// Format surfacing method for display
+function formatDiversityMethod(method) {
+  if (!method || method === 'unknown') {
+    return 'exposure-adjusted ranking'
+  }
+
+  const methodLower = method.toLowerCase()
+
+  if (methodLower.includes('transcript_analyzed_gemini')) {
+    return '🎯 AI transcript analysis + exposure ranking'
+  }
+  if (methodLower.includes('transcript_analyzed_heuristic') || methodLower.includes('heuristic-transcript')) {
+    return '🎯 transcript verified + exposure ranking'
+  }
+  if (methodLower.includes('quality_filtered_gemini') || methodLower.includes('gemini')) {
+    return 'AI quality filter + exposure ranking'
+  }
+  if (methodLower.includes('quality_filtered_heuristic') || methodLower.includes('quality_filtered')) {
+    return 'quality filter + exposure ranking'
+  }
+  if (methodLower.includes('greedy_cosine') || methodLower.includes('cosine') || methodLower.includes('embedding')) {
+    return 'exposure-adjusted ranking + ML diversification'
+  }
+  if (methodLower.includes('fallback') || methodLower.includes('heuristic')) {
+    return 'exposure-adjusted ranking (fallback)'
+  }
+  return 'exposure-adjusted ranking'
+}
+
 function injectUnmutedVoices() {
   const videos = discoveryCache?.unmutedVideos || discoveryCache?.discoveredVideos || []
+  const biasSnapshot = discoveryCache?.biasSnapshot
 
   if (videos.length === 0) {
     document.querySelectorAll('.silenced-unmuted-container').forEach(el => el.remove())
@@ -1551,6 +1581,38 @@ function injectUnmutedVoices() {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   `
 
+  // Bias Snapshot (if available)
+  if (biasSnapshot) {
+    const snapshot = document.createElement('div')
+    snapshot.style.cssText = `
+      padding: 10px;
+      background: #0a0a0a;
+      border-radius: 6px;
+      margin-bottom: 12px;
+    `
+    const concentrationClass = biasSnapshot.topicConcentration > 70 ? 'color: #f59e0b;' : 'color: #10b981;'
+    const snapshotTitle = auditModeActive ? 'Platform Context' : 'Topic Bias Snapshot'
+    const subtitleHtml = auditModeActive
+      ? '<div style="font-size: 8px; color: #4b5563; margin-bottom: 6px;">Baseline distribution for this topic</div>'
+      : ''
+
+    snapshot.innerHTML = `
+      <div style="font-size: 9px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: ${auditModeActive ? '2px' : '8px'};">${snapshotTitle}</div>
+      ${subtitleHtml}
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+        <div style="padding: 6px 8px; background: #171717; border-radius: 4px;">
+          <div style="font-size: 14px; font-weight: 700; ${concentrationClass}">${biasSnapshot.topicConcentration}%</div>
+          <div style="font-size: 8px; color: #6b7280;">Top 10 concentration</div>
+        </div>
+        <div style="padding: 6px 8px; background: #171717; border-radius: 4px;">
+          <div style="font-size: 14px; font-weight: 700; color: #10b981;">${biasSnapshot.underAmplifiedRate}%</div>
+          <div style="font-size: 8px; color: #6b7280;">Under-amplified</div>
+        </div>
+      </div>
+    `
+    container.appendChild(snapshot)
+  }
+
   const header = document.createElement('div')
   header.style.cssText = 'font-size: 11px; font-weight: 600; color: #10b981; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px;'
   header.innerHTML = '<span>Under-represented Voices</span>'
@@ -1558,6 +1620,7 @@ function injectUnmutedVoices() {
 
   videos.slice(0, 5).forEach((video, index) => {
     const isRising = video.isRisingSignal || video.isRisingStar
+    const biasReceipt = video.biasReceipt
 
     const card = document.createElement('div')
     card.style.cssText = `
@@ -1566,6 +1629,87 @@ function injectUnmutedVoices() {
       margin-bottom: 8px;
       overflow: hidden;
       border-left: 3px solid ${isRising ? '#f59e0b' : '#10b981'};
+    `
+
+    // Build Bias Receipt HTML if available
+    let biasReceiptHtml = ''
+    if (biasReceipt) {
+      const whyNotShown = biasReceipt.whyNotShown || []
+      const whySurfaced = biasReceipt.whySurfaced || []
+      const confidence = biasReceipt.confidence || 'medium'
+      const method = biasReceipt.method || 'heuristic'
+      const receiptId = `receipt-${video.videoId}-${index}`
+
+      // Confidence dots
+      const confidenceDots = ['low', 'medium', 'high'].map((level, i) => {
+        const filled = (confidence === 'low' && i === 0) ||
+                       (confidence === 'medium' && i <= 1) ||
+                       (confidence === 'high')
+        return `<span class="silenced-confidence-dot ${filled ? `filled ${confidence}` : ''}"></span>`
+      }).join('')
+
+      biasReceiptHtml = `
+        <div class="silenced-bias-receipt" data-receipt-id="${receiptId}">
+          <div class="silenced-bias-receipt-toggle">
+            <span class="silenced-receipt-title">
+              Bias Receipt
+              ${method === 'heuristic' ? '<span class="silenced-receipt-method fallback">Fallback</span>' : ''}
+            </span>
+            <span class="silenced-receipt-arrow">▼</span>
+          </div>
+          <div class="silenced-receipt-content">
+            ${whyNotShown.length > 0 ? `
+              <div class="silenced-receipt-section">
+                <div class="silenced-receipt-section-title">Why you didn't see this</div>
+                <ul class="silenced-receipt-bullets">
+                  ${whyNotShown.map(b => `<li>${esc(b)}</li>`).join('')}
+                </ul>
+              </div>
+            ` : ''}
+            ${whySurfaced.length > 0 ? `
+              <div class="silenced-receipt-section">
+                <div class="silenced-receipt-section-title surfaced">Why we surfaced it</div>
+                <ul class="silenced-receipt-bullets">
+                  ${whySurfaced.map(b => `<li>${esc(b)}</li>`).join('')}
+                </ul>
+              </div>
+            ` : ''}
+            <div class="silenced-receipt-confidence">
+              <span class="silenced-confidence-label">Confidence:</span>
+              <span class="silenced-confidence-indicator">${confidenceDots}</span>
+            </div>
+          </div>
+        </div>
+      `
+    }
+
+    // Build audit info line (shows subs, surfaced via, and content description)
+    const surfaceMethod = video.surfaceMethod || 'engagement_ranking'
+    const methodDisplay = formatDiversityMethod(surfaceMethod)
+
+    // Check if this video was transcript-verified
+    const isTranscriptVerified = surfaceMethod.includes('transcript')
+    const transcriptBadge = isTranscriptVerified
+      ? '<span style="background: #065f46; color: #10b981; padding: 1px 4px; border-radius: 3px; font-size: 8px; margin-left: 4px;">VERIFIED</span>'
+      : ''
+
+    // Use AI content summary if available, otherwise fall back to diversityNote/qualityReason
+    const contentDescription = biasReceipt?.contentSummary || video.diversityNote || video.qualityReason || ''
+    const isAIGenerated = biasReceipt?.contentSummary && biasReceipt?.method === 'gemini'
+
+    // Always show the audit info with subs, surfaced via, and description
+    const auditInfoHtml = `
+      <div style="padding: 8px 10px; border-top: 1px solid #262626;">
+        <div style="font-size: 10px; color: #6b7280; font-family: 'SF Mono', Monaco, monospace; margin-bottom: 6px;">
+          Subs: ${fmt(video.subscriberCount)} · Surfaced via: ${methodDisplay}${transcriptBadge}
+        </div>
+        ${contentDescription ? `
+          <div style="font-size: 11px; color: #d1d5db; line-height: 1.5; font-family: -apple-system, sans-serif;">
+            ${isAIGenerated ? '<span style="background: #1e3a5f; color: #60a5fa; padding: 1px 4px; border-radius: 3px; font-size: 8px; margin-right: 4px;">AI</span>' : ''}
+            ${esc(contentDescription)}
+          </div>
+        ` : ''}
+      </div>
     `
 
     card.innerHTML = `
@@ -1580,8 +1724,11 @@ function injectUnmutedVoices() {
           </div>
         </div>
       </a>
+      ${auditInfoHtml}
+      ${biasReceipt ? `<div style="padding: 0 10px 10px;">${biasReceiptHtml}</div>` : ''}
     `
 
+    // Add hover effects
     card.addEventListener('mouseenter', () => {
       card.style.background = '#222222'
     })
@@ -1589,9 +1736,23 @@ function injectUnmutedVoices() {
       card.style.background = '#1a1a1a'
     })
 
+    // Add toggle functionality for bias receipt
+    if (biasReceipt) {
+      const receiptEl = card.querySelector('.silenced-bias-receipt')
+      const toggleEl = card.querySelector('.silenced-bias-receipt-toggle')
+      if (toggleEl && receiptEl) {
+        toggleEl.addEventListener('click', (e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          receiptEl.classList.toggle('open')
+        })
+      }
+    }
+
     container.appendChild(card)
   })
 
+  // Footer with muted count
   const mutedChannels = discoveryCache?.channelsToMute || []
   const footer = document.createElement('div')
   footer.style.cssText = 'font-size: 10px; color: #6b7280; margin-top: 10px; padding-top: 8px; border-top: 1px solid #262626; display: flex; justify-content: space-between; align-items: center;'
@@ -1610,7 +1771,7 @@ function injectUnmutedVoices() {
     sidebar.insertBefore(container, sidebar.firstChild)
   }
 
-  console.log('[Silenced] Injected', videos.length, 'unmuted voices')
+  console.log('[Silenced] Injected', videos.length, 'unmuted voices with explainability')
 }
 
 function setupNoiseCancellationObserver() {

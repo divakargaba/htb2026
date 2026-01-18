@@ -332,24 +332,33 @@ async function generateBiasReceipt(params) {
   // Try Gemini if enabled and available
   if (ENABLE_ML_FEATURES && GEMINI_API_KEY) {
     try {
+      console.log(`[Silenced] Generating AI bias receipt for: ${params.videoTitle?.slice(0, 50)}...`)
+      console.log(`[Silenced] Description length: ${params.videoDescription?.length || 0} chars`)
       const geminiReceipt = await generateBiasReceiptWithGemini(params)
       if (geminiReceipt) {
+        console.log(`[Silenced] ✓ AI receipt generated successfully`)
         // Cache the result
         biasReceiptCache[cacheKey] = { data: geminiReceipt, timestamp: Date.now() }
         saveCache()
         return geminiReceipt
+      } else {
+        console.warn(`[Silenced] AI receipt returned null, falling back to heuristic`)
       }
     } catch (err) {
       console.warn('[Silenced] Gemini bias receipt failed, falling back to heuristic:', err.message)
     }
+  } else {
+    console.log(`[Silenced] Skipping AI receipt: ML=${ENABLE_ML_FEATURES}, hasKey=${!!GEMINI_API_KEY}`)
   }
 
   // Heuristic fallback - deterministic bullets based on thresholds
   const whyNotShown = generateHeuristicWhyNotShown(params)
   const whySurfaced = generateHeuristicWhySurfaced(params)
   const confidence = calculateReceiptConfidence(params)
+  const contentSummary = generateHeuristicContentSummary(params)
 
   const receipt = {
+    contentSummary,
     whyNotShown,
     whySurfaced,
     confidence,
@@ -467,6 +476,144 @@ function generateHeuristicWhySurfaced(params) {
 }
 
 /**
+ * Generate a content summary by analyzing the video transcript/description (heuristic fallback)
+ * Extracts actual topics, themes, and key points from the content
+ */
+function generateHeuristicContentSummary(params) {
+  const { videoTitle, videoDescription = '', channelTitle, transcript = '' } = params
+
+  if (!videoTitle) return null
+
+  // Prefer transcript over description - it has actual spoken content
+  const hasTranscript = transcript && transcript.length > 200
+  const contentSource = hasTranscript ? transcript.slice(0, 2000) : (videoDescription || '').slice(0, 1000)
+
+  // If no content source, we can't generate meaningful content summary
+  if (!contentSource || contentSource.length < 50) {
+    return null // Return null so UI shows nothing rather than generic text
+  }
+
+  // If we have a transcript, extract key talking points
+  if (hasTranscript) {
+    // Find sentences that seem like main points (contain explanatory language)
+    const sentences = contentSource
+      .split(/[.!?]/)
+      .map(s => s.trim())
+      .filter(s => s.length > 30 && s.length < 200)
+      .filter(s => !/^(hey|hi|hello|what's up|subscribe|like|comment|click)/i.test(s))
+
+    // Find informative sentences
+    const informativeSentences = sentences.filter(s =>
+      /\b(is|are|means|because|therefore|explains|shows|demonstrates|important|key|main|first|second|basically|essentially|actually)\b/i.test(s)
+    )
+
+    if (informativeSentences.length >= 2) {
+      // Take first 2 informative sentences as summary
+      const summary = informativeSentences.slice(0, 2).join('. ')
+      return summary.charAt(0).toUpperCase() + summary.slice(1) + '.'
+    }
+
+    // Fallback: take first 2 decent sentences
+    if (sentences.length >= 2) {
+      const summary = sentences.slice(0, 2).join('. ')
+      return summary.charAt(0).toUpperCase() + summary.slice(1) + '.'
+    }
+  }
+
+  const desc = contentSource
+
+  // Extract meaningful sentences from description (skip links, timestamps, social media)
+  const sentences = desc
+    .split(/[.!?\n]/)
+    .map(s => s.trim())
+    .filter(s => {
+      if (s.length < 20 || s.length > 200) return false
+      if (/^(http|www\.|@|#|follow|subscribe|like|comment|check out|link|click)/i.test(s)) return false
+      if (/^\d{1,2}:\d{2}/.test(s)) return false // Timestamps
+      if (/^(instagram|twitter|tiktok|facebook|patreon|merch|sponsor)/i.test(s)) return false
+      return true
+    })
+
+  // Extract key topics from title and description
+  const fullText = `${videoTitle} ${desc}`.toLowerCase()
+
+  // Topic extraction - find what the video is actually about
+  const topicPatterns = [
+    { pattern: /\b(explains?|explaining|breakdown of|deep dive into|exploring|discusses?|discussing|covers?|covering)\s+(.{10,60})/gi, type: 'explains' },
+    { pattern: /\b(how to|guide to|tutorial on|learn|learning)\s+(.{10,50})/gi, type: 'tutorial' },
+    { pattern: /\b(the truth about|reality of|what really|behind the)\s+(.{10,50})/gi, type: 'exposé' },
+    { pattern: /\b(review of|reviewing|tested|testing|compared?|comparing)\s+(.{10,50})/gi, type: 'review' },
+    { pattern: /\b(story of|history of|journey|experience with)\s+(.{10,50})/gi, type: 'story' },
+    { pattern: /\b(interview with|conversation with|talking to|speaks with)\s+(.{10,50})/gi, type: 'interview' },
+    { pattern: /\b(analysis of|analyzing|examined?|examining)\s+(.{10,50})/gi, type: 'analysis' }
+  ]
+
+  let extractedTopic = null
+  let contentType = null
+
+  for (const { pattern, type } of topicPatterns) {
+    const match = pattern.exec(fullText)
+    if (match && match[2]) {
+      extractedTopic = match[2].trim().replace(/[,.]$/, '')
+      contentType = type
+      break
+    }
+  }
+
+  // If we found content sentences, use the first meaningful one
+  if (sentences.length > 0) {
+    // Find the most informative sentence (longer, contains verbs)
+    const bestSentence = sentences.find(s =>
+      s.length > 40 &&
+      /\b(is|are|was|were|explains|shows|demonstrates|reveals|covers|discusses|explores)\b/i.test(s)
+    ) || sentences[0]
+
+    if (bestSentence) {
+      // Clean up the sentence
+      let summary = bestSentence
+        .replace(/^(in this video,?|today,?|hey guys,?|welcome,?)/i, '')
+        .trim()
+
+      // Capitalize first letter
+      summary = summary.charAt(0).toUpperCase() + summary.slice(1)
+
+      // Add period if missing
+      if (!/[.!?]$/.test(summary)) summary += '.'
+
+      return summary
+    }
+  }
+
+  // If we extracted a topic from patterns, build a summary
+  if (extractedTopic && contentType) {
+    const typeLabels = {
+      'explains': 'This video explains',
+      'tutorial': 'A tutorial covering',
+      'exposé': 'An investigation into',
+      'review': 'A review examining',
+      'story': 'The story of',
+      'interview': 'A conversation about',
+      'analysis': 'An analysis of'
+    }
+    return `${typeLabels[contentType]} ${extractedTopic}.`
+  }
+
+  // Last resort: try to extract key nouns/phrases from title
+  const titleWords = videoTitle
+    .replace(/[|\-–—:]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 3 && !/^(the|and|for|with|this|that|from|have|will|what|how|why)$/i.test(w))
+    .slice(0, 5)
+    .join(' ')
+
+  if (titleWords.length > 10) {
+    return `Content covering: ${titleWords.toLowerCase()}.`
+  }
+
+  return null // Return null if we can't generate meaningful content
+}
+
+/**
  * Calculate confidence level for the receipt
  */
 function calculateReceiptConfidence(params) {
@@ -547,41 +694,68 @@ async function callGeminiAPI(prompt, config = {}) {
 
 /**
  * Generate bias receipt using Gemini AI (when ENABLE_ML_FEATURES is true)
+ * Uses transcript for actual content analysis when available
  */
 async function generateBiasReceiptWithGemini(params) {
   if (!GEMINI_API_KEY) return null
 
-  const { subscriberCount, viewsPerDay, engagementRatio, avgSubsInTopic, topicConcentration, videoTitle, channelTitle } = params
+  const {
+    subscriberCount,
+    viewsPerDay,
+    engagementRatio,
+    avgSubsInTopic,
+    topicConcentration,
+    videoTitle,
+    videoDescription = '',
+    channelTitle,
+    isRisingSignal,
+    transcript = ''
+  } = params
 
-  const prompt = `You are analyzing algorithmic bias in YouTube recommendations. Generate a bias receipt for this video.
+  // Use transcript if available (much better for content analysis), otherwise use description
+  const hasTranscript = transcript && transcript.length > 200
+  const contentSource = hasTranscript
+    ? `TRANSCRIPT (first 3000 chars):\n"${transcript.slice(0, 3000)}"`
+    : `DESCRIPTION:\n"${videoDescription.slice(0, 800)}"`
 
-Video: "${videoTitle}" by ${channelTitle}
-Channel subscribers: ${fmt(subscriberCount)}
-Views/day: ${fmt(viewsPerDay)}
-Engagement ratio: ${engagementRatio.toFixed(2)}
-Topic avg subscribers: ${fmt(avgSubsInTopic)}
-Topic concentration by top channels: ${topicConcentration}%
+  console.log(`[Silenced] Gemini analysis using ${hasTranscript ? 'TRANSCRIPT' : 'DESCRIPTION'} (${hasTranscript ? transcript.length : videoDescription.length} chars)`)
 
-Generate a JSON response with EXACTLY this structure:
+  const prompt = `You are analyzing a YouTube video that was algorithmically suppressed. Your job is to explain what this video is ACTUALLY ABOUT based on its content.
+
+VIDEO INFO:
+Title: "${videoTitle}"
+Channel: ${channelTitle}
+Subscribers: ${fmt(subscriberCount)}
+${contentSource}
+
+TASK: Analyze this video's ACTUAL CONTENT and generate a detailed bias receipt.
+
+Return JSON with this EXACT structure:
 {
-  "whyNotShown": ["bullet 1", "bullet 2", "bullet 3"],
-  "whySurfaced": ["bullet 1", "bullet 2", "bullet 3"],
-  "confidence": "low" | "medium" | "high"
+  "contentSummary": "A 2-3 sentence summary explaining WHAT THIS VIDEO TEACHES OR DISCUSSES. Be specific about the actual topics, arguments, or information presented. NOT generic - describe the real content.",
+  "whyNotShown": [
+    "Specific algorithmic reason 1 (15-25 words)",
+    "Specific algorithmic reason 2 (15-25 words)"
+  ],
+  "whySurfaced": [
+    "What specific value/insight this content provides (20-30 words, reference actual topics from the video)",
+    "What unique perspective this creator brings on this specific topic (20-30 words)",
+    "Why this particular content deserves more visibility (20-30 words)"
+  ],
+  "confidence": "high"
 }
 
-RULES:
-- Each bullet must be under 15 words
-- Use neutral, non-defamatory language
-- Use phrases like "may indicate", "limited evidence", "based on public signals"
-- Do NOT make factual accusations
-- whyNotShown: 2-4 bullets explaining algorithmic disadvantage
-- whySurfaced: 2-4 bullets explaining why we're recommending this
-- Be concise and specific`
+CRITICAL RULES:
+- contentSummary MUST describe the actual video content, NOT just repeat the title
+- Example good summary: "This video examines the psychological and social factors behind different types of religious faith, exploring how childhood upbringing, personal experiences, and cultural environment shape belief systems. The creator discusses 11 distinct faith categories including blind faith, intellectual faith, and experiential faith."
+- Example BAD summary: "This video explores types of faith from an alternative perspective." (too generic!)
+- whySurfaced bullets MUST reference specific topics/insights from the video content
+- If you have transcript, analyze what the creator actually SAYS and ARGUES`
 
   try {
     const text = await callGeminiAPI(prompt, {
-      temperature: 0.3,
-      maxOutputTokens: 500
+      temperature: 0.4,
+      maxOutputTokens: 800
     })
 
     if (!text) return null
@@ -598,6 +772,7 @@ RULES:
     }
 
     return {
+      contentSummary: parsed.contentSummary || null,
       whyNotShown: parsed.whyNotShown.slice(0, 4),
       whySurfaced: parsed.whySurfaced.slice(0, 4),
       confidence: ['low', 'medium', 'high'].includes(parsed.confidence) ? parsed.confidence : 'medium',
@@ -1246,12 +1421,53 @@ function scoreVideoQualityHeuristic(video, searchQuery, transcript = null) {
     combinedScore = (relevanceScore * 0.6) + (qualityScore * 0.4)
   }
 
+  // Generate meaningful description if no specific reasons were found
+  if (reasons.length === 0) {
+    // Build a contextual description based on available data
+    const subs = video.subscriberCount || 0
+    const channel = video.channelTitle || 'this creator'
+
+    // Helper to format subscriber count inline
+    const formatSubs = (n) => {
+      if (!n) return '0'
+      if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'
+      if (n >= 1000) return (n / 1000).toFixed(1) + 'K'
+      return String(n)
+    }
+
+    // Generate description based on video characteristics
+    if (subs > 0 && subs < 10000) {
+      reasons.push(`Micro-creator (${formatSubs(subs)} subs) offering alternative perspective`)
+    } else if (subs >= 10000 && subs < 50000) {
+      reasons.push(`Emerging voice with ${formatSubs(subs)} subscribers`)
+    } else if (subs >= 50000 && subs < 100000) {
+      reasons.push(`Growing creator with ${formatSubs(subs)} subscribers`)
+    } else if (relevanceScore > 0.3) {
+      reasons.push(`Content relevant to topic from ${channel}`)
+    } else if (titleMatchRatio > 0) {
+      reasons.push(`Covers topic keywords in title`)
+    } else {
+      reasons.push(`Under-represented perspective on this topic`)
+    }
+
+    // Add query-based context if available
+    if (queryTerms.length > 0 && titleMatchRatio > 0.3) {
+      const matchedTerms = queryTerms.filter(t => title.includes(t)).slice(0, 2)
+      if (matchedTerms.length > 0) {
+        reasons.push(`Discusses: ${matchedTerms.join(', ')}`)
+      }
+    }
+  }
+
+  // Ensure we always return a non-empty reason
+  const finalReason = reasons.length > 0 ? reasons.join(', ') : 'Under-represented voice on this topic'
+
   return {
     score: combinedScore,
     relevance: relevanceScore,
     quality: qualityScore,
     contentDepth: contentDepthScore,
-    reason: reasons.length > 0 ? reasons.join(', ') : 'Heuristic evaluation',
+    reason: finalReason,
     method: contentDepthScore !== null ? 'heuristic-transcript' : 'heuristic'
   }
 }
@@ -1937,6 +2153,48 @@ async function searchSilencedCreators(query) {
 }
 
 // ===============================================
+// FETCH FULL VIDEO DETAILS (for better AI analysis)
+// ===============================================
+async function fetchFullVideoDetails(videoIds) {
+  if (!videoIds || videoIds.length === 0) return {}
+
+  try {
+    const url = new URL('https://www.googleapis.com/youtube/v3/videos')
+    url.searchParams.set('part', 'snippet')
+    url.searchParams.set('id', videoIds.join(','))
+    url.searchParams.set('key', YOUTUBE_API_KEY)
+
+    console.log(`[Silenced] Fetching full details for ${videoIds.length} videos...`)
+    const res = await fetch(url.toString())
+
+    if (!res.ok) {
+      console.warn('[Silenced] Failed to fetch full video details:', res.status)
+      return {}
+    }
+
+    const data = await res.json()
+    quotaUsed += 1 // Videos API costs 1 quota unit per call
+
+    // Build lookup map
+    const detailsMap = {}
+    for (const item of (data.items || [])) {
+      detailsMap[item.id] = {
+        title: item.snippet?.title,
+        description: item.snippet?.description || '',
+        tags: item.snippet?.tags || [],
+        categoryId: item.snippet?.categoryId
+      }
+    }
+
+    console.log(`[Silenced] ✓ Got full details for ${Object.keys(detailsMap).length} videos`)
+    return detailsMap
+  } catch (err) {
+    console.warn('[Silenced] Error fetching video details:', err.message)
+    return {}
+  }
+}
+
+// ===============================================
 // TOPIC SEARCH
 // ===============================================
 async function topicSearch(query, maxResults = 50) {
@@ -2372,6 +2630,7 @@ async function runNoiseCancellation(query) {
           exposureTier: v.exposureTier,
           isRisingSignal: v.isRisingSignal,
           videoTitle: v.title,
+          videoDescription: v.description || '',
           channelTitle: v.channelTitle
         }
       }
@@ -2390,6 +2649,24 @@ async function runNoiseCancellation(query) {
       return bScore - aScore
     })
 
+  // Fetch full video details for top 5 videos (Search API only returns truncated descriptions)
+  const top5VideoIds = unmutedVideosRaw.slice(0, 5).map(v => v.videoId)
+  const fullVideoDetails = await fetchFullVideoDetails(top5VideoIds)
+
+  // Fetch transcripts for top 5 videos in parallel (for AI content analysis)
+  console.log(`[Silenced] Fetching transcripts for ${top5VideoIds.length} videos...`)
+  const transcriptPromises = top5VideoIds.map(async (videoId) => {
+    try {
+      const transcript = await fetchVideoTranscript(videoId)
+      return { videoId, transcript }
+    } catch (err) {
+      console.warn(`[Silenced] Transcript fetch failed for ${videoId}:`, err.message)
+      return { videoId, transcript: null }
+    }
+  })
+  const transcriptResults = await Promise.all(transcriptPromises)
+  const transcriptMap = Object.fromEntries(transcriptResults.map(r => [r.videoId, r.transcript]))
+
   // Return videos immediately (fast path) - generate bias receipts in background
   // This allows the UI to show videos quickly while receipts load asynchronously
   // Generate bias receipts for top 5 videos (awaited so they're ready for display)
@@ -2397,9 +2674,23 @@ async function runNoiseCancellation(query) {
     unmutedVideosRaw.slice(0, 10).map(async (video, index) => {
       const { _receiptParams, ...cleanVideo } = video
 
-      // Generate bias receipt for top 5 videos
+      // Generate bias receipt for top 5 videos with full description AND transcript
       if (index < 5 && _receiptParams) {
         try {
+          // Use full description from Videos API if available
+          const fullDetails = fullVideoDetails[video.videoId]
+          if (fullDetails?.description) {
+            _receiptParams.videoDescription = fullDetails.description
+            cleanVideo.description = fullDetails.description // Update video object too
+          }
+
+          // Add transcript for AI content analysis
+          const transcript = transcriptMap[video.videoId]
+          if (transcript) {
+            _receiptParams.transcript = transcript
+            console.log(`[Silenced] Including transcript (${transcript.length} chars) for ${video.videoId}`)
+          }
+
           const biasReceipt = await generateBiasReceipt(_receiptParams)
           cleanVideo.biasReceipt = biasReceipt
         } catch (err) {
