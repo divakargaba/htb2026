@@ -74,6 +74,17 @@ function createGridElement() {
         <span class="empty-icon">🔇</span>
         <span class="empty-text">No silenced videos found for your current topics</span>
       </div>
+      <div class="silenced-ai-offline" style="display: none;">
+        <span class="offline-icon">⚠️</span>
+        <span class="offline-title">AI Quality Scoring Offline</span>
+        <span class="offline-text">Cannot verify video quality without AI analysis. Results would be unreliable.</span>
+        <span class="offline-hint">The backend server may be down. Try again later or check the console for details.</span>
+      </div>
+      <div class="silenced-insufficient" style="display: none;">
+        <span class="insufficient-icon">📊</span>
+        <span class="insufficient-title">Not Enough Signal</span>
+        <span class="insufficient-text">Scroll to load more videos on your homepage so we can understand your interests.</span>
+      </div>
     </div>
   `
   
@@ -252,6 +263,76 @@ function getGridStyles() {
     
     .empty-text {
       font-size: 14px;
+    }
+    
+    /* AI Offline State */
+    .silenced-ai-offline {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 60px 20px;
+      color: #f59e0b;
+      background: rgba(245, 158, 11, 0.05);
+      border: 1px dashed rgba(245, 158, 11, 0.3);
+      border-radius: 12px;
+      margin: 20px 0;
+    }
+    
+    .offline-icon {
+      font-size: 48px;
+    }
+    
+    .offline-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: #f59e0b;
+    }
+    
+    .offline-text {
+      font-size: 14px;
+      color: #888;
+      text-align: center;
+      max-width: 400px;
+    }
+    
+    .offline-hint {
+      font-size: 12px;
+      color: #666;
+      text-align: center;
+    }
+    
+    /* Insufficient Data State */
+    .silenced-insufficient {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 60px 20px;
+      color: #3b82f6;
+      background: rgba(59, 130, 246, 0.05);
+      border: 1px dashed rgba(59, 130, 246, 0.3);
+      border-radius: 12px;
+      margin: 20px 0;
+    }
+    
+    .insufficient-icon {
+      font-size: 48px;
+    }
+    
+    .insufficient-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: #3b82f6;
+    }
+    
+    .insufficient-text {
+      font-size: 14px;
+      color: #888;
+      text-align: center;
+      max-width: 400px;
     }
     
     /* Video Grid */
@@ -722,10 +803,72 @@ function showLoading() {
   const loadingEl = gridElement.querySelector('.silenced-loading')
   const videosContainer = gridElement.querySelector('.silenced-videos')
   const emptyEl = gridElement.querySelector('.silenced-empty')
+  const aiOfflineEl = gridElement.querySelector('.silenced-ai-offline')
+  const insufficientEl = gridElement.querySelector('.silenced-insufficient')
   
   if (loadingEl) loadingEl.style.display = 'flex'
   if (videosContainer) videosContainer.innerHTML = ''
   if (emptyEl) emptyEl.style.display = 'none'
+  if (aiOfflineEl) aiOfflineEl.style.display = 'none'
+  if (insufficientEl) insufficientEl.style.display = 'none'
+}
+
+/**
+ * Show AI offline state - when Gemini/backend is not available
+ */
+function showAIOffline(message = '') {
+  if (!gridElement) {
+    injectGrid()
+  }
+  
+  const loadingEl = gridElement.querySelector('.silenced-loading')
+  const videosContainer = gridElement.querySelector('.silenced-videos')
+  const emptyEl = gridElement.querySelector('.silenced-empty')
+  const aiOfflineEl = gridElement.querySelector('.silenced-ai-offline')
+  const insufficientEl = gridElement.querySelector('.silenced-insufficient')
+  
+  if (loadingEl) loadingEl.style.display = 'none'
+  if (videosContainer) videosContainer.innerHTML = ''
+  if (emptyEl) emptyEl.style.display = 'none'
+  if (aiOfflineEl) {
+    aiOfflineEl.style.display = 'flex'
+    if (message) {
+      const textEl = aiOfflineEl.querySelector('.offline-text')
+      if (textEl) textEl.textContent = message
+    }
+  }
+  if (insufficientEl) insufficientEl.style.display = 'none'
+  
+  console.log('[BiasLens] Showing AI offline state')
+}
+
+/**
+ * Show insufficient data state - when not enough homepage videos to analyze
+ */
+function showInsufficientData(message = '') {
+  if (!gridElement) {
+    injectGrid()
+  }
+  
+  const loadingEl = gridElement.querySelector('.silenced-loading')
+  const videosContainer = gridElement.querySelector('.silenced-videos')
+  const emptyEl = gridElement.querySelector('.silenced-empty')
+  const aiOfflineEl = gridElement.querySelector('.silenced-ai-offline')
+  const insufficientEl = gridElement.querySelector('.silenced-insufficient')
+  
+  if (loadingEl) loadingEl.style.display = 'none'
+  if (videosContainer) videosContainer.innerHTML = ''
+  if (emptyEl) emptyEl.style.display = 'none'
+  if (aiOfflineEl) aiOfflineEl.style.display = 'none'
+  if (insufficientEl) {
+    insufficientEl.style.display = 'flex'
+    if (message) {
+      const textEl = insufficientEl.querySelector('.insufficient-text')
+      if (textEl) textEl.textContent = message
+    }
+  }
+  
+  console.log('[BiasLens] Showing insufficient data state')
 }
 
 // ============================================
@@ -781,6 +924,8 @@ if (typeof window !== 'undefined') {
     remove,
     updateVideos,
     showLoading,
+    showAIOffline,
+    showInsufficientData,
     isGridVisible,
     getVideos,
     GRID_ID
@@ -795,6 +940,8 @@ if (typeof module !== 'undefined' && module.exports) {
     remove,
     updateVideos,
     showLoading,
+    showAIOffline,
+    showInsufficientData,
     isGridVisible,
     getVideos,
     GRID_ID

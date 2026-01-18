@@ -4,9 +4,6 @@
 # YouTube transcript extraction (v1.2+ has new API)
 youtube-transcript-api>=1.2.3
 
-# Gemini AI
-google-generativeai==0.8.0
-
 # Web framework (FastAPI for async support)
 fastapi==0.115.0
 uvicorn[standard]==0.31.0

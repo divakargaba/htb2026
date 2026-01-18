@@ -7,15 +7,15 @@
 const SCHEMA_VERSION = '4.0.0'
 const ENGINE_VERSION = 'v4.0'
 
-const YOUTUBE_API_KEY = 'AIzaSyDNdZOfU79GgP3-fZ-KezbiT158mGpi3dc'
+const YOUTUBE_API_KEY = 'AIzaSyCzfxeqDhbTOZ9uFdJsMrB0uV_BM-MAijY'
 const MAX_SUBSCRIBER_THRESHOLD = 100000 // Noise cancellation threshold
 const MONOPOLY_THRESHOLD = 1000000 // 1M subs = deafening noise
 const CACHE_TTL = 86400000 // 24 hours in ms
 const BIAS_RECEIPT_CACHE_TTL = 21600000 // 6 hours in ms
 
 // Feature flags
-const ENABLE_ML_FEATURES = true // Set to true to enable Gemini-powered features
-const GEMINI_API_KEY = 'AIzaSyBS9o40P0nC5QtV-wTPDEkQ4z5sMA65ZnQ' // Gemini API key for quality filtering
+const ENABLE_ML_FEATURES = true // Set to true to enable AI-powered features
+const DEEPSEEK_API_KEY = 'sk-d22aeebcc8f041ffba2964413ef90c89' // DeepSeek API key for quality analysis
 
 // Python Backend URL (for transcript fetching + Gemini without CORS issues)
 // Set to your deployed backend URL, or 'http://localhost:8000' for local dev
@@ -26,9 +26,27 @@ const USE_PYTHON_BACKEND = true // Set to true to use Python backend for transcr
 let backendHealthCache = { healthy: null, lastCheck: 0 }
 const BACKEND_HEALTH_CHECK_INTERVAL = 30000 // Only re-check every 30 seconds
 
-// Quality thresholds
-const MIN_VIDEO_QUALITY_SCORE = 0.25 // Minimum quality score (0-1) to surface a video (lowered to avoid filtering all)
+// Quality thresholds - STRICT when AI is offline to avoid showing garbage
+const MIN_VIDEO_QUALITY_SCORE_AI = 0.55 // Threshold when AI scoring is working
+const MIN_VIDEO_QUALITY_SCORE_HEURISTIC = 0.72 // Much stricter threshold when using heuristic fallback
 const QUALITY_CACHE_TTL = 3600000 // 1 hour cache for quality scores
+
+// Track AI availability for threshold selection
+let lastAISuccess = 0 // Timestamp of last successful DeepSeek call
+let consecutiveAIFails = 0 // Count of consecutive DeepSeek failures
+const AI_OFFLINE_THRESHOLD = 3 // Consider offline after 3 consecutive failures
+
+function getQualityThreshold() {
+  // If AI has failed 3+ times consecutively and hasn't succeeded in last 5 min, use strict threshold
+  const aiOffline = consecutiveAIFails >= AI_OFFLINE_THRESHOLD && 
+                    (Date.now() - lastAISuccess > 300000)
+  return aiOffline ? MIN_VIDEO_QUALITY_SCORE_HEURISTIC : MIN_VIDEO_QUALITY_SCORE_AI
+}
+
+function isAIOffline() {
+  return consecutiveAIFails >= AI_OFFLINE_THRESHOLD && 
+         (Date.now() - lastAISuccess > 300000)
+}
 
 // Quota costs
 const QUOTA_LIMIT = 10000
@@ -330,25 +348,25 @@ async function generateBiasReceipt(params) {
   }
 
   // Try Gemini if enabled and available
-  if (ENABLE_ML_FEATURES && GEMINI_API_KEY) {
+  if (ENABLE_ML_FEATURES && DEEPSEEK_API_KEY) {
     try {
       console.log(`[Silenced] Generating AI bias receipt for: ${params.videoTitle?.slice(0, 50)}...`)
       console.log(`[Silenced] Description length: ${params.videoDescription?.length || 0} chars`)
-      const geminiReceipt = await generateBiasReceiptWithGemini(params)
-      if (geminiReceipt) {
+      const aiReceipt = await generateBiasReceiptWithAI(params)
+      if (aiReceipt) {
         console.log(`[Silenced] ✓ AI receipt generated successfully`)
         // Cache the result
-        biasReceiptCache[cacheKey] = { data: geminiReceipt, timestamp: Date.now() }
+        biasReceiptCache[cacheKey] = { data: aiReceipt, timestamp: Date.now() }
         saveCache()
-        return geminiReceipt
+        return aiReceipt
       } else {
         console.warn(`[Silenced] AI receipt returned null, falling back to heuristic`)
       }
     } catch (err) {
-      console.warn('[Silenced] Gemini bias receipt failed, falling back to heuristic:', err.message)
+      console.warn('[Silenced] AI bias receipt failed, falling back to heuristic:', err.message)
     }
   } else {
-    console.log(`[Silenced] Skipping AI receipt: ML=${ENABLE_ML_FEATURES}, hasKey=${!!GEMINI_API_KEY}`)
+    console.log(`[Silenced] Skipping AI receipt: ML=${ENABLE_ML_FEATURES}, hasKey=${!!DEEPSEEK_API_KEY}`)
   }
 
   // Heuristic fallback - deterministic bullets based on thresholds
@@ -636,68 +654,66 @@ function calculateReceiptConfidence(params) {
 }
 
 /**
- * Call Gemini API with multiple model fallbacks
- * Skips querying available models to avoid CORS issues
+ * Call DeepSeek API (OpenAI-compatible)
+ * Uses deepseek-chat model for quality analysis
  */
-async function callGeminiAPI(prompt, config = {}) {
-  const { temperature = 0.3, maxOutputTokens = 500 } = config
+async function callDeepSeekAPI(prompt, config = {}) {
+  const { temperature = 0.3, maxTokens = 500 } = config
 
-  // Try multiple API versions and models (skip querying to avoid CORS)
-  const endpoints = [
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`,
-    `https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`,
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`
-  ]
-
-  for (const endpoint of endpoints) {
-    try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature,
-            maxOutputTokens
-          }
-        })
-      })
-
-      if (response.ok) {
-        const data = await response.json()
-        return data.candidates?.[0]?.content?.parts?.[0]?.text || null
-      } else if (response.status === 404) {
-        // Try next endpoint
-        continue
-      } else {
-        // Other error - log and try next
-        const errorText = await response.text()
-        console.warn(`[Silenced] Gemini API error ${response.status}:`, errorText)
-        continue
-      }
-    } catch (err) {
-      // CORS or network errors - try next endpoint
-      if (err.message.includes('CORS') || err.message.includes('Failed to fetch')) {
-        console.warn(`[Silenced] Gemini API CORS/network error, trying next endpoint...`)
-      } else {
-        console.warn(`[Silenced] Gemini API call failed:`, err.message)
-      }
-      continue
-    }
+  if (!DEEPSEEK_API_KEY) {
+    console.warn('[Silenced] DeepSeek API key not configured')
+    return null
   }
 
-  // All endpoints failed - return null to trigger heuristic fallback
-  console.warn('[Silenced] All Gemini API endpoints failed, using heuristic fallback')
-  return null
+  try {
+    const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'deepseek-chat',
+        messages: [
+          { role: 'user', content: prompt }
+        ],
+        temperature,
+        max_tokens: maxTokens
+      })
+    })
+
+    if (response.ok) {
+      const data = await response.json()
+      const result = data.choices?.[0]?.message?.content || null
+      if (result) {
+        // Track AI success
+        lastAISuccess = Date.now()
+        consecutiveAIFails = 0
+        console.log('[Silenced] DeepSeek API call successful')
+      }
+      return result
+    } else {
+      const errorText = await response.text()
+      console.warn(`[Silenced] DeepSeek API error ${response.status}:`, errorText)
+      consecutiveAIFails++
+      return null
+    }
+  } catch (err) {
+    console.warn(`[Silenced] DeepSeek API call failed:`, err.message)
+    consecutiveAIFails++
+    return null
+  }
 }
 
+// Alias for backward compatibility
+const callGeminiAPI = callDeepSeekAPI
+
 /**
- * Generate bias receipt using Gemini AI (when ENABLE_ML_FEATURES is true)
+ * Generate bias receipt using DeepSeek AI (when ENABLE_ML_FEATURES is true)
  * Uses transcript for actual content analysis when available
  */
-async function generateBiasReceiptWithGemini(params) {
-  if (!GEMINI_API_KEY) return null
+async function generateBiasReceiptWithAI(params) {
+  if (!DEEPSEEK_API_KEY) return null
 
   const {
     subscriberCount,
@@ -852,23 +868,37 @@ async function fetchVideoTranscript(videoId) {
 
       if (!response.ok) continue
 
-      const data = await response.json()
+      // FIX: Check if body is empty before parsing JSON
+      // YouTube returns 200 OK with empty body when no transcript exists
+      const text = await response.text()
+      if (!text || text.length < 10) continue
+      
+      let data
+      try {
+        data = JSON.parse(text)
+      } catch (parseErr) {
+        // Invalid JSON - skip this language
+        continue
+      }
 
       if (data.events?.length) {
-        const text = data.events
+        const transcriptText = data.events
           .filter(e => e.segs)
           .flatMap(e => e.segs.map(s => s.utf8 || ''))
           .join(' ')
           .replace(/\s+/g, ' ')
           .trim()
 
-        if (text.length > 100) {
-          console.log(`[Silenced] Successfully fetched transcript for ${videoId} (lang: ${lang || 'default'}): ${text.length} chars`)
-          return text
+        if (transcriptText.length > 100) {
+          console.log(`[Silenced] Successfully fetched transcript for ${videoId} (lang: ${lang || 'default'}): ${transcriptText.length} chars`)
+          return transcriptText
         }
       }
     } catch (err) {
-      console.log(`[Silenced] Transcript fetch failed for ${videoId} (lang: ${lang}):`, err.message)
+      // Only log actual network errors, not JSON parse errors
+      if (!err.message.includes('JSON')) {
+        console.log(`[Silenced] Transcript fetch failed for ${videoId} (lang: ${lang}):`, err.message)
+      }
     }
   }
 
@@ -984,16 +1014,16 @@ async function scoreVideoQuality(video, searchQuery, useTranscript = false) {
     }
   }
 
-  // Try Gemini directly if API key is available (may have CORS issues from extension)
-  if (GEMINI_API_KEY && ENABLE_ML_FEATURES) {
+  // Try DeepSeek directly if API key is available
+  if (DEEPSEEK_API_KEY && ENABLE_ML_FEATURES) {
     try {
-      const geminiResult = await scoreVideoQualityWithGemini(video, searchQuery, transcript)
-      if (geminiResult) {
-        qualityScoreCache[cacheKey] = { data: geminiResult, timestamp: Date.now() }
-        return geminiResult
+      const aiResult = await scoreVideoQualityWithAI(video, searchQuery, transcript)
+      if (aiResult) {
+        qualityScoreCache[cacheKey] = { data: aiResult, timestamp: Date.now() }
+        return aiResult
       }
     } catch (err) {
-      console.warn('[Silenced] Gemini quality scoring failed, using heuristic:', err.message)
+      console.warn('[Silenced] AI quality scoring failed, using heuristic:', err.message)
     }
   }
 
@@ -1196,7 +1226,7 @@ async function isBackendAvailable() {
  * @param {string} searchQuery - Search topic
  * @param {string|null} transcript - Optional video transcript for deeper analysis
  */
-async function scoreVideoQualityWithGemini(video, searchQuery, transcript = null) {
+async function scoreVideoQualityWithAI(video, searchQuery, transcript = null) {
   // Build the prompt based on whether we have transcript
   const hasTranscript = transcript && transcript.length > 100
   const transcriptSection = hasTranscript
@@ -2000,6 +2030,13 @@ async function getVideo(videoId) {
 }
 
 async function getChannelActivities(channelId) {
+  // IMPORTANT: The activities.list endpoint requires OAuth for other users' channels
+  // For now, skip this call and return empty array to avoid 403 errors
+  // This is a known limitation - we'll use alternative data sources
+  console.log(`[Silenced] Skipping activities API for ${channelId} (requires OAuth)`)
+  return []
+  
+  /* DISABLED - Requires OAuth authentication
   // Get recent uploads to calculate upload density
   try {
     const url = new URL('https://www.googleapis.com/youtube/v3/activities')
@@ -2029,6 +2066,7 @@ async function getChannelActivities(channelId) {
     console.error('[Silenced] Activities fetch error:', err)
     return []
   }
+  */
 }
 
 // ===============================================
@@ -2067,6 +2105,495 @@ async function getChannelByHandle(handle) {
   } catch (err) {
     console.error('[Silenced] Handle lookup error:', err)
     return 0
+  }
+}
+
+// ===============================================
+// HIDDEN GEMS DISCOVERY (MVP)
+// Finds 2 high-quality videos from smaller channels related to the current video
+// ===============================================
+
+/**
+ * Parse ISO 8601 duration to seconds
+ */
+function parseDurationToSeconds(duration) {
+  if (!duration) return 0
+  const match = duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/)
+  if (!match) return 0
+  const hours = parseInt(match[1] || 0)
+  const minutes = parseInt(match[2] || 0)
+  const seconds = parseInt(match[3] || 0)
+  return hours * 3600 + minutes * 60 + seconds
+}
+
+/**
+ * Count words in a string
+ */
+function countWords(text) {
+  if (!text) return 0
+  return text.split(/\s+/).filter(w => w.length > 0).length
+}
+
+/**
+ * Count source citations in transcript
+ */
+function countCitations(transcript) {
+  if (!transcript) return 0
+  const patterns = /\b(study|research|according to|data shows?|evidence|paper|report|source|university|published|journal)\b/gi
+  const matches = transcript.match(patterns) || []
+  return matches.length
+}
+
+/**
+ * Detect clickbait mismatch (sensational title without substance)
+ */
+function detectClickbait(title, transcript) {
+  if (!title) return false
+  const titleLower = title.toLowerCase()
+  const sensationalTerms = ['shocking', 'insane', 'you won\'t believe', 'destroyed', 'exposed', 'unbelievable', 'mind-blowing', 'crazy']
+  const hasSensationalTitle = sensationalTerms.some(t => titleLower.includes(t))
+  
+  if (!hasSensationalTitle) return false
+  if (!transcript) return true // Sensational title with no transcript = likely clickbait
+  
+  const transcriptLower = transcript.toLowerCase()
+  const substantiveTerms = ['because', 'evidence', 'data', 'explained', 'reason', 'actually', 'specifically']
+  const hasSubstance = substantiveTerms.some(t => transcriptLower.includes(t))
+  
+  return !hasSubstance
+}
+
+/**
+ * Detect spam title (too many caps, emojis, hashtags)
+ */
+function detectSpam(title) {
+  if (!title) return false
+  const capsRatio = (title.match(/[A-Z]/g) || []).length / title.length
+  const hashtagCount = (title.match(/#/g) || []).length
+  const emojiCount = (title.match(/[\u{1F300}-\u{1F9FF}]/gu) || []).length
+  
+  return capsRatio > 0.5 || hashtagCount > 3 || emojiCount > 3
+}
+
+/**
+ * Compute Quality Score (0-100) with detailed breakdown
+ * Based on engagement, informational value, and authenticity
+ */
+function computeQualityScore(video, channel, transcript) {
+  const views = parseInt(video.statistics?.viewCount) || 1
+  const likes = parseInt(video.statistics?.likeCount) || 0
+  const comments = parseInt(video.statistics?.commentCount) || 0
+  const subs = parseInt(channel?.statistics?.subscriberCount) || 1
+  const durationSec = parseDurationToSeconds(video.contentDetails?.duration)
+  const durationMin = durationSec / 60
+  const title = video.snippet?.title || ''
+  
+  // Calculate rates
+  const likeRate = likes / views
+  const commentRate = comments / views
+  const viewsPerDay = views / Math.max(1, (Date.now() - new Date(video.snippet?.publishedAt).getTime()) / 86400000)
+  const viewsToSubs = views / subs
+  
+  // === Engagement Quality (35 pts) ===
+  // likeRate: 5% -> 20 pts (normalized to 0-20)
+  const likeScore = Math.min(20, Math.round(likeRate * 400))
+  // commentRate: 1% -> 15 pts
+  const commentScore = Math.min(15, Math.round(commentRate * 1500))
+  
+  // === Informational Value (35 pts) ===
+  // WPM: 120-170 is ideal for educational content
+  let wpmScore = 0
+  let wpm = 0
+  if (transcript && durationSec > 0) {
+    wpm = countWords(transcript) / (durationSec / 60)
+    if (wpm >= 120 && wpm <= 170) {
+      wpmScore = 15
+    } else {
+      wpmScore = Math.max(0, Math.round(15 - Math.abs(wpm - 145) / 10))
+    }
+  }
+  
+  // Citations: 2 points per citation, max 10
+  const citations = countCitations(transcript)
+  const citationScore = Math.min(10, citations * 2)
+  
+  // Duration: 6-20 minutes is ideal
+  let durationScore = 0
+  if (durationMin >= 6 && durationMin <= 20) {
+    durationScore = 10
+  } else if (durationMin >= 2) {
+    durationScore = Math.max(0, Math.round(10 - Math.abs(durationMin - 13) / 2))
+  }
+  
+  // === Authenticity (30 pts) ===
+  // Clickbait penalty
+  const clickbaitPenalty = detectClickbait(title, transcript) ? -15 : 0
+  
+  // Spam title penalty
+  const spamPenalty = detectSpam(title) ? -10 : 0
+  
+  // Underexposure bonus: good engagement but low views-to-subs ratio
+  let underexposureBonus = 0
+  if (viewsToSubs < 0.5 && likeRate > 0.03) {
+    underexposureBonus = 15
+  } else if (viewsToSubs < 1 && likeRate > 0.02) {
+    underexposureBonus = 10
+  }
+  
+  // Calculate total
+  const total = Math.max(0, Math.min(100,
+    likeScore + commentScore + wpmScore + citationScore + durationScore +
+    clickbaitPenalty + spamPenalty + underexposureBonus
+  ))
+  
+  // Calculate underexposure score (how suppressed the video appears)
+  // Higher = more underexposed (high quality but low visibility)
+  const expectedViews = subs * (likeRate * 10) // Simple proxy
+  const underexposureScore = Math.min(100, Math.max(0, Math.round(
+    (1 - Math.min(1, views / Math.max(1, expectedViews))) * 100
+  )))
+  
+  return {
+    total,
+    underexposureScore,
+    breakdown: {
+      likeScore,
+      commentScore,
+      wpmScore,
+      citationScore,
+      durationScore,
+      clickbaitPenalty,
+      spamPenalty,
+      underexposureBonus
+    },
+    metrics: {
+      likeRate: Math.round(likeRate * 10000) / 100, // as percentage
+      commentRate: Math.round(commentRate * 10000) / 100,
+      wpm: Math.round(wpm),
+      citations,
+      durationMin: Math.round(durationMin * 10) / 10,
+      viewsPerDay: Math.round(viewsPerDay),
+      viewsToSubs: Math.round(viewsToSubs * 100) / 100,
+      commentsPerKViews: Math.round((comments / views) * 1000 * 10) / 10
+    }
+  }
+}
+
+/**
+ * Get AI explanation for video quality (using DeepSeek)
+ */
+async function getAIExplanation(metrics, videoTitle) {
+  const prompt = `You are analyzing a YouTube video. Using ONLY these metrics, explain why this video appears high-quality. Give 3 bullet reasons tied to numbers, then 1 caution. Keep it under 90 words.
+
+Video: "${videoTitle}"
+Metrics: 
+- Like rate: ${metrics.likeRate}%
+- Comment rate: ${metrics.commentRate}%
+- Comments per 1k views: ${metrics.commentsPerKViews}
+- Speaking pace: ${metrics.wpm} WPM
+- Source citations: ${metrics.citations}
+- Duration: ${metrics.durationMin} minutes
+- Views per day: ${metrics.viewsPerDay}`
+
+  try {
+    // Call DeepSeek API directly
+    const aiResponse = await callDeepSeekAPI(prompt, { maxTokens: 150 })
+    if (aiResponse) return aiResponse
+    
+  } catch (err) {
+    console.warn('[Silenced] AI explanation failed:', err.message)
+  }
+  
+  // Fallback template
+  return `• High engagement for its size: ${metrics.likeRate}% like rate
+• Active discussion: ${metrics.commentsPerKViews} comments per 1k views
+• Good pacing: ${metrics.wpm > 0 ? metrics.wpm + ' WPM' : metrics.durationMin + ' min duration'}
+⚠️ Caution: Metrics alone don't guarantee quality—watch to verify.`
+}
+
+/**
+ * Fetch transcript for a video (for quality scoring)
+ */
+async function fetchTranscriptForScoring(videoId) {
+  try {
+    for (const lang of ['en', 'en-US', '']) {
+      const url = `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}&fmt=json3`
+      const res = await fetch(url)
+      if (!res.ok) continue
+      
+      const rawText = await res.text()
+      if (!rawText || rawText.length < 50) continue
+      
+      try {
+        const data = JSON.parse(rawText)
+        if (data.events?.length) {
+          return data.events
+            .filter(e => e.segs)
+            .flatMap(e => e.segs.map(s => s.utf8 || ''))
+            .join(' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+        }
+      } catch {
+        if (rawText.includes('<text')) {
+          const matches = rawText.match(/<text[^>]*>([^<]*)<\/text>/g) || []
+          if (matches.length > 0) {
+            return matches
+              .map(m => m.replace(/<[^>]+>/g, ''))
+              .join(' ')
+              .replace(/\s+/g, ' ')
+              .trim()
+          }
+        }
+      }
+    }
+  } catch {}
+  return null
+}
+
+/**
+ * Discover 2 Hidden Gem videos related to the current video
+ * MVP constraints: subs 1k-100k, views 20k-80k, duration >= 2min, different channels
+ */
+async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle = '') {
+  console.log(`[Silenced] 💎 Discovering hidden gems for video: ${currentVideoId}`)
+  
+  const gems = []
+  const seenChannels = new Set([currentChannelId])
+  
+  // #region agent log H2
+  // Constraint ranges - RELAXED for better results
+  // Original was too strict: 1k-100k subs with 20k-80k views is extremely rare
+  let subsMin = 500, subsMax = 500000  // Expanded from 1k-100k to 500-500k
+  let viewsMin = 1000, viewsMax = 500000  // Expanded from 20k-80k to 1k-500k
+  let maxResults = 50  // Start with 50, not 25
+  let useRelated = false  // DISABLED: relatedToVideoId deprecated Aug 2023
+  // #endregion
+  
+  // Broadening steps (already start with relaxed constraints)
+  const broadeningSteps = [
+    () => { subsMax = 1000000; console.log('[Silenced] Broadening: subs to 1M') },
+    () => { viewsMin = 500; console.log('[Silenced] Broadening: views min to 500') },
+    () => { subsMin = 100; console.log('[Silenced] Broadening: subs min to 100') }
+  ]
+  let broadeningIndex = 0
+  
+  while (gems.length < 2 && broadeningIndex <= broadeningSteps.length) {
+    try {
+      // Build search URL
+      const searchUrl = new URL('https://www.googleapis.com/youtube/v3/search')
+      searchUrl.searchParams.set('part', 'snippet')
+      searchUrl.searchParams.set('type', 'video')
+      searchUrl.searchParams.set('maxResults', String(maxResults))
+      searchUrl.searchParams.set('key', YOUTUBE_API_KEY)
+      
+      // #region agent log H1
+      // IMPORTANT: relatedToVideoId was DEPRECATED by YouTube in August 2023!
+      // Always use query search instead
+      // #endregion
+      {
+        // Extract keywords from title for query
+        const keywords = currentTitle
+          .toLowerCase()
+          .replace(/[^\w\s]/g, ' ')
+          .split(/\s+/)
+          .filter(w => w.length > 3 && !['the', 'and', 'for', 'with', 'this', 'that', 'from', 'have', 'what', 'your'].includes(w))
+          .slice(0, 4)
+          .join(' ')
+        // #region agent log H3
+        fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'background.js:discoverHiddenGems:queryBuild',message:'Query search params',data:{currentVideoId,currentTitle,keywords:keywords||'educational'},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H3'})}).catch(()=>{});
+        // #endregion
+        searchUrl.searchParams.set('q', keywords || 'educational')
+        searchUrl.searchParams.set('order', 'relevance')
+      }
+      
+      console.log(`[Silenced] Searching with query="${searchUrl.searchParams.get('q')}", maxResults=${maxResults}`)
+      
+      const searchRes = await fetch(searchUrl.toString())
+      if (!searchRes.ok) {
+        const errorData = await searchRes.json().catch(() => ({}))
+        console.error('[Silenced] Search API error:', searchRes.status, errorData)
+        // #region agent log H1
+        fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'background.js:discoverHiddenGems:searchError',message:'Search API failed',data:{status:searchRes.status,errorData,searchUrl:searchUrl.toString().replace(YOUTUBE_API_KEY,'REDACTED')},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
+        // #endregion
+        throw new Error(`Search API error: ${searchRes.status}`)
+      }
+      
+      const searchData = await searchRes.json()
+      quotaUsed += 100
+      
+      const candidateIds = (searchData.items || [])
+        .map(item => item.id?.videoId)
+        .filter(id => id && id !== currentVideoId)
+      
+      if (candidateIds.length === 0) {
+        console.log('[Silenced] No candidates found')
+        if (broadeningIndex < broadeningSteps.length) {
+          broadeningSteps[broadeningIndex]()
+          broadeningIndex++
+          continue
+        }
+        break
+      }
+      
+      console.log(`[Silenced] Found ${candidateIds.length} candidates`)
+      
+      // Fetch video details
+      const videosUrl = new URL('https://www.googleapis.com/youtube/v3/videos')
+      videosUrl.searchParams.set('part', 'snippet,contentDetails,statistics')
+      videosUrl.searchParams.set('id', candidateIds.join(','))
+      videosUrl.searchParams.set('key', YOUTUBE_API_KEY)
+      
+      const videosRes = await fetch(videosUrl.toString())
+      if (!videosRes.ok) throw new Error(`Videos API error: ${videosRes.status}`)
+      
+      const videosData = await videosRes.json()
+      quotaUsed += 1
+      
+      // Get unique channel IDs
+      const channelIds = [...new Set((videosData.items || []).map(v => v.snippet?.channelId).filter(Boolean))]
+      
+      // Fetch channel details
+      const channelsUrl = new URL('https://www.googleapis.com/youtube/v3/channels')
+      channelsUrl.searchParams.set('part', 'statistics,snippet')
+      channelsUrl.searchParams.set('id', channelIds.join(','))
+      channelsUrl.searchParams.set('key', YOUTUBE_API_KEY)
+      
+      const channelsRes = await fetch(channelsUrl.toString())
+      if (!channelsRes.ok) throw new Error(`Channels API error: ${channelsRes.status}`)
+      
+      const channelsData = await channelsRes.json()
+      quotaUsed += 1
+      
+      // Build channel map
+      const channelMap = new Map()
+      for (const ch of (channelsData.items || [])) {
+        channelMap.set(ch.id, ch)
+      }
+      
+      // Filter and score candidates
+      const candidates = []
+      
+      // #region agent log H2
+      const filterStats = { total: 0, noChannel: 0, seenChannel: 0, subsTooLow: 0, subsTooHigh: 0, viewsTooLow: 0, viewsTooHigh: 0, tooShort: 0, isShorts: 0, isSpam: 0, passed: 0 }
+      // #endregion
+      
+      for (const video of (videosData.items || [])) {
+        // #region agent log H2
+        filterStats.total++
+        // #endregion
+        const channelId = video.snippet?.channelId
+        if (!channelId || seenChannels.has(channelId)) {
+          // #region agent log H2
+          if (!channelId) filterStats.noChannel++; else filterStats.seenChannel++
+          // #endregion
+          continue
+        }
+        
+        const channel = channelMap.get(channelId)
+        if (!channel) continue
+        
+        const subs = parseInt(channel.statistics?.subscriberCount) || 0
+        const views = parseInt(video.statistics?.viewCount) || 0
+        const durationSec = parseDurationToSeconds(video.contentDetails?.duration)
+        const title = video.snippet?.title || ''
+        
+        // Apply constraints with logging
+        // #region agent log H2
+        if (subs < subsMin) { filterStats.subsTooLow++; continue }
+        if (subs > subsMax) { filterStats.subsTooHigh++; continue }
+        if (views < viewsMin) { filterStats.viewsTooLow++; continue }
+        if (views > viewsMax) { filterStats.viewsTooHigh++; continue }
+        if (durationSec < 120) { filterStats.tooShort++; continue }
+        if (title.toLowerCase().includes('#shorts')) { filterStats.isShorts++; continue }
+        if (detectSpam(title)) { filterStats.isSpam++; continue }
+        filterStats.passed++
+        // #endregion
+        
+        candidates.push({ video, channel, subs, views, durationSec })
+      }
+      
+      // #region agent log H2
+      fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'background.js:discoverHiddenGems:filterStats',message:'Filter breakdown',data:{filterStats,subsMin,subsMax,viewsMin,viewsMax},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H2'})}).catch(()=>{});
+      // #endregion
+      
+      console.log(`[Silenced] ${candidates.length} candidates passed filters`)
+      
+      // Score and select top candidates
+      for (const candidate of candidates) {
+        if (gems.length >= 2) break
+        if (seenChannels.has(candidate.channel.id)) continue
+        
+        // Fetch transcript for quality scoring
+        const transcript = await fetchTranscriptForScoring(candidate.video.id)
+        
+        // Compute quality score
+        const quality = computeQualityScore(candidate.video, candidate.channel, transcript)
+        
+        // Skip if quality is too low
+        if (quality.total < 30) {
+          console.log(`[Silenced] Skipping ${candidate.video.id} - low quality score: ${quality.total}`)
+          continue
+        }
+        
+        // Get Gemini explanation
+        const explanation = await getAIExplanation(quality.metrics, candidate.video.snippet.title)
+        
+        seenChannels.add(candidate.channel.id)
+        
+        gems.push({
+          videoId: candidate.video.id,
+          title: candidate.video.snippet.title,
+          channelTitle: candidate.video.snippet.channelTitle,
+          channelId: candidate.channel.id,
+          thumbnail: candidate.video.snippet.thumbnails?.medium?.url || candidate.video.snippet.thumbnails?.default?.url,
+          views: candidate.views,
+          subscriberCount: candidate.subs,
+          duration: candidate.durationSec,
+          publishedAt: candidate.video.snippet.publishedAt,
+          qualityScore: quality.total,
+          underexposureScore: quality.underexposureScore,
+          breakdown: quality.breakdown,
+          metrics: quality.metrics,
+          explanation,
+          hasTranscript: !!transcript
+        })
+        
+        console.log(`[Silenced] 💎 Found gem: "${candidate.video.snippet.title}" (Q:${quality.total}, U:${quality.underexposureScore})`)
+      }
+      
+      // If we still need more, try broadening
+      if (gems.length < 2 && broadeningIndex < broadeningSteps.length) {
+        broadeningSteps[broadeningIndex]()
+        broadeningIndex++
+      } else {
+        break
+      }
+      
+    } catch (err) {
+      console.error('[Silenced] Hidden gems discovery error:', err)
+      if (broadeningIndex < broadeningSteps.length) {
+        broadeningSteps[broadeningIndex]()
+        broadeningIndex++
+      } else {
+        break
+      }
+    }
+  }
+  
+  console.log(`[Silenced] 💎 Discovered ${gems.length} hidden gems`)
+  
+  // #region agent log H2
+  fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'background.js:discoverHiddenGems:result',message:'Final result',data:{gemsCount:gems.length,gemTitles:gems.map(g=>g.title)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H2'})}).catch(()=>{});
+  // #endregion
+  
+  return {
+    gems,
+    message: gems.length === 0 
+      ? 'Could not find 2 matching videos under current constraints'
+      : gems.length === 1 
+        ? 'Found 1 hidden gem (constraint limits reached)'
+        : null
   }
 }
 
@@ -2510,28 +3037,85 @@ async function runNoiseCancellation(query) {
       }
     })
 
-  console.log(`[Silenced] Built ${unmutedVideosPreQuality.length} unmuted videos before quality scoring`)
+  console.log(`[Silenced] Built ${unmutedVideosPreQuality.length} unmuted videos before filtering`)
 
-  if (unmutedVideosPreQuality.length === 0) {
-    console.warn(`[Silenced] ⚠️ No silenced voices found for query "${query}" - all channels may be above ${MAX_SUBSCRIBER_THRESHOLD} subs threshold`)
+  // === HARD PRE-FILTERS: Block obvious spam/garbage before any scoring ===
+  const preFilteredVideos = unmutedVideosPreQuality.filter(v => {
+    const title = v.title || ''
+    const titleLower = title.toLowerCase()
+    
+    // 1. Block Shorts (check title for #shorts indicator)
+    if (titleLower.includes('#shorts') || titleLower.includes('#short')) {
+      console.log(`[Silenced] Pre-filter: Blocked Short "${title.slice(0, 40)}..."`)
+      return false
+    }
+    
+    // 2. Block obvious spam titles
+    const spamPatterns = [
+      /FREE\s*(DOWNLOAD|MONEY|GIFT)/i,
+      /\bSCAM\b/i,
+      /\bHACK\b.*\bFREE\b/i,
+      /💰.*💰.*💰/,  // Excessive money emojis
+      /🔥.*🔥.*🔥.*🔥/,  // Excessive fire emojis
+      /^[A-Z\s!?]{20,}$/,  // All caps titles over 20 chars
+      /\b(CLICK HERE|SUBSCRIBE NOW|LINK IN BIO)\b/i,
+      /\d+\s*FREE\s*\w+/i,  // "100 FREE things"
+    ]
+    
+    for (const pattern of spamPatterns) {
+      if (pattern.test(title)) {
+        console.log(`[Silenced] Pre-filter: Blocked spam title "${title.slice(0, 40)}..."`)
+        return false
+      }
+    }
+    
+    // 3. Block videos with extremely short titles (likely spam/clickbait)
+    if (title.length < 10) {
+      console.log(`[Silenced] Pre-filter: Blocked short title "${title}"`)
+      return false
+    }
+    
+    // 4. Block channels with 0 subscribers (likely spam/bot channels)
+    if (v.subscriberCount === 0) {
+      console.log(`[Silenced] Pre-filter: Blocked 0-subscriber channel "${v.channelTitle}"`)
+      return false
+    }
+    
+    // 5. Block channels with very few videos (newly created spam channels)
+    if (v.videoCount && v.videoCount < 3) {
+      console.log(`[Silenced] Pre-filter: Blocked new channel with only ${v.videoCount} videos`)
+      return false
+    }
+    
+    return true
+  })
+  
+  console.log(`[Silenced] Pre-filter: ${unmutedVideosPreQuality.length} -> ${preFilteredVideos.length} videos passed hard filters`)
+
+  if (preFilteredVideos.length === 0) {
+    console.warn(`[Silenced] ⚠️ No silenced voices found for query "${query}" - all videos filtered out`)
   }
 
   // === QUALITY SCORING: Two-pass scoring with transcript analysis for top candidates ===
   // Deep analyze top 5 with transcripts for quality verification
-  console.log(`[Silenced] Scoring ${unmutedVideosPreQuality.length} videos for quality...`)
-  const videosWithQuality = await twoPassQualityScoring(unmutedVideosPreQuality, query, 5) // Deep analyze top 5 with transcripts
+  console.log(`[Silenced] Scoring ${preFilteredVideos.length} videos for quality...`)
+  const videosWithQuality = await twoPassQualityScoring(preFilteredVideos, query, 5) // Deep analyze top 5 with transcripts
 
-  // Filter out low-quality videos
+  // Filter out low-quality videos - use dynamic threshold based on AI availability
+  const qualityThreshold = getQualityThreshold()
+  const aiStatus = isAIOffline() ? 'OFFLINE (strict mode)' : 'online'
+  console.log(`[Silenced] Quality threshold: ${qualityThreshold} (AI ${aiStatus})`)
+  
   let qualityFilteredVideos = videosWithQuality.filter(v => {
-    const passes = (v.qualityScore || 0) >= MIN_VIDEO_QUALITY_SCORE
+    const passes = (v.qualityScore || 0) >= qualityThreshold
     if (!passes) {
       const score = typeof v.qualityScore === 'number' ? v.qualityScore.toFixed(2) : 'N/A'
-      console.log(`[Silenced] Filtered out low-quality video: "${v.title}" (score: ${score})`)
+      console.log(`[Silenced] Filtered out low-quality video: "${v.title}" (score: ${score}, threshold: ${qualityThreshold})`)
     }
     return passes
   })
 
-  console.log(`[Silenced] Quality filter: ${videosWithQuality.length} -> ${qualityFilteredVideos.length} videos (threshold: ${MIN_VIDEO_QUALITY_SCORE})`)
+  console.log(`[Silenced] Quality filter: ${videosWithQuality.length} -> ${qualityFilteredVideos.length} videos (threshold: ${qualityThreshold})`)
 
   // SAFETY: If quality filter removed ALL videos, fall back to top-scoring ones
   if (qualityFilteredVideos.length === 0 && videosWithQuality.length > 0) {
@@ -3062,43 +3646,88 @@ function calculateFeedAnalysis(videoResults, feedContext = {}) {
 async function discoverSilencedVideos(topicMap, excludedChannels = [], filters = {}, feedContext = {}) {
   console.log('[BiasLens] Discovering silenced videos for topics:', topicMap)
   
-  // Build search query - use multiple strategies
+  // Build search query - prioritize actual content from user's feed
   let query = ''
+  let querySource = ''
   
-  // Strategy 1: Use top 3 topic names with keywords
-  const topTopics = (topicMap || [])
-    .sort((a, b) => (b.weight || 0) - (a.weight || 0))
-    .slice(0, 3)
+  // Extended stop words for better keyword extraction
+  const stopWords = new Set([
+    'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+    'of', 'with', 'by', 'from', 'is', 'are', 'was', 'were', 'be', 'been',
+    'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would',
+    'could', 'should', 'may', 'might', 'must', 'shall', 'can', 'need',
+    'this', 'that', 'these', 'those', 'i', 'you', 'he', 'she', 'it', 'we',
+    'they', 'what', 'which', 'who', 'when', 'where', 'why', 'how', 'all',
+    'each', 'every', 'both', 'few', 'more', 'most', 'other', 'some', 'such',
+    'no', 'not', 'only', 'same', 'so', 'than', 'too', 'very', 'just', 'also',
+    'now', 'here', 'there', 'then', 'new', 'video', 'watch', 'like', 'subscribe',
+    'official', 'full', 'best', 'top', 'first', 'last', 'get', 'got', 'make',
+    'made', 'take', 'took', 'come', 'came', 'going', 'goes', 'really', 'actually',
+    'my', 'your', 'our', 'their', 'his', 'her', 'its', 'about', 'after', 'before'
+  ])
   
-  if (topTopics.length > 0) {
-    // Use topic keywords for more specific search
+  // PRIORITY 1: Extract keywords directly from feed video titles
+  // This is the most accurate because it reflects what user is actually watching
+  if (feedContext.titles && feedContext.titles.length >= 3) {
+    const wordFreq = {}
+    
+    for (const title of feedContext.titles.slice(0, 15)) {
+      if (!title) continue
+      const words = title
+        .toLowerCase()
+        .replace(/[^\w\s-]/g, ' ')
+        .split(/\s+/)
+        .filter(w => w.length > 2 && !stopWords.has(w) && !/^\d+$/.test(w))
+      
+      for (const word of words) {
+        wordFreq[word] = (wordFreq[word] || 0) + 1
+      }
+    }
+    
+    // Get top 6 most frequent keywords
+    const topWords = Object.entries(wordFreq)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([word]) => word)
+    
+    if (topWords.length >= 2) {
+      query = topWords.join(' ')
+      querySource = 'title_keywords'
+      console.log(`[BiasLens] Extracted keywords from ${feedContext.titles.length} titles: ${query}`)
+    }
+  }
+  
+  // PRIORITY 2: Use topic keywords if we got them from TopicAnalyzer
+  if (!query && topicMap && topicMap.length > 0) {
+    const topTopics = topicMap
+      .sort((a, b) => (b.weight || 0) - (a.weight || 0))
+      .slice(0, 3)
+    
+    // Collect all keywords from topics
     const keywords = topTopics
       .flatMap(t => t.keywords || [t.name || t])
-      .slice(0, 5)
-    query = keywords.join(' ')
-  }
-  
-  // Strategy 2: Fallback - use feed context titles directly
-  if (!query && feedContext.titles && feedContext.titles.length > 0) {
-    // Extract key words from first few video titles
-    const titleWords = feedContext.titles
-      .slice(0, 3)
-      .join(' ')
-      .toLowerCase()
-      .split(/\s+/)
-      .filter(w => w.length > 3 && !['this', 'that', 'with', 'from', 'have', 'will', 'your', 'what', 'when', 'where', 'which'].includes(w))
+      .filter(k => k && k.length > 2)
       .slice(0, 6)
-    query = titleWords.join(' ')
+    
+    if (keywords.length >= 2) {
+      query = keywords.join(' ')
+      querySource = 'topic_keywords'
+      console.log(`[BiasLens] Using topic keywords: ${query}`)
+    }
   }
   
-  // Strategy 3: Ultimate fallback - generic diverse content search
+  // PRIORITY 3: If still no query, we CANNOT provide quality recommendations
+  // Better to show nothing than random garbage
   if (!query || query.length < 5) {
-    console.warn('[BiasLens] No specific topics found - using diverse content fallback')
-    // Search for educational/informative content from smaller creators
-    query = 'educational tutorial explained documentary independent'
+    console.warn('[BiasLens] ⚠️ Cannot extract meaningful topics from feed - not enough signal')
+    return { 
+      videos: [], 
+      message: 'Not enough signal from your homepage. Scroll to load more videos or refresh.',
+      insufficientData: true
+    }
   }
   
-  console.log(`[BiasLens] Search query for silenced videos: "${query}"`)
+  console.log(`[BiasLens] Search query for silenced videos (${querySource}): "${query}"`)
   
   // Use existing noise cancellation engine
   const result = await runNoiseCancellation(query)
@@ -3179,10 +3808,15 @@ async function discoverSilencedVideos(topicMap, excludedChannels = [], filters =
   
   console.log(`[BiasLens] Returning ${filteredVideos.length} filtered silenced videos`)
   
+  // Check if AI scoring is offline
+  const aiIsOffline = isAIOffline()
+  
   return {
     videos: filteredVideos.slice(0, 12),
     biasSnapshot: result.biasSnapshot,
-    topicConcentration: result.biasSnapshot?.topicConcentration || 0
+    topicConcentration: result.biasSnapshot?.topicConcentration || 0,
+    aiOffline: aiIsOffline,
+    querySource: querySource || 'unknown'
   }
 }
 
@@ -3238,6 +3872,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   
   if (request.action === 'analyze') {
     analyzeVideo(request.videoId, request.transcript)
+      .then(result => sendResponse({ success: true, data: result }))
+      .catch(err => sendResponse({ success: false, error: err.message }))
+    return true
+  }
+
+  // Hidden Gems discovery for watch page MVP
+  if (request.action === 'findHiddenGems') {
+    discoverHiddenGems(request.videoId, request.channelId, request.title)
       .then(result => sendResponse({ success: true, data: result }))
       .catch(err => sendResponse({ success: false, error: err.message }))
     return true

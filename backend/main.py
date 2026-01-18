@@ -3,18 +3,25 @@ Silenced by the Algorithm - Python Backend
 
 This backend handles:
 1. YouTube transcript fetching (using youtube-transcript-api - no CORS issues)
-2. Gemini API calls for quality scoring and greenwashing detection
+2. DeepSeek API calls for quality scoring and greenwashing detection
 3. Bias receipt generation
 
 Run with: uvicorn main:app --reload --port 8000
+
+Last updated: 2026-01-18 - Switched from Gemini to DeepSeek
 """
 
 import os
 import json
 import logging
+import httpx
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 from functools import lru_cache
+
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv()
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,14 +36,6 @@ from youtube_transcript_api import (
     VideoUnavailable
 )
 
-# Gemini AI (optional - graceful degradation if not available)
-try:
-    import google.generativeai as genai
-    GEMINI_AVAILABLE = True
-except ImportError:
-    GEMINI_AVAILABLE = False
-    genai = None
-
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("silenced-backend")
@@ -45,15 +44,15 @@ logger = logging.getLogger("silenced-backend")
 # CONFIGURATION
 # ============================================
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
 
-# Configure Gemini if available
-if GEMINI_AVAILABLE and GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    logger.info("Gemini API configured successfully")
-else:
-    logger.warning("Gemini API not available - will use heuristic fallbacks")
+# Debug: Log what we got
+logger.info(f"DEEPSEEK_API_KEY loaded: {'Yes' if DEEPSEEK_API_KEY else 'No'} ({len(DEEPSEEK_API_KEY)} chars)")
+logger.info(f"YOUTUBE_API_KEY loaded: {'Yes' if YOUTUBE_API_KEY else 'No'} ({len(YOUTUBE_API_KEY)} chars)")
+
+AI_AVAILABLE = bool(DEEPSEEK_API_KEY)
+logger.info(f"AI_AVAILABLE: {AI_AVAILABLE}")
 
 # ============================================
 # PYDANTIC MODELS
@@ -87,7 +86,7 @@ class QualityScoreResponse(BaseModel):
     quality_score: float = Field(ge=0, le=1)
     content_depth_score: Optional[float] = Field(default=None, ge=0, le=1)
     combined_score: float = Field(ge=0, le=1)
-    method: str  # "gemini" or "heuristic"
+    method: str  # "deepseek" or "heuristic"
     reason: str
     flags: List[str] = []
     error: Optional[str] = None
@@ -105,7 +104,7 @@ class GreenwashingResponse(BaseModel):
     transparency_score: int = Field(ge=0, le=100)
     risk_level: str  # "low", "medium", "high"
     flags: List[Dict[str, Any]] = []
-    method: str  # "gemini" or "heuristic"
+    method: str  # "deepseek" or "heuristic"
     error: Optional[str] = None
 
 class BiasReceiptRequest(BaseModel):
@@ -124,7 +123,7 @@ class BiasReceiptResponse(BaseModel):
     why_not_shown: List[str] = []
     why_surfaced: List[str] = []
     confidence: str  # "low", "medium", "high"
-    method: str  # "gemini" or "heuristic"
+    method: str  # "deepseek" or "heuristic"
     error: Optional[str] = None
 
 # ============================================
@@ -133,8 +132,8 @@ class BiasReceiptResponse(BaseModel):
 
 app = FastAPI(
     title="Silenced by the Algorithm - Backend",
-    description="Python backend for transcript fetching and Gemini AI analysis",
-    version="1.0.0"
+    description="Python backend for transcript fetching and DeepSeek AI analysis",
+    version="1.1.0"
 )
 
 # CORS - allow extension to call this
@@ -147,6 +146,42 @@ app.add_middleware(
 )
 
 # ============================================
+# DEEPSEEK API HELPER
+# ============================================
+
+async def call_deepseek_api(prompt: str, max_tokens: int = 500, temperature: float = 0.3) -> Optional[str]:
+    """Call DeepSeek API (OpenAI-compatible)"""
+    if not DEEPSEEK_API_KEY:
+        return None
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                "https://api.deepseek.com/v1/chat/completions",
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {DEEPSEEK_API_KEY}"
+                },
+                json={
+                    "model": "deepseek-chat",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": temperature,
+                    "max_tokens": max_tokens
+                }
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                return data.get("choices", [{}])[0].get("message", {}).get("content")
+            else:
+                logger.error(f"DeepSeek API error {response.status_code}: {response.text}")
+                return None
+                
+    except Exception as e:
+        logger.error(f"DeepSeek API call failed: {str(e)}")
+        return None
+
+# ============================================
 # TRANSCRIPT FETCHING
 # ============================================
 
@@ -156,7 +191,7 @@ async def health_check():
     return {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
-        "gemini_available": GEMINI_AVAILABLE and bool(GEMINI_API_KEY),
+        "ai_available": AI_AVAILABLE,
         "youtube_api_available": bool(YOUTUBE_API_KEY)
     }
 
@@ -383,7 +418,7 @@ def score_quality_heuristic(
         "method": "heuristic-transcript" if transcript else "heuristic"
     }
 
-async def score_quality_gemini(
+async def score_quality_ai(
     title: str,
     description: str,
     transcript: Optional[str],
@@ -391,14 +426,12 @@ async def score_quality_gemini(
     subs: int,
     query: str
 ) -> Optional[Dict[str, Any]]:
-    """Gemini-based quality scoring"""
+    """DeepSeek-based quality scoring"""
     
-    if not GEMINI_AVAILABLE or not GEMINI_API_KEY:
+    if not AI_AVAILABLE:
         return None
     
     try:
-        model = genai.GenerativeModel('gemini-2.0-flash')
-        
         transcript_section = ""
         if transcript:
             # Limit transcript to avoid token limits
@@ -413,18 +446,13 @@ async def score_quality_gemini(
             transcript_section=transcript_section
         )
         
-        response = model.generate_content(
-            prompt,
-            generation_config=genai.types.GenerationConfig(
-                temperature=0.2,
-                max_output_tokens=500
-            )
-        )
+        response_text = await call_deepseek_api(prompt, max_tokens=500, temperature=0.2)
         
-        # Parse JSON response
-        response_text = response.text.strip()
+        if not response_text:
+            return None
         
         # Clean markdown code blocks if present
+        response_text = response_text.strip()
         if response_text.startswith("```"):
             response_text = response_text.split("```")[1]
             if response_text.startswith("json"):
@@ -453,22 +481,22 @@ async def score_quality_gemini(
             "combined_score": round(combined, 2),
             "reason": result.get("reason", "AI analysis"),
             "flags": result.get("flags", []),
-            "method": "gemini-transcript" if transcript else "gemini"
+            "method": "deepseek-transcript" if transcript else "deepseek"
         }
         
     except Exception as e:
-        logger.error(f"Gemini quality scoring failed: {str(e)}")
+        logger.error(f"DeepSeek quality scoring failed: {str(e)}")
         return None
 
 @app.post("/quality-score", response_model=QualityScoreResponse)
 async def score_video_quality(request: QualityScoreRequest):
     """
-    Score video quality using Gemini AI with heuristic fallback
+    Score video quality using DeepSeek AI with heuristic fallback
     """
     logger.info(f"Scoring quality for video: {request.video_id}")
     
-    # Try Gemini first
-    gemini_result = await score_quality_gemini(
+    # Try DeepSeek first
+    ai_result = await score_quality_ai(
         title=request.title,
         description=request.description,
         transcript=request.transcript,
@@ -477,11 +505,11 @@ async def score_video_quality(request: QualityScoreRequest):
         query=request.query
     )
     
-    if gemini_result:
+    if ai_result:
         return QualityScoreResponse(
             success=True,
             video_id=request.video_id,
-            **gemini_result
+            **ai_result
         )
     
     # Fallback to heuristic
@@ -618,19 +646,17 @@ def detect_greenwashing_heuristic(
         "method": "heuristic"
     }
 
-async def detect_greenwashing_gemini(
+async def detect_greenwashing_ai(
     title: str,
     description: str,
     transcript: Optional[str]
 ) -> Optional[Dict[str, Any]]:
-    """Gemini-based greenwashing detection"""
+    """DeepSeek-based greenwashing detection"""
     
-    if not GEMINI_AVAILABLE or not GEMINI_API_KEY:
+    if not AI_AVAILABLE:
         return None
     
     try:
-        model = genai.GenerativeModel('gemini-2.0-flash')
-        
         transcript_section = ""
         if transcript:
             truncated = transcript[:6000]
@@ -642,15 +668,12 @@ async def detect_greenwashing_gemini(
             transcript_section=transcript_section
         )
         
-        response = model.generate_content(
-            prompt,
-            generation_config=genai.types.GenerationConfig(
-                temperature=0.2,
-                max_output_tokens=500
-            )
-        )
+        response_text = await call_deepseek_api(prompt, max_tokens=500, temperature=0.2)
         
-        response_text = response.text.strip()
+        if not response_text:
+            return None
+        
+        response_text = response_text.strip()
         if response_text.startswith("```"):
             response_text = response_text.split("```")[1]
             if response_text.startswith("json"):
@@ -666,11 +689,11 @@ async def detect_greenwashing_gemini(
             "transparency_score": transparency,
             "risk_level": risk_level,
             "flags": result.get("flags", []),
-            "method": "gemini"
+            "method": "deepseek"
         }
         
     except Exception as e:
-        logger.error(f"Gemini greenwashing detection failed: {str(e)}")
+        logger.error(f"DeepSeek greenwashing detection failed: {str(e)}")
         return None
 
 @app.post("/greenwashing", response_model=GreenwashingResponse)
@@ -694,18 +717,18 @@ async def detect_greenwashing(request: GreenwashingRequest):
             method="skip"
         )
     
-    # Try Gemini first
-    gemini_result = await detect_greenwashing_gemini(
+    # Try DeepSeek first
+    ai_result = await detect_greenwashing_ai(
         title=request.title,
         description=request.description,
         transcript=request.transcript
     )
     
-    if gemini_result:
+    if ai_result:
         return GreenwashingResponse(
             success=True,
             video_id=request.video_id,
-            **gemini_result
+            **ai_result
         )
     
     # Fallback to heuristic
@@ -775,7 +798,7 @@ async def generate_bias_receipt(request: BiasReceiptRequest):
         why_not_shown=why_not_shown[:4],
         why_surfaced=why_surfaced[:4],
         confidence=confidence,
-        method="heuristic"  # Could add Gemini enhancement here
+        method="heuristic"  # Could add DeepSeek enhancement here
     )
 
 # ============================================

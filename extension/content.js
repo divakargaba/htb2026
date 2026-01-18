@@ -411,7 +411,7 @@ async function analyzeHomepageFeed() {
       )
     }
     
-    const response = await chrome.runtime.sendMessage({
+    const response = await safeSendMessage({
       action: 'analyzeHomepage',
       videoIds: feedVideoIds,
       feedContext: {
@@ -419,12 +419,14 @@ async function analyzeHomepageFeed() {
       }
     })
     
-    if (response.success) {
+    if (response && response.success) {
       feedAnalysisData = response.data
       updateBiasLensUIWithAnalysis(response.data)
       console.log('[BiasLens] Homepage analysis complete')
-    } else {
+    } else if (response) {
       console.error('[BiasLens] Analysis failed:', response.error)
+    } else {
+      console.warn('[BiasLens] No response from background - extension may need reload')
     }
     
   } catch (error) {
@@ -555,7 +557,16 @@ async function discoverSilencedVideos() {
     // Get video titles from feed for fallback query building
     const feedTitles = extractHomepageVideoTitles()
     
-    const response = await chrome.runtime.sendMessage({
+    // Check if we have enough signal to discover videos
+    if (feedTitles.length < 3 && (!topicProfile?.topics || topicProfile.topics.length === 0)) {
+      console.log('[BiasLens] Not enough signal from homepage to discover silenced videos')
+      if (window.SilencedGrid) {
+        window.SilencedGrid.showInsufficientData('Scroll to load more videos on your homepage so we can understand your interests.')
+      }
+      return
+    }
+    
+    const response = await safeSendMessage({
       action: 'discoverSilenced',
       topicMap: topicProfile?.topics || [],
       excludedChannels,
@@ -569,8 +580,35 @@ async function discoverSilencedVideos() {
       }
     })
     
+    // Handle null response (extension context invalidated)
+    if (!response) {
+      console.warn('[BiasLens] No response from background - extension may need reload')
+      if (window.SilencedGrid) {
+        window.SilencedGrid.showAIOffline('Connection lost. Please refresh the page.')
+      }
+      return
+    }
+    
     if (response.success) {
       silencedVideosData = response.data.videos
+      
+      // Check for AI offline indicator in response
+      if (response.data.aiOffline) {
+        console.log('[BiasLens] AI scoring is offline')
+        if (window.SilencedGrid) {
+          window.SilencedGrid.showAIOffline('AI quality verification is temporarily unavailable. Results may be less accurate.')
+        }
+        return
+      }
+      
+      // Check if no videos were found
+      if (!silencedVideosData || silencedVideosData.length === 0) {
+        console.log('[BiasLens] No silenced videos found')
+        if (window.SilencedGrid) {
+          window.SilencedGrid.updateVideos([]) // Shows empty state
+        }
+        return
+      }
       
       if (window.SilencedGrid) {
         window.SilencedGrid.updateVideos(silencedVideosData)
@@ -583,10 +621,39 @@ async function discoverSilencedVideos() {
       console.log(`[BiasLens] Found ${silencedVideosData.length} silenced videos`)
     } else {
       console.error('[BiasLens] Discovery failed:', response.error)
+      
+      // Handle specific error types
+      if (response.error?.includes('AI') || response.error?.includes('Gemini') || response.error?.includes('backend')) {
+        if (window.SilencedGrid) {
+          window.SilencedGrid.showAIOffline(response.error)
+        }
+      } else if (response.error?.includes('topic') || response.error?.includes('signal')) {
+        if (window.SilencedGrid) {
+          window.SilencedGrid.showInsufficientData(response.error)
+        }
+      } else {
+        // Generic error - show empty state with message
+        if (window.SilencedGrid) {
+          window.SilencedGrid.updateVideos([])
+        }
+      }
     }
     
   } catch (error) {
     console.error('[BiasLens] Discovery error:', error)
+    
+    // Check if it's a connection error (backend offline)
+    if (error.message?.includes('Extension context invalidated') || 
+        error.message?.includes('Could not establish connection') ||
+        error.message?.includes('fetch')) {
+      if (window.SilencedGrid) {
+        window.SilencedGrid.showAIOffline('Cannot connect to the backend. Please refresh the page.')
+      }
+    } else {
+      if (window.SilencedGrid) {
+        window.SilencedGrid.updateVideos([])
+      }
+    }
   }
 }
 
@@ -1227,6 +1294,243 @@ function getShadowStyles() {
     .loading-text {
       font-size: 11px;
       color: #6b7280;
+    }
+    
+    /* Hidden Gems Styles */
+    .header-subtitle {
+      font-size: 11px;
+      font-weight: 500;
+      color: #10b981;
+      background: rgba(16, 185, 129, 0.1);
+      padding: 3px 8px;
+      border-radius: 4px;
+    }
+    
+    .gems-intro {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      background: rgba(16, 185, 129, 0.05);
+      border-bottom: 1px solid #262626;
+    }
+    
+    .gems-icon {
+      font-size: 16px;
+    }
+    
+    .gems-text {
+      font-size: 12px;
+      color: #9ca3af;
+    }
+    
+    .gems-container {
+      padding: 8px;
+    }
+    
+    .no-gems-message {
+      padding: 24px;
+      text-align: center;
+      color: #6b7280;
+      font-size: 12px;
+    }
+    
+    .gem-card {
+      background: #1a1a1a;
+      border-radius: 8px;
+      margin-bottom: 8px;
+      overflow: hidden;
+      transition: background 0.15s ease;
+    }
+    
+    .gem-card:hover {
+      background: #222222;
+    }
+    
+    .gem-link {
+      display: flex;
+      gap: 10px;
+      padding: 10px;
+      text-decoration: none;
+      color: inherit;
+    }
+    
+    .gem-thumbnail-wrap {
+      position: relative;
+      flex-shrink: 0;
+    }
+    
+    .gem-thumbnail {
+      width: 120px;
+      height: 68px;
+      border-radius: 4px;
+      object-fit: cover;
+      background: #262626;
+    }
+    
+    .gem-duration {
+      position: absolute;
+      bottom: 4px;
+      right: 4px;
+      background: rgba(0,0,0,0.8);
+      color: #fff;
+      font-size: 10px;
+      font-weight: 500;
+      padding: 2px 4px;
+      border-radius: 2px;
+    }
+    
+    .gem-info {
+      flex: 1;
+      min-width: 0;
+    }
+    
+    .gem-title {
+      font-size: 12px;
+      font-weight: 500;
+      color: #e5e5e5;
+      line-height: 1.3;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      margin-bottom: 4px;
+    }
+    
+    .gem-channel {
+      font-size: 11px;
+      color: #9ca3af;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    
+    .gem-meta {
+      font-size: 10px;
+      color: #6b7280;
+      margin-top: 2px;
+    }
+    
+    .gem-scores {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 10px 10px;
+      flex-wrap: wrap;
+    }
+    
+    .score-chip {
+      font-size: 10px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 4px;
+    }
+    
+    .score-chip.quality {
+      background: #10b981;
+      color: #000;
+    }
+    
+    .score-chip.underexposed {
+      background: #f59e0b;
+      color: #000;
+    }
+    
+    .why-button {
+      background: transparent;
+      border: 1px solid #404040;
+      color: #9ca3af;
+      font-size: 10px;
+      padding: 3px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      margin-left: auto;
+    }
+    
+    .why-button:hover {
+      background: #333;
+      color: #fff;
+    }
+    
+    .gem-breakdown {
+      display: none;
+      padding: 12px;
+      background: #141414;
+      border-top: 1px solid #262626;
+    }
+    
+    .gem-breakdown.open {
+      display: block;
+    }
+    
+    .breakdown-section {
+      margin-bottom: 12px;
+    }
+    
+    .breakdown-section:last-child {
+      margin-bottom: 0;
+    }
+    
+    .breakdown-title {
+      font-size: 10px;
+      font-weight: 600;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }
+    
+    .metrics-table {
+      width: 100%;
+      font-size: 11px;
+      border-collapse: collapse;
+    }
+    
+    .metrics-table td {
+      padding: 3px 0;
+      border-bottom: 1px solid #262626;
+    }
+    
+    .metrics-table td:first-child {
+      color: #6b7280;
+    }
+    
+    .metrics-table td:last-child {
+      text-align: right;
+      color: #d1d5db;
+      font-weight: 500;
+    }
+    
+    .breakdown-items {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    
+    .breakdown-item {
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 3px;
+      background: #262626;
+      color: #9ca3af;
+    }
+    
+    .breakdown-item.positive {
+      background: rgba(16, 185, 129, 0.15);
+      color: #10b981;
+    }
+    
+    .breakdown-item.negative {
+      background: rgba(239, 68, 68, 0.15);
+      color: #ef4444;
+    }
+    
+    .gem-explanation {
+      font-size: 11px;
+      color: #9ca3af;
+      line-height: 1.5;
+      white-space: pre-line;
     }
   `
 }
@@ -1869,43 +2173,49 @@ async function runWatchPage() {
     <div class="silenced-panel">
       <div class="panel-header">
         <div class="header-brand">
-          <span class="brand-name">silenced</span>
+          <span class="brand-name">Bias Lens</span>
         </div>
       </div>
       <div class="loading-state">
         <div class="spinner"></div>
-        <div class="loading-text">Analyzing video...</div>
+        <div class="loading-text">Finding hidden gems...</div>
       </div>
     </div>
   `
 
-  const transcript = await getTranscript(videoId)
-
-  const response = await safeSendMessage({
+  // Get current video title for query building
+  const videoTitle = extractCurrentQuery()
+  
+  // Fetch current video's channel ID (we need it to exclude from gems)
+  const analyzeResponse = await safeSendMessage({
     action: 'analyze',
     videoId,
-    transcript: transcript?.substring(0, 8000)
+    transcript: ''
+  })
+  
+  const currentChannelId = analyzeResponse?.data?.video?.channelId || ''
+
+  // Discover hidden gems
+  const gemsResponse = await safeSendMessage({
+    action: 'findHiddenGems',
+    videoId,
+    channelId: currentChannelId,
+    title: videoTitle
   })
 
-  if (response?.success && response?.data) {
-    injectDashboard(response.data)
-
-    if (noiseCancellationActive) {
-      const query = extractCurrentQuery()
-      await runNoiseCancellation(query)
-      muteNoisyVideos()
-      injectUnmutedVoices()
-    }
+  if (gemsResponse?.success && gemsResponse?.data) {
+    injectHiddenGemsPanel(shadow, container, gemsResponse.data, analyzeResponse?.data)
+    panelInjected = true
   } else {
     container.innerHTML = `
       <div class="silenced-panel">
         <div class="panel-header">
           <div class="header-brand">
-            <span class="brand-name">silenced</span>
+            <span class="brand-name">Bias Lens</span>
           </div>
         </div>
         <div style="padding: 24px; text-align: center; color: #888;">
-          <div style="margin-bottom: 12px;">Could not analyze this video</div>
+          <div style="margin-bottom: 12px;">${gemsResponse?.error || 'Could not find hidden gems'}</div>
           <button onclick="window.silencedRetry()" style="background: #10b981; color: #000; border: none; padding: 8px 16px; border-radius: 8px; font-weight: 600; cursor: pointer;">
             Try Again
           </button>
@@ -1915,13 +2225,188 @@ async function runWatchPage() {
   }
 }
 
+/**
+ * Inject the Hidden Gems panel UI
+ */
+function injectHiddenGemsPanel(shadow, container, gemsData, analysisData) {
+  const { gems, message } = gemsData
+  
+  const gemsHtml = gems.length > 0 
+    ? gems.map((gem, idx) => createGemCard(gem, idx)).join('')
+    : `<div class="no-gems-message">${message || 'No hidden gems found for this topic'}</div>`
+  
+  container.innerHTML = `
+    <div class="silenced-panel">
+      <div class="panel-header">
+        <div class="header-brand">
+          <span class="brand-name">Bias Lens</span>
+        </div>
+        <div class="header-subtitle">Hidden Gems</div>
+      </div>
+      
+      <div class="gems-intro">
+        <span class="gems-icon">💎</span>
+        <span class="gems-text">${gems.length} high-quality videos the algorithm buries</span>
+      </div>
+      
+      <div class="gems-container">
+        ${gemsHtml}
+      </div>
+      
+      <div class="panel-footer">
+        <span>Hack the Bias '26</span>
+        <a id="refresh-gems">Refresh</a>
+      </div>
+    </div>
+  `
+  
+  // Add event listeners for expandable sections
+  gems.forEach((gem, idx) => {
+    const card = shadow.querySelector(`#gem-card-${idx}`)
+    if (!card) return
+    
+    const whyBtn = card.querySelector('.why-button')
+    const breakdown = card.querySelector('.gem-breakdown')
+    
+    if (whyBtn && breakdown) {
+      whyBtn.addEventListener('click', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        breakdown.classList.toggle('open')
+        whyBtn.textContent = breakdown.classList.contains('open') ? 'Hide ▲' : 'Why? ▼'
+      })
+    }
+  })
+  
+  // Refresh button
+  const refreshBtn = shadow.querySelector('#refresh-gems')
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', () => {
+      currentVideoId = null
+      panelInjected = false
+      runWatchPage()
+    })
+  }
+}
+
+/**
+ * Create HTML for a single gem card
+ */
+function createGemCard(gem, index) {
+  const durationStr = formatDuration(gem.duration)
+  const viewsStr = fmt(gem.views)
+  const subsStr = fmt(gem.subscriberCount)
+  const ageStr = formatAge(gem.publishedAt)
+  
+  // Build metrics table rows
+  const metricsRows = `
+    <tr><td>Views/Day</td><td>${gem.metrics?.viewsPerDay || '-'}</td></tr>
+    <tr><td>Like Rate</td><td>${gem.metrics?.likeRate || '-'}%</td></tr>
+    <tr><td>Comment Rate</td><td>${gem.metrics?.commentRate || '-'}%</td></tr>
+    <tr><td>WPM</td><td>${gem.metrics?.wpm || '-'}</td></tr>
+    <tr><td>Citations</td><td>${gem.metrics?.citations || 0}</td></tr>
+    <tr><td>Duration</td><td>${gem.metrics?.durationMin || '-'} min</td></tr>
+  `
+  
+  // Build breakdown rows
+  const breakdownRows = gem.breakdown ? `
+    <div class="breakdown-item ${gem.breakdown.likeScore > 0 ? 'positive' : ''}">Like Score: +${gem.breakdown.likeScore}</div>
+    <div class="breakdown-item ${gem.breakdown.commentScore > 0 ? 'positive' : ''}">Comment Score: +${gem.breakdown.commentScore}</div>
+    <div class="breakdown-item ${gem.breakdown.wpmScore > 0 ? 'positive' : ''}">WPM Score: +${gem.breakdown.wpmScore}</div>
+    <div class="breakdown-item ${gem.breakdown.citationScore > 0 ? 'positive' : ''}">Citation Score: +${gem.breakdown.citationScore}</div>
+    <div class="breakdown-item ${gem.breakdown.durationScore > 0 ? 'positive' : ''}">Duration Score: +${gem.breakdown.durationScore}</div>
+    ${gem.breakdown.clickbaitPenalty < 0 ? `<div class="breakdown-item negative">Clickbait: ${gem.breakdown.clickbaitPenalty}</div>` : ''}
+    ${gem.breakdown.spamPenalty < 0 ? `<div class="breakdown-item negative">Spam: ${gem.breakdown.spamPenalty}</div>` : ''}
+    ${gem.breakdown.underexposureBonus > 0 ? `<div class="breakdown-item positive">Underexposure Bonus: +${gem.breakdown.underexposureBonus}</div>` : ''}
+  ` : ''
+  
+  return `
+    <div class="gem-card" id="gem-card-${index}">
+      <a href="/watch?v=${gem.videoId}" class="gem-link">
+        <div class="gem-thumbnail-wrap">
+          <img class="gem-thumbnail" src="${gem.thumbnail}" alt="">
+          <span class="gem-duration">${durationStr}</span>
+        </div>
+        <div class="gem-info">
+          <div class="gem-title">${esc(gem.title)}</div>
+          <div class="gem-channel">${esc(gem.channelTitle)}</div>
+          <div class="gem-meta">${viewsStr} views · ${subsStr} subs · ${ageStr}</div>
+        </div>
+      </a>
+      <div class="gem-scores">
+        <span class="score-chip quality">Quality ${gem.qualityScore}</span>
+        <span class="score-chip underexposed">Underexposed ${gem.underexposureScore}</span>
+        <button class="why-button">Why? ▼</button>
+      </div>
+      <div class="gem-breakdown">
+        <div class="breakdown-section">
+          <div class="breakdown-title">Metrics</div>
+          <table class="metrics-table">
+            ${metricsRows}
+          </table>
+        </div>
+        <div class="breakdown-section">
+          <div class="breakdown-title">Score Breakdown</div>
+          <div class="breakdown-items">
+            ${breakdownRows}
+          </div>
+        </div>
+        <div class="breakdown-section">
+          <div class="breakdown-title">AI Analysis</div>
+          <div class="gem-explanation">${gem.explanation || 'No AI analysis available'}</div>
+        </div>
+      </div>
+    </div>
+  `
+}
+
+/**
+ * Format duration in seconds to MM:SS or HH:MM:SS
+ */
+function formatDuration(seconds) {
+  if (!seconds) return '--:--'
+  const hrs = Math.floor(seconds / 3600)
+  const mins = Math.floor((seconds % 3600) / 60)
+  const secs = seconds % 60
+  if (hrs > 0) {
+    return `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+  }
+  return `${mins}:${secs.toString().padStart(2, '0')}`
+}
+
+/**
+ * Format date to relative age
+ */
+function formatAge(dateStr) {
+  if (!dateStr) return ''
+  const date = new Date(dateStr)
+  const now = new Date()
+  const diffMs = now - date
+  const diffDays = Math.floor(diffMs / 86400000)
+  
+  if (diffDays < 1) return 'Today'
+  if (diffDays === 1) return '1 day ago'
+  if (diffDays < 7) return `${diffDays} days ago`
+  if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`
+  if (diffDays < 365) return `${Math.floor(diffDays / 30)} months ago`
+  return `${Math.floor(diffDays / 365)} years ago`
+}
+
 async function getTranscript(videoId) {
   try {
     for (const lang of ['en', 'en-US', '']) {
       const url = `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}&fmt=json3`
       const res = await fetch(url)
-      if (res.ok) {
-        const data = await res.json()
+      if (!res.ok) continue
+      
+      // IMPORTANT: Use text() first, then try to parse as JSON
+      // The timedtext endpoint can return XML, empty, or malformed responses
+      const rawText = await res.text()
+      if (!rawText || rawText.length < 50) continue
+      
+      // Try JSON first (json3 format)
+      try {
+        const data = JSON.parse(rawText)
         if (data.events?.length) {
           const text = data.events
             .filter(e => e.segs)
@@ -1930,6 +2415,19 @@ async function getTranscript(videoId) {
             .replace(/\s+/g, ' ')
             .trim()
           if (text.length > 100) return text
+        }
+      } catch {
+        // JSON parse failed, try XML fallback
+        if (rawText.includes('<text')) {
+          const matches = rawText.match(/<text[^>]*>([^<]*)<\/text>/g) || []
+          if (matches.length > 0) {
+            const text = matches
+              .map(m => m.replace(/<[^>]+>/g, ''))
+              .join(' ')
+              .replace(/\s+/g, ' ')
+              .trim()
+            if (text.length > 100) return text
+          }
         }
       }
     }

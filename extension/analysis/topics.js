@@ -325,13 +325,89 @@ function buildTopicProfile(videos) {
     .slice(0, 15)
     .map(([word, count]) => ({ word, count }))
   
+  // FALLBACK: If category-based topic detection failed, create synthetic topics from keywords
+  // This ensures we ALWAYS have something to search for, not generic garbage
+  let finalTopics = topics
+  if (topics.length === 0 && topKeywords.length > 0) {
+    console.log('[TopicAnalyzer] No category topics found, using keyword extraction as fallback')
+    
+    // Create synthetic topics from top keywords
+    // Group related keywords and create pseudo-topics
+    finalTopics = topKeywords.slice(0, 5).map((kw, idx) => ({
+      name: kw.word,  // Use keyword as topic name
+      weight: (5 - idx) / 15,  // Decreasing weight
+      videoCount: kw.count,
+      keywords: [kw.word],
+      isKeywordFallback: true  // Mark as fallback for transparency
+    }))
+  }
+  
   return {
-    topics,
+    topics: finalTopics,
     channelLoop,
     styleProfile,
     topKeywords,
-    totalVideos: videos.length
+    totalVideos: videos.length,
+    usedKeywordFallback: topics.length === 0 && topKeywords.length > 0
   }
+}
+
+/**
+ * Extract search keywords directly from video titles
+ * Used as a fallback when category-based topic detection fails
+ * Returns an array of keywords suitable for YouTube search queries
+ */
+function extractSearchKeywords(titles, maxKeywords = 8) {
+  if (!titles || titles.length === 0) return []
+  
+  // Extended stop words for better keyword extraction
+  const stopWords = new Set([
+    'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+    'of', 'with', 'by', 'from', 'is', 'are', 'was', 'were', 'be', 'been',
+    'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would',
+    'could', 'should', 'may', 'might', 'must', 'shall', 'can', 'need',
+    'this', 'that', 'these', 'those', 'i', 'you', 'he', 'she', 'it', 'we',
+    'they', 'what', 'which', 'who', 'when', 'where', 'why', 'how', 'all',
+    'each', 'every', 'both', 'few', 'more', 'most', 'other', 'some', 'such',
+    'no', 'not', 'only', 'same', 'so', 'than', 'too', 'very', 'just', 'also',
+    'now', 'here', 'there', 'then', 'new', 'video', 'watch', 'like', 'subscribe',
+    'official', 'full', 'best', 'top', 'first', 'last', 'get', 'got', 'make',
+    'made', 'take', 'took', 'come', 'came', 'going', 'goes', 'really', 'actually',
+    'literally', 'today', 'ever', 'never', 'always', 'everything', 'nothing',
+    'something', 'anything', 'everyone', 'anyone', 'one', 'two', 'three',
+    'part', 'episode', 'reaction', 'reacting', 'react', 'my', 'your', 'our',
+    'their', 'his', 'her', 'its', 'about', 'after', 'before', 'over', 'under',
+    'between', 'through', 'during', 'while', 'since', 'until', 'into', 'out'
+  ])
+  
+  // Collect all words from all titles
+  const wordFreq = {}
+  
+  for (const title of titles) {
+    if (!title) continue
+    
+    // Tokenize: lowercase, remove special chars, split
+    const words = title
+      .toLowerCase()
+      .replace(/[^\w\s-]/g, ' ')
+      .replace(/-+/g, ' ')
+      .split(/\s+/)
+      .filter(w => w.length > 2 && !stopWords.has(w) && !/^\d+$/.test(w))
+    
+    for (const word of words) {
+      wordFreq[word] = (wordFreq[word] || 0) + 1
+    }
+  }
+  
+  // Sort by frequency and return top keywords
+  const sortedKeywords = Object.entries(wordFreq)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, maxKeywords)
+    .map(([word, count]) => word)
+  
+  console.log(`[TopicAnalyzer] Extracted search keywords: ${sortedKeywords.join(', ')}`)
+  
+  return sortedKeywords
 }
 
 // ============================================
@@ -505,6 +581,7 @@ if (typeof window !== 'undefined') {
   window.TopicAnalyzer = {
     extractKeywords,
     extractNGrams,
+    extractSearchKeywords,
     detectTopics,
     getPrimaryTopic,
     buildTopicProfile,
@@ -520,6 +597,7 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     extractKeywords,
     extractNGrams,
+    extractSearchKeywords,
     detectTopics,
     getPrimaryTopic,
     buildTopicProfile,
