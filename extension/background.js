@@ -7,7 +7,7 @@
 const SCHEMA_VERSION = '3.1.0'
 const ENGINE_VERSION = 'v3.1'
 
-const YOUTUBE_API_KEY = 'AIzaSyA_TCvrL72kC5xplism_FJDCtl8UshToHQ'
+const YOUTUBE_API_KEY = 'AIzaSyDNdZOfU79GgP3-fZ-KezbiT158mGpi3dc'
 const MAX_SUBSCRIBER_THRESHOLD = 100000 // Noise cancellation threshold
 const MONOPOLY_THRESHOLD = 1000000 // 1M subs = deafening noise
 const CACHE_TTL = 86400000 // 24 hours in ms
@@ -15,7 +15,16 @@ const BIAS_RECEIPT_CACHE_TTL = 21600000 // 6 hours in ms
 
 // Feature flags
 const ENABLE_ML_FEATURES = true // Set to true to enable Gemini-powered features
-const GEMINI_API_KEY = 'AIzaSyDs77REzwkLTcgrPp3B6pD0xwdsCfQo_k8' // Add your Gemini API key here - REQUIRED for quality filtering
+const GEMINI_API_KEY = 'AIzaSyBS9o40P0nC5QtV-wTPDEkQ4z5sMA65ZnQ' // Gemini API key for quality filtering
+
+// Python Backend URL (for transcript fetching + Gemini without CORS issues)
+// Set to your deployed backend URL, or 'http://localhost:8000' for local dev
+const PYTHON_BACKEND_URL = 'http://localhost:8000'
+const USE_PYTHON_BACKEND = true // Set to true to use Python backend for transcripts/AI
+
+// Backend health cache - avoid repeated failed requests to downed backend
+let backendHealthCache = { healthy: null, lastCheck: 0 }
+const BACKEND_HEALTH_CHECK_INTERVAL = 30000 // Only re-check every 30 seconds
 
 // Quality thresholds
 const MIN_VIDEO_QUALITY_SCORE = 0.25 // Minimum quality score (0-1) to surface a video (lowered to avoid filtering all)
@@ -480,6 +489,63 @@ function calculateReceiptConfidence(params) {
 }
 
 /**
+ * Call Gemini API with multiple model fallbacks
+ * Skips querying available models to avoid CORS issues
+ */
+async function callGeminiAPI(prompt, config = {}) {
+  const { temperature = 0.3, maxOutputTokens = 500 } = config
+
+  // Try multiple API versions and models (skip querying to avoid CORS)
+  const endpoints = [
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`,
+    `https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`
+  ]
+
+  for (const endpoint of endpoints) {
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature,
+            maxOutputTokens
+          }
+        })
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        return data.candidates?.[0]?.content?.parts?.[0]?.text || null
+      } else if (response.status === 404) {
+        // Try next endpoint
+        continue
+      } else {
+        // Other error - log and try next
+        const errorText = await response.text()
+        console.warn(`[Silenced] Gemini API error ${response.status}:`, errorText)
+        continue
+      }
+    } catch (err) {
+      // CORS or network errors - try next endpoint
+      if (err.message.includes('CORS') || err.message.includes('Failed to fetch')) {
+        console.warn(`[Silenced] Gemini API CORS/network error, trying next endpoint...`)
+      } else {
+        console.warn(`[Silenced] Gemini API call failed:`, err.message)
+      }
+      continue
+    }
+  }
+
+  // All endpoints failed - return null to trigger heuristic fallback
+  console.warn('[Silenced] All Gemini API endpoints failed, using heuristic fallback')
+  return null
+}
+
+/**
  * Generate bias receipt using Gemini AI (when ENABLE_ML_FEATURES is true)
  */
 async function generateBiasReceiptWithGemini(params) {
@@ -513,24 +579,10 @@ RULES:
 - Be concise and specific`
 
   try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.3,
-          maxOutputTokens: 500
-        }
-      })
+    const text = await callGeminiAPI(prompt, {
+      temperature: 0.3,
+      maxOutputTokens: 500
     })
-
-    if (!response.ok) {
-      throw new Error(`Gemini API error: ${response.status}`)
-    }
-
-    const data = await response.json()
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text
 
     if (!text) return null
 
@@ -558,7 +610,7 @@ RULES:
 }
 
 // ===============================================
-// AUDIT METRICS COMPUTATION (Deterministic, no Gemini)
+// AUDIT METRICS COMPUTATION (Deterministic, no AI)
 // ===============================================
 
 /**
@@ -607,127 +659,96 @@ function computeAuditMetrics(unmutedVideos, topicConcentration, qualityFilterSta
 // ===============================================
 
 /**
- * Fetch video transcript from YouTube using the innertube API
+ * Fetch video transcript from YouTube using the timedtext API
+ * This is the simpler, more reliable method that works from both content and background scripts
  * @param {string} videoId - YouTube video ID
  * @returns {Promise<string|null>} Transcript text or null if unavailable
  */
 async function fetchVideoTranscript(videoId) {
-  try {
-    console.log(`[Silenced] Attempting to fetch transcript for ${videoId}...`)
+  console.log(`[Silenced] Attempting to fetch transcript for ${videoId}...`)
 
-    // Step 1: Fetch the video page to get caption track URL
+  // Try multiple language codes
+  const langCodes = ['en', 'en-US', 'en-GB', '']
+
+  for (const lang of langCodes) {
+    try {
+      const url = `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}&fmt=json3`
+      const response = await fetch(url)
+
+      if (!response.ok) continue
+
+      const data = await response.json()
+
+      if (data.events?.length) {
+        const text = data.events
+          .filter(e => e.segs)
+          .flatMap(e => e.segs.map(s => s.utf8 || ''))
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+
+        if (text.length > 100) {
+          console.log(`[Silenced] Successfully fetched transcript for ${videoId} (lang: ${lang || 'default'}): ${text.length} chars`)
+          return text
+        }
+      }
+    } catch (err) {
+      console.log(`[Silenced] Transcript fetch failed for ${videoId} (lang: ${lang}):`, err.message)
+    }
+  }
+
+  // Fallback: try fetching video page and extracting caption URL
+  try {
     const videoPageUrl = `https://www.youtube.com/watch?v=${videoId}`
     const pageResponse = await fetch(videoPageUrl)
 
-    if (!pageResponse.ok) {
-      console.log(`[Silenced] Failed to fetch video page for ${videoId}`)
-      return null
-    }
+    if (pageResponse.ok) {
+      const pageHtml = await pageResponse.text()
+      const captionMatch = pageHtml.match(/"captionTracks":\s*(\[.*?\])/)
 
-    const pageHtml = await pageResponse.text()
+      if (captionMatch) {
+        const captionJson = captionMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\')
+        const captionTracks = JSON.parse(captionJson)
 
-    // Step 2: Extract caption track URL from the page
-    // Look for the captionTracks in the ytInitialPlayerResponse
-    const captionMatch = pageHtml.match(/"captionTracks":\s*(\[.*?\])/)
+        if (captionTracks?.length > 0) {
+          // Find English track or use first available
+          const track = captionTracks.find(t =>
+            t.languageCode === 'en' || t.languageCode?.startsWith('en')
+          ) || captionTracks[0]
 
-    if (!captionMatch) {
-      console.log(`[Silenced] No caption tracks found for ${videoId}`)
-      return null
-    }
+          if (track?.baseUrl) {
+            const captionResponse = await fetch(track.baseUrl)
+            if (captionResponse.ok) {
+              const captionXml = await captionResponse.text()
+              const textMatches = [...captionXml.matchAll(/<text[^>]*>([^<]*)<\/text>/g)]
+              const fullText = textMatches
+                .map(m => m[1]
+                  .replace(/&amp;/g, '&')
+                  .replace(/&lt;/g, '<')
+                  .replace(/&gt;/g, '>')
+                  .replace(/&quot;/g, '"')
+                  .replace(/&#39;/g, "'")
+                  .replace(/\n/g, ' ')
+                )
+                .join(' ')
+                .replace(/\s+/g, ' ')
+                .trim()
 
-    let captionTracks
-    try {
-      // The JSON might be escaped, need to handle that
-      const captionJson = captionMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\')
-      captionTracks = JSON.parse(captionJson)
-    } catch (e) {
-      // Try alternate extraction
-      const altMatch = pageHtml.match(/\"captions\":\{\"playerCaptionsTracklistRenderer\":\{\"captionTracks\":(\[.*?\])/)
-      if (altMatch) {
-        try {
-          captionTracks = JSON.parse(altMatch[1])
-        } catch (e2) {
-          console.log(`[Silenced] Could not parse caption tracks for ${videoId}`)
-          return null
+              if (fullText.length > 100) {
+                console.log(`[Silenced] Successfully fetched transcript via fallback for ${videoId}: ${fullText.length} chars`)
+                return fullText
+              }
+            }
+          }
         }
-      } else {
-        return null
       }
     }
-
-    if (!captionTracks || captionTracks.length === 0) {
-      console.log(`[Silenced] Empty caption tracks for ${videoId}`)
-      return null
-    }
-
-    // Step 3: Find English caption track (prefer manual over auto)
-    let captionUrl = null
-
-    // First try to find manual English captions
-    const manualEnglish = captionTracks.find(t =>
-      (t.languageCode === 'en' || t.languageCode?.startsWith('en')) &&
-      t.kind !== 'asr'
-    )
-
-    // Then try auto-generated English
-    const autoEnglish = captionTracks.find(t =>
-      (t.languageCode === 'en' || t.languageCode?.startsWith('en')) &&
-      t.kind === 'asr'
-    )
-
-    // Fallback to any available track
-    const anyTrack = captionTracks[0]
-
-    const selectedTrack = manualEnglish || autoEnglish || anyTrack
-
-    if (selectedTrack?.baseUrl) {
-      captionUrl = selectedTrack.baseUrl
-    }
-
-    if (!captionUrl) {
-      console.log(`[Silenced] No usable caption URL for ${videoId}`)
-      return null
-    }
-
-    // Step 4: Fetch the caption XML
-    const captionResponse = await fetch(captionUrl)
-    if (!captionResponse.ok) {
-      console.log(`[Silenced] Failed to fetch captions for ${videoId}`)
-      return null
-    }
-
-    const captionXml = await captionResponse.text()
-
-    // Step 5: Parse XML and extract text
-    const textMatches = captionXml.matchAll(/<text[^>]*>([^<]*)<\/text>/g)
-    const textParts = []
-
-    for (const match of textMatches) {
-      // Decode HTML entities
-      const text = match[1]
-        .replace(/&amp;/g, '&')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
-        .replace(/\n/g, ' ')
-      textParts.push(text)
-    }
-
-    const fullText = textParts.join(' ').replace(/\s+/g, ' ').trim()
-
-    if (fullText.length > 100) {
-      console.log(`[Silenced] Successfully fetched transcript for ${videoId}: ${fullText.length} chars`)
-      return fullText
-    }
-
-    console.log(`[Silenced] Transcript too short for ${videoId}: ${fullText.length} chars`)
-    return null
-
   } catch (err) {
-    console.error(`[Silenced] Transcript fetch error for ${videoId}:`, err.message)
-    return null
+    console.log(`[Silenced] Fallback transcript fetch failed for ${videoId}:`, err.message)
   }
+
+  console.log(`[Silenced] No transcript available for ${videoId}`)
+  return null
 }
 
 // ===============================================
@@ -751,13 +772,44 @@ async function scoreVideoQuality(video, searchQuery, useTranscript = false) {
     return qualityScoreCache[cacheKey].data
   }
 
+  // Check backend availability once (cached) to avoid slow repeated timeouts
+  const backendAvailable = USE_PYTHON_BACKEND && PYTHON_BACKEND_URL && await isBackendAvailable()
+
+  // Try Python backend first (avoids CORS issues with Gemini)
+  if (backendAvailable) {
+    try {
+      const backendResult = await scoreVideoQualityWithBackend(video, searchQuery, useTranscript)
+      if (backendResult) {
+        qualityScoreCache[cacheKey] = { data: backendResult, timestamp: Date.now() }
+        return backendResult
+      }
+    } catch (err) {
+      console.warn('[Silenced] Python backend scoring failed, falling back:', err.message)
+    }
+  }
+
   // Fetch transcript if requested
   let transcript = null
   if (useTranscript) {
-    transcript = await fetchVideoTranscript(video.videoId)
+    // Try direct method first - it's fast and reliable with the timedtext API
+    transcript = await Promise.race([
+      fetchVideoTranscript(video.videoId),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 8000)) // 8 second timeout
+    ]).catch(() => null)
+
+    // If direct method failed and backend is available, try backend
+    if (!transcript && backendAvailable) {
+      transcript = await fetchTranscriptFromBackend(video.videoId)
+    }
+
+    if (transcript) {
+      console.log(`[Silenced] Got transcript for ${video.videoId}: ${transcript.length} chars`)
+    } else {
+      console.log(`[Silenced] No transcript available for ${video.videoId}`)
+    }
   }
 
-  // Try Gemini if API key is available
+  // Try Gemini directly if API key is available (may have CORS issues from extension)
   if (GEMINI_API_KEY && ENABLE_ML_FEATURES) {
     try {
       const geminiResult = await scoreVideoQualityWithGemini(video, searchQuery, transcript)
@@ -774,6 +826,193 @@ async function scoreVideoQuality(video, searchQuery, useTranscript = false) {
   const heuristicResult = scoreVideoQualityHeuristic(video, searchQuery, transcript)
   qualityScoreCache[cacheKey] = { data: heuristicResult, timestamp: Date.now() }
   return heuristicResult
+}
+
+/**
+ * Score video quality using Python backend (avoids CORS issues)
+ * Backend fetches transcript and calls Gemini server-side
+ */
+async function scoreVideoQualityWithBackend(video, searchQuery, useTranscript = false) {
+  try {
+    const response = await fetch(`${PYTHON_BACKEND_URL}/quality-score`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        video_id: video.videoId,
+        title: video.title,
+        description: video.description || '',
+        channel_title: video.channelTitle || '',
+        subscriber_count: video.subscriberCount || 0,
+        query: searchQuery,
+        // Don't send transcript - backend will fetch it if needed
+        transcript: null
+      })
+    })
+
+    if (!response.ok) {
+      throw new Error(`Backend returned ${response.status}`)
+    }
+
+    const data = await response.json()
+
+    if (!data.success) {
+      throw new Error(data.error || 'Backend scoring failed')
+    }
+
+    console.log(`[Silenced] Backend scored "${video.title}": ${data.combined_score.toFixed(2)} (${data.method})`)
+
+    return {
+      relevanceScore: data.relevance_score,
+      qualityScore: data.quality_score,
+      contentDepthScore: data.content_depth_score,
+      combinedScore: data.combined_score,
+      reason: data.reason,
+      method: data.method,
+      flags: data.flags || []
+    }
+  } catch (err) {
+    console.warn('[Silenced] Backend quality scoring failed:', err.message)
+    return null
+  }
+}
+
+/**
+ * Fetch transcript using Python backend (no CORS issues)
+ */
+async function fetchTranscriptFromBackend(videoId) {
+  try {
+    const response = await fetch(`${PYTHON_BACKEND_URL}/transcript/${videoId}`)
+    if (!response.ok) return null
+
+    const data = await response.json()
+    if (!data.success || !data.transcript) return null
+
+    console.log(`[Silenced] Backend fetched transcript for ${videoId}: ${data.transcript.length} chars`)
+    return data.transcript
+  } catch (err) {
+    console.warn('[Silenced] Backend transcript fetch failed:', err.message)
+    return null
+  }
+}
+
+/**
+ * Full video analysis using Python backend
+ * Fetches transcript, scores quality, detects greenwashing - all server-side
+ */
+async function analyzeWithBackend(videoId, title, query) {
+  try {
+    const response = await fetch(`${PYTHON_BACKEND_URL}/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        video_id: videoId,
+        title: title,
+        query: query || title,
+        fetch_transcript: true
+      })
+    })
+
+    if (!response.ok) {
+      throw new Error(`Backend returned ${response.status}`)
+    }
+
+    const data = await response.json()
+
+    if (!data.success) {
+      throw new Error(data.error || 'Backend analysis failed')
+    }
+
+    console.log(`[Silenced] Backend analysis complete for ${videoId}`)
+    console.log(`  - Transcript: ${data.transcript?.success ? data.transcript.transcript?.length + ' chars' : 'N/A'}`)
+    console.log(`  - Quality: ${data.quality?.combined_score?.toFixed(2)} (${data.quality?.method})`)
+    console.log(`  - Greenwashing: ${data.greenwashing?.transparency_score}/100 (${data.greenwashing?.risk_level})`)
+
+    return {
+      videoId,
+      hasTranscript: data.transcript?.success || false,
+      transcript: data.transcript?.transcript,
+      transcriptLanguage: data.transcript?.language,
+      quality: data.quality ? {
+        relevanceScore: data.quality.relevance_score,
+        qualityScore: data.quality.quality_score,
+        contentDepthScore: data.quality.content_depth_score,
+        combinedScore: data.quality.combined_score,
+        reason: data.quality.reason,
+        method: data.quality.method,
+        flags: data.quality.flags
+      } : null,
+      greenwashing: data.greenwashing ? {
+        transparencyScore: data.greenwashing.transparency_score,
+        riskLevel: data.greenwashing.risk_level,
+        flags: data.greenwashing.flags,
+        method: data.greenwashing.method
+      } : null
+    }
+  } catch (err) {
+    console.error('[Silenced] Backend analysis failed:', err.message)
+    throw err
+  }
+}
+
+/**
+ * Check if Python backend is running and healthy
+ */
+async function checkBackendHealth() {
+  try {
+    const response = await fetch(`${PYTHON_BACKEND_URL}/health`, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' }
+    })
+
+    if (!response.ok) {
+      return { available: false, error: `HTTP ${response.status}` }
+    }
+
+    const data = await response.json()
+    return {
+      available: data.status === 'healthy',
+      geminiAvailable: data.gemini_available,
+      youtubeApiAvailable: data.youtube_api_available,
+      timestamp: data.timestamp
+    }
+  } catch (err) {
+    return { available: false, error: err.message }
+  }
+}
+
+/**
+ * Quick cached check if backend is available - avoids repeated slow timeouts
+ * Returns true/false without waiting for full health check if recently checked
+ */
+async function isBackendAvailable() {
+  const now = Date.now()
+
+  // Use cached result if recent
+  if (backendHealthCache.healthy !== null && now - backendHealthCache.lastCheck < BACKEND_HEALTH_CHECK_INTERVAL) {
+    return backendHealthCache.healthy
+  }
+
+  // Quick check with short timeout
+  try {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 2000) // 2 second timeout
+
+    const response = await fetch(`${PYTHON_BACKEND_URL}/health`, {
+      method: 'GET',
+      signal: controller.signal
+    })
+
+    clearTimeout(timeoutId)
+
+    const healthy = response.ok
+    backendHealthCache = { healthy, lastCheck: now }
+    console.log(`[Silenced] Backend health check: ${healthy ? 'available' : 'unavailable'}`)
+    return healthy
+  } catch (err) {
+    backendHealthCache = { healthy: false, lastCheck: now }
+    console.log(`[Silenced] Backend health check failed: ${err.message}`)
+    return false
+  }
 }
 
 /**
@@ -821,24 +1060,10 @@ Respond with ONLY valid JSON in this exact format:
 Be strict - most random search results should score below 0.5.${hasTranscript ? ' Weight transcript content heavily - a good transcript can save a video with a clickbait title.' : ''}`
 
   try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.1, // Low temperature for consistent scoring
-          maxOutputTokens: 150
-        }
-      })
+    const text = await callGeminiAPI(prompt, {
+      temperature: 0.1,
+      maxOutputTokens: 150
     })
-
-    if (!response.ok) {
-      throw new Error(`Gemini API error: ${response.status}`)
-    }
-
-    const data = await response.json()
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text
 
     if (!text) return null
 
@@ -1052,27 +1277,36 @@ async function batchScoreVideoQuality(videos, searchQuery, useTranscript = false
 }
 
 /**
- * Two-pass quality scoring: quick scan all, then deep analyze top candidates
- * This saves API quota by only fetching transcripts for promising videos
+ * Two-pass quality scoring: quick scan all (heuristic), then Gemini analyze top candidates
+ * Gemini has better rate limits, so we can analyze more videos
  */
 async function twoPassQualityScoring(videos, searchQuery, topCandidateCount = 10) {
   console.log(`[Silenced] Two-pass scoring: ${videos.length} videos, will deep-analyze top ${topCandidateCount}`)
 
-  // PASS 1: Quick scoring without transcript for all videos
-  console.log(`[Silenced] Pass 1: Quick scoring ${videos.length} videos...`)
-  const quickScored = await batchScoreVideoQuality(videos, searchQuery, false)
+  // PASS 1: Quick scoring without transcript - limit to top 15 for speed
+  const videosToScore = videos.slice(0, 15) // Only score top 15 to speed up
+  console.log(`[Silenced] Pass 1: Quick scoring ${videosToScore.length} videos (limited from ${videos.length})...`)
+  const quickScored = await batchScoreVideoQuality(videosToScore, searchQuery, false)
 
-  // Sort by quick score
-  const sortedByQuickScore = [...quickScored].sort((a, b) => b.qualityScore - a.qualityScore)
+  // Add remaining videos with default scores (they'll be sorted lower)
+  const remainingVideos = videos.slice(15).map(v => ({
+    ...v,
+    qualityScore: 0.5, // Default score for uns scored videos
+    qualityDetails: { method: 'skipped', reason: 'Not scored for performance' }
+  }))
+
+  // Sort by quick score (include remaining videos with default scores)
+  const sortedByQuickScore = [...quickScored, ...remainingVideos].sort((a, b) => b.qualityScore - a.qualityScore)
 
   // Get top candidates for deep analysis
   const topCandidates = sortedByQuickScore.slice(0, topCandidateCount)
   const restOfVideos = sortedByQuickScore.slice(topCandidateCount)
 
-  console.log(`[Silenced] Pass 1 complete. Top candidate scores: ${topCandidates.slice(0, 3).map(v => v.qualityScore.toFixed(2)).join(', ')}`)
+  console.log(`[Silenced] Pass 1 complete. Top candidate scores: ${topCandidates.slice(0, 3).map(v => (v.qualityScore || 0).toFixed(2)).join(', ')}`)
 
-  // PASS 2: Deep scoring with transcript for top candidates (only if ML features enabled)
-  if (ENABLE_ML_FEATURES && GEMINI_API_KEY && topCandidates.length > 0) {
+  // PASS 2: Deep scoring with transcript for top candidates
+  // Always try transcript analysis - even if Gemini fails, heuristic can use transcripts
+  if (topCandidates.length > 0) {
     console.log(`[Silenced] Pass 2: Deep analyzing ${topCandidates.length} candidates with transcripts...`)
 
     const deepScored = await Promise.all(
@@ -1080,9 +1314,14 @@ async function twoPassQualityScoring(videos, searchQuery, topCandidateCount = 10
         try {
           const deepResult = await scoreVideoQuality(video, searchQuery, true) // true = use transcript
 
-          // Only update if deep score is valid and different
-          if (deepResult && deepResult.contentDepth !== null) {
-            console.log(`[Silenced] Deep scored "${video.title}": ${video.qualityScore.toFixed(2)} -> ${deepResult.score.toFixed(2)} (depth: ${deepResult.contentDepth.toFixed(2)})`)
+          // Update if deep score is valid (contentDepth can be null if no transcript found)
+          if (deepResult) {
+            const depthInfo = (deepResult.contentDepth !== null && typeof deepResult.contentDepth === 'number')
+              ? `depth: ${deepResult.contentDepth.toFixed(2)}`
+              : 'no transcript'
+            const oldScore = typeof video.qualityScore === 'number' ? video.qualityScore.toFixed(2) : 'N/A'
+            const newScore = typeof deepResult.score === 'number' ? deepResult.score.toFixed(2) : 'N/A'
+            console.log(`[Silenced] Deep scored "${video.title.substring(0, 30)}...": ${oldScore} -> ${newScore} (${depthInfo}, method: ${deepResult.method})`)
             return {
               ...video,
               qualityScore: deepResult.score,
@@ -1098,7 +1337,7 @@ async function twoPassQualityScoring(videos, searchQuery, topCandidateCount = 10
 
     // Combine deep-scored and rest, re-sort
     const allScored = [...deepScored, ...restOfVideos].sort((a, b) => b.qualityScore - a.qualityScore)
-    console.log(`[Silenced] Pass 2 complete. New top scores: ${allScored.slice(0, 3).map(v => v.qualityScore.toFixed(2)).join(', ')}`)
+    console.log(`[Silenced] Pass 2 complete. New top scores: ${allScored.slice(0, 3).map(v => (v.qualityScore || 0).toFixed(2)).join(', ')}`)
 
     return allScored
   }
@@ -1373,13 +1612,18 @@ function auditSustainability(video, transcript = '', channel = null) {
   const tags = (video.snippet?.tags || []).map(t => t.toLowerCase())
   const fullText = `${title} ${description} ${tags.join(' ')} ${transcript.toLowerCase()}`
 
-  // Check if sustainability-related
+  // Check if sustainability-related (lowered threshold from 2 to 1 for better detection)
   const matchedKeywords = SUSTAINABILITY_KEYWORDS.filter(kw => fullText.includes(kw))
-  const isSustainabilityTopic = matchedKeywords.length >= 2
+  const isSustainabilityTopic = matchedKeywords.length >= 1
+
+  console.log(`[Silenced] Sustainability check: found ${matchedKeywords.length} keywords:`, matchedKeywords)
 
   if (!isSustainabilityTopic) {
-    return { isSustainability: false, auditResult: null, detailedAnalysis: null }
+    console.log('[Silenced] Video is NOT sustainability-related')
+    return { isSustainability: false, auditResult: null, detailedAnalysis: null, reason: 'No sustainability keywords detected' }
   }
+
+  console.log('[Silenced] Video IS sustainability-related - running KPMG audit')
 
   // Detect signals
   const evidenceFound = EVIDENCE_SIGNALS.filter(term => fullText.includes(term))
@@ -1813,8 +2057,55 @@ async function analyzeVideo(videoId, transcript = '') {
     duration: video.contentDetails?.duration
   }, activities)
 
-  // Run sustainability audit (pass channel for detailed analysis)
+  // Run local sustainability audit (heuristic)
   const sustainabilityAudit = auditSustainability(video, transcript, channel)
+
+  // Try to enhance with backend AI-powered greenwashing detection
+  if (USE_PYTHON_BACKEND && PYTHON_BACKEND_URL && sustainabilityAudit.isSustainability) {
+    try {
+      console.log(`[Silenced] Using backend for AI greenwashing analysis: ${videoId}`)
+      const backendAnalysis = await analyzeWithBackend(
+        videoId,
+        video.snippet.title,
+        video.snippet.title // Use title as query for relevance
+      )
+
+      if (backendAnalysis?.greenwashing) {
+        // Merge AI-powered greenwashing analysis with local audit
+        sustainabilityAudit.greenwashingRisk = {
+          ...sustainabilityAudit.greenwashingRisk,
+          // Backend provides AI-analyzed flags with evidence
+          aiFlags: backendAnalysis.greenwashing.flags || [],
+          aiTransparencyScore: backendAnalysis.greenwashing.transparencyScore,
+          aiRiskLevel: backendAnalysis.greenwashing.riskLevel,
+          analysisMethod: backendAnalysis.greenwashing.method || 'backend-ai'
+        }
+
+        // Update overall credibility based on AI analysis
+        if (backendAnalysis.greenwashing.riskLevel === 'high') {
+          sustainabilityAudit.credibilityLevel = 'caution'
+        } else if (backendAnalysis.greenwashing.riskLevel === 'medium') {
+          sustainabilityAudit.credibilityLevel = 'review'
+        }
+
+        console.log(`[Silenced] Backend greenwashing analysis: ${backendAnalysis.greenwashing.riskLevel} risk, ${backendAnalysis.greenwashing.transparencyScore}/100 transparency`)
+      }
+
+      // Also store quality analysis from backend
+      if (backendAnalysis?.quality) {
+        sustainabilityAudit.contentQuality = {
+          relevanceScore: backendAnalysis.quality.relevanceScore,
+          qualityScore: backendAnalysis.quality.qualityScore,
+          contentDepthScore: backendAnalysis.quality.contentDepthScore,
+          combinedScore: backendAnalysis.quality.combinedScore,
+          reason: backendAnalysis.quality.reason,
+          method: backendAnalysis.quality.method
+        }
+      }
+    } catch (err) {
+      console.warn('[Silenced] Backend greenwashing analysis failed, using heuristic only:', err.message)
+    }
+  }
 
   return {
     video: {
@@ -1890,7 +2181,17 @@ async function runNoiseCancellation(query) {
     return subs >= MAX_SUBSCRIBER_THRESHOLD
   })
 
-  const silencedChannelIds = new Set(silencedVoices.map(c => c.id))
+  // FALLBACK: If no channels under 100K found, include channels under 500K as backup
+  let silencedChannelIds = new Set(silencedVoices.map(c => c.id))
+  if (silencedChannelIds.size === 0) {
+    console.warn(`[Silenced] No channels under ${MAX_SUBSCRIBER_THRESHOLD} subs found - falling back to channels under 500K`)
+    const fallbackVoices = channels.filter(ch => {
+      const subs = parseInt(ch.statistics?.subscriberCount || '0')
+      return subs < 500000 && subs >= MAX_SUBSCRIBER_THRESHOLD // Between 100K and 500K
+    })
+    silencedChannelIds = new Set(fallbackVoices.map(c => c.id))
+    console.log(`[Silenced] Found ${fallbackVoices.length} fallback channels (100K-500K subs)`)
+  }
 
   // Identify Rising Signals
   const risingSignals = silencedVoices.filter(ch => {
@@ -1916,6 +2217,7 @@ async function runNoiseCancellation(query) {
   }
 
   // Build unmuted videos with explainability
+  console.log(`[Silenced] Building unmuted videos - total videos: ${videos.length}, silenced channels: ${silencedChannelIds.size}`)
   const unmutedVideosPreQuality = videos
     .filter(v => silencedChannelIds.has(v.snippet.channelId))
     .map(v => {
@@ -1950,15 +2252,23 @@ async function runNoiseCancellation(query) {
       }
     })
 
+  console.log(`[Silenced] Built ${unmutedVideosPreQuality.length} unmuted videos before quality scoring`)
+
+  if (unmutedVideosPreQuality.length === 0) {
+    console.warn(`[Silenced] ⚠️ No silenced voices found for query "${query}" - all channels may be above ${MAX_SUBSCRIBER_THRESHOLD} subs threshold`)
+  }
+
   // === QUALITY SCORING: Two-pass scoring with transcript analysis for top candidates ===
+  // Deep analyze top 5 with transcripts for quality verification
   console.log(`[Silenced] Scoring ${unmutedVideosPreQuality.length} videos for quality...`)
-  const videosWithQuality = await twoPassQualityScoring(unmutedVideosPreQuality, query, 10) // Deep analyze top 10
+  const videosWithQuality = await twoPassQualityScoring(unmutedVideosPreQuality, query, 5) // Deep analyze top 5 with transcripts
 
   // Filter out low-quality videos
   let qualityFilteredVideos = videosWithQuality.filter(v => {
-    const passes = v.qualityScore >= MIN_VIDEO_QUALITY_SCORE
+    const passes = (v.qualityScore || 0) >= MIN_VIDEO_QUALITY_SCORE
     if (!passes) {
-      console.log(`[Silenced] Filtered out low-quality video: "${v.title}" (score: ${v.qualityScore.toFixed(2)})`)
+      const score = typeof v.qualityScore === 'number' ? v.qualityScore.toFixed(2) : 'N/A'
+      console.log(`[Silenced] Filtered out low-quality video: "${v.title}" (score: ${score})`)
     }
     return passes
   })
@@ -1983,7 +2293,7 @@ async function runNoiseCancellation(query) {
       if (v.subscriberCount < avgSubsInTopic * 0.3) {
         whySurfaced.push(`${Math.round((1 - v.subscriberCount / avgSubsInTopic) * 100)}% smaller than topic average`)
       }
-      if (v.engagementRatio > 1.5) {
+      if (v.engagementRatio && typeof v.engagementRatio === 'number' && v.engagementRatio > 1.5) {
         whySurfaced.push(`Strong engagement ratio (${v.engagementRatio.toFixed(1)}x views per subscriber)`)
       }
       if (v.qualityDetails?.contentDepth !== null && v.qualityDetails?.contentDepth >= 0.5) {
@@ -2011,6 +2321,25 @@ async function runNoiseCancellation(query) {
         surfaceMethod = 'quality_filtered_gemini'
       }
 
+      // Quick sustainability check for this video
+      const videoText = `${v.title} ${v.description || ''}`.toLowerCase()
+      const sustainabilityMatches = SUSTAINABILITY_KEYWORDS.filter(kw => videoText.includes(kw))
+      const isSustainabilityVideo = sustainabilityMatches.length >= 1
+      const hasGreenwashSignals = isSustainabilityVideo && GREENWASH_SIGNALS.some(sig => videoText.includes(sig))
+      const hasEvidenceSignals = isSustainabilityVideo && EVIDENCE_SIGNALS.some(sig => videoText.includes(sig))
+
+      // Calculate simple sustainability credibility
+      let sustainabilityCredibility = null
+      if (isSustainabilityVideo) {
+        if (hasEvidenceSignals && !hasGreenwashSignals) {
+          sustainabilityCredibility = 'high'
+        } else if (hasGreenwashSignals && !hasEvidenceSignals) {
+          sustainabilityCredibility = 'caution'
+        } else {
+          sustainabilityCredibility = 'moderate'
+        }
+      }
+
       return {
         videoId: v.videoId,
         title: v.title,
@@ -2027,6 +2356,10 @@ async function runNoiseCancellation(query) {
         qualityReason: v.qualityDetails?.reason,
         surfaceMethod,
         diversityNote: v.qualityDetails?.reason || 'Passed quality and relevance filter',
+        // KPMG Sustainability quick check
+        isSustainabilityVideo,
+        sustainabilityCredibility,
+        sustainabilityKeywords: sustainabilityMatches.slice(0, 3),
         // Metrics for bias receipt generation
         _receiptParams: {
           videoId: v.videoId,
@@ -2050,40 +2383,33 @@ async function runNoiseCancellation(query) {
       if (!a.isRisingSignal && b.isRisingSignal) return 1
 
       // Then sort by combined quality + engagement score
-      const aScore = (a.qualityScore * 0.7) + (Math.min(a.engagementRatio, 3) / 3 * 0.3)
-      const bScore = (b.qualityScore * 0.7) + (Math.min(b.engagementRatio, 3) / 3 * 0.3)
+      const aEngagement = typeof a.engagementRatio === 'number' ? Math.min(a.engagementRatio, 3) / 3 : 0
+      const bEngagement = typeof b.engagementRatio === 'number' ? Math.min(b.engagementRatio, 3) / 3 : 0
+      const aScore = (a.qualityScore || 0) * 0.7 + aEngagement * 0.3
+      const bScore = (b.qualityScore || 0) * 0.7 + bEngagement * 0.3
       return bScore - aScore
     })
 
-  // Generate bias receipts for top videos (async) with error handling
-  let unmutedVideos = []
-  try {
-    unmutedVideos = await Promise.all(
-      unmutedVideosRaw.slice(0, 10).map(async (video) => {
-        try {
-          const biasReceipt = await generateBiasReceipt(video._receiptParams)
-          // Remove internal params, add receipt
-          const { _receiptParams, ...cleanVideo } = video
-          return {
-            ...cleanVideo,
-            biasReceipt // Optional field as per spec
-          }
-        } catch (err) {
-          console.warn('[Silenced] Failed to generate bias receipt for video:', video.videoId, err)
-          // Return video without receipt on error
-          const { _receiptParams, ...cleanVideo } = video
-          return cleanVideo
-        }
-      })
-    )
-  } catch (err) {
-    console.error('[Silenced] Failed to generate bias receipts:', err)
-    // Fallback: return videos without receipts
-    unmutedVideos = unmutedVideosRaw.slice(0, 10).map(video => {
+  // Return videos immediately (fast path) - generate bias receipts in background
+  // This allows the UI to show videos quickly while receipts load asynchronously
+  // Generate bias receipts for top 5 videos (awaited so they're ready for display)
+  const unmutedVideos = await Promise.all(
+    unmutedVideosRaw.slice(0, 10).map(async (video, index) => {
       const { _receiptParams, ...cleanVideo } = video
+
+      // Generate bias receipt for top 5 videos
+      if (index < 5 && _receiptParams) {
+        try {
+          const biasReceipt = await generateBiasReceipt(_receiptParams)
+          cleanVideo.biasReceipt = biasReceipt
+        } catch (err) {
+          console.debug('[Silenced] Bias receipt generation failed:', video.videoId)
+        }
+      }
+
       return cleanVideo
     })
-  }
+  )
 
   console.log(`[Silenced] Generated ${unmutedVideos.length} unmuted videos from ${unmutedVideosRaw.length} raw results`)
   console.log(`[Silenced] Total videos searched: ${videos.length}, Channels: ${channels.length}`)
@@ -2150,6 +2476,30 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'analyze') {
     analyzeVideo(request.videoId, request.transcript)
       .then(result => sendResponse({ success: true, data: result }))
+      .catch(err => sendResponse({ success: false, error: err.message }))
+    return true
+  }
+
+  // Backend-powered analysis (uses Python server for transcripts + Gemini)
+  if (request.action === 'analyzeWithBackend') {
+    analyzeWithBackend(request.videoId, request.title, request.query)
+      .then(result => sendResponse({ success: true, data: result }))
+      .catch(err => sendResponse({ success: false, error: err.message }))
+    return true
+  }
+
+  // Fetch transcript from backend (no CORS issues)
+  if (request.action === 'fetchTranscript') {
+    fetchTranscriptFromBackend(request.videoId)
+      .then(transcript => sendResponse({ success: true, transcript }))
+      .catch(err => sendResponse({ success: false, error: err.message }))
+    return true
+  }
+
+  // Check backend health
+  if (request.action === 'checkBackendHealth') {
+    checkBackendHealth()
+      .then(health => sendResponse({ success: true, health }))
       .catch(err => sendResponse({ success: false, error: err.message }))
     return true
   }

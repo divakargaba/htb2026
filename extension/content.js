@@ -73,7 +73,7 @@ function safeSendMessage(message, callback) {
           }
           console.warn('[Silenced] Runtime error:', lastError.message)
         }
-        
+
         if (callback) callback(response)
         resolve(response)
       })
@@ -94,7 +94,7 @@ function safeSendMessage(message, callback) {
 // ===============================================
 function injectBiasReceiptStyles() {
   if (document.getElementById('silenced-bias-receipt-styles')) return
-  
+
   const style = document.createElement('style')
   style.id = 'silenced-bias-receipt-styles'
   style.textContent = `
@@ -253,7 +253,7 @@ function injectBiasReceiptStyles() {
 
 function injectThumbnailStyles() {
   if (document.getElementById('silenced-thumbnail-styles')) return
-  
+
   const style = document.createElement('style')
   style.id = 'silenced-thumbnail-styles'
   style.textContent = `
@@ -359,11 +359,11 @@ async function getChannelSubs(channelHandle) {
   if (channelSubCache.has(channelHandle)) {
     return channelSubCache.get(channelHandle)
   }
-  
+
   // Request from background script
-  return safeSendMessage({ 
-    action: 'getChannelByHandle', 
-    handle: channelHandle 
+  return safeSendMessage({
+    action: 'getChannelByHandle',
+    handle: channelHandle
   }).then(response => {
     const subs = response?.subscriberCount || 0
     channelSubCache.set(channelHandle, subs)
@@ -373,7 +373,7 @@ async function getChannelSubs(channelHandle) {
 
 async function labelVideoThumbnails() {
   if (!noiseCancellationActive) return
-  
+
   // Find all video renderers
   const videoCards = document.querySelectorAll(`
     ytd-rich-item-renderer,
@@ -381,23 +381,23 @@ async function labelVideoThumbnails() {
     ytd-compact-video-renderer,
     ytd-grid-video-renderer
   `)
-  
+
   for (const card of videoCards) {
     // Skip if already processed
     const videoId = card.querySelector('a#thumbnail')?.href?.match(/[?&]v=([^&]+)/)?.[1]
     if (!videoId || processedThumbnails.has(videoId)) continue
     processedThumbnails.add(videoId)
-    
+
     // Get channel info
     const channelLink = card.querySelector('a.yt-formatted-string[href^="/@"], ytd-channel-name a, a[href^="/@"]')
     const channelHandle = channelLink?.getAttribute('href')?.replace('/@', '') || ''
-    
+
     // Get subscriber count
     let subs = 0
     if (channelHandle) {
       subs = await getChannelSubs(channelHandle)
     }
-    
+
     // Determine exposure tier
     let noiseLevel = 'unknown'
     let badgeText = ''
@@ -415,22 +415,22 @@ async function labelVideoThumbnails() {
       noiseLevel = 'silenced'
       badgeText = 'SILENCED'
     }
-    
+
     // Add badge to thumbnail
     const thumbnail = card.querySelector('#thumbnail, ytd-thumbnail')
     if (thumbnail && badgeText) {
       // Make thumbnail position relative for badge positioning
       thumbnail.style.position = 'relative'
-      
+
       // Remove existing badge if any
       thumbnail.querySelector('.silenced-badge')?.remove()
-      
+
       // Create and add badge
       const badge = document.createElement('div')
       badge.className = `silenced-badge ${noiseLevel}`
       badge.textContent = badgeText
       thumbnail.appendChild(badge)
-      
+
       // Apply dimming for noisy videos
       if (noiseLevel === 'noise' || noiseLevel === 'amplified') {
         card.classList.add('silenced-dimmed')
@@ -464,9 +464,9 @@ async function saveNoiseCancellationState(enabled) {
 async function updateStats(voicesUnmuted = 0, noiseMuted = 0) {
   stats.voicesUnmuted += voicesUnmuted
   stats.noiseMuted += noiseMuted
-  await chrome.storage.local.set({ 
+  await chrome.storage.local.set({
     discoveredCount: stats.voicesUnmuted,
-    hiddenCount: stats.noiseMuted 
+    hiddenCount: stats.noiseMuted
   })
 }
 
@@ -477,22 +477,22 @@ function createShadowContainer(id, hostElement) {
   const host = document.createElement('div')
   host.id = id
   host.setAttribute('data-silenced', 'true')
-  
+
   const shadow = host.attachShadow({ mode: 'open' })
-  
+
   // Inject isolated styles
   const style = document.createElement('style')
   style.textContent = getShadowStyles()
   shadow.appendChild(style)
-  
+
   const container = document.createElement('div')
   container.className = 'silenced-container'
   shadow.appendChild(container)
-  
+
   if (hostElement) {
     hostElement.insertBefore(host, hostElement.firstChild)
   }
-  
+
   return { host, shadow, container }
 }
 
@@ -709,6 +709,37 @@ function getShadowStyles() {
     .sustainability-section {
       border-bottom: 1px solid #262626;
     }
+    
+    .sustainability-section.sustainability-inactive {
+      padding: 10px 14px;
+      background: #0a0a0a;
+    }
+    
+    .sustainability-header-static {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    
+    .sustainability-title-muted {
+      font-size: 11px;
+      color: #4b5563;
+    }
+    
+    .sustainability-na-badge {
+      font-size: 9px;
+      font-weight: 600;
+      color: #6b7280;
+      background: #1f1f1f;
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+    
+    .sustainability-na-text {
+      font-size: 10px;
+      color: #4b5563;
+      margin-top: 4px;
+    }
 
     .sustainability-header-toggle {
       width: 100%;
@@ -767,6 +798,16 @@ function getShadowStyles() {
       margin-top: 8px;
       padding-top: 14px;
     }
+    
+    .audit-category-badge {
+      font-size: 10px;
+      color: #9ca3af;
+      background: #1a1a1a;
+      padding: 6px 10px;
+      border-radius: 4px;
+      margin-bottom: 12px;
+      border-left: 3px solid #059669;
+    }
 
     .audit-flags {
       display: flex;
@@ -803,7 +844,7 @@ function getShadowStyles() {
       padding: 12px;
       border: 1px solid #374151;
     }
-
+    
     .sustainability-card-header {
       display: flex;
       align-items: center;
@@ -889,7 +930,7 @@ function getShadowStyles() {
       border-radius: 3px;
       overflow: hidden;
     }
-
+    
     .verification-fill {
       height: 100%;
       background: linear-gradient(90deg, #10B981, #059669);
@@ -903,13 +944,13 @@ function getShadowStyles() {
       color: #10B981;
       text-align: center;
     }
-
+    
     .verification-stats {
       font-size: 11px;
       font-weight: 600;
       color: #F9FAFB;
     }
-
+    
     .claims-preview {
       display: flex;
       flex-direction: column;
@@ -955,6 +996,101 @@ function getShadowStyles() {
       border-left: 2px solid #10B981;
     }
 
+    /* === AI GREENWASHING ANALYSIS === */
+    .ai-greenwashing-analysis {
+      margin-top: 12px;
+      padding: 12px;
+      background: #0d1117;
+      border-radius: 6px;
+      border: 1px solid #30363d;
+    }
+    
+    .ai-analysis-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    
+    .ai-badge {
+      font-size: 10px;
+      font-weight: 600;
+      color: #58a6ff;
+      background: #58a6ff20;
+      padding: 3px 8px;
+      border-radius: 4px;
+    }
+    
+    .ai-transparency {
+      font-size: 10px;
+      color: #8b949e;
+    }
+    
+    .ai-flags-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    
+    .ai-flags-list.warnings {
+      margin-bottom: 8px;
+    }
+    
+    .ai-flag {
+      display: flex;
+      gap: 8px;
+      padding: 8px;
+      border-radius: 6px;
+      align-items: flex-start;
+    }
+    
+    .ai-flag.warning {
+      background: #f8514920;
+      border-left: 3px solid #f85149;
+    }
+    
+    .ai-flag.positive {
+      background: #3fb95020;
+      border-left: 3px solid #3fb950;
+    }
+    
+    .flag-type {
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+    
+    .flag-content {
+      flex: 1;
+      min-width: 0;
+    }
+    
+    .flag-text {
+      font-size: 11px;
+      color: #c9d1d9;
+      line-height: 1.4;
+    }
+    
+    .flag-evidence {
+      font-size: 9px;
+      color: #8b949e;
+      margin-top: 6px;
+      padding: 6px 8px;
+      background: #161b22;
+      border-radius: 4px;
+      border-left: 2px solid #30363d;
+      font-style: italic;
+    }
+    
+    .ai-method-note {
+      font-size: 9px;
+      color: #6e7681;
+      margin-top: 8px;
+      text-align: right;
+    }
+
     .claim-issue {
       font-size: 9px;
       color: #EF4444;
@@ -992,7 +1128,7 @@ function getShadowStyles() {
       text-transform: uppercase;
       letter-spacing: 0.5px;
     }
-
+    
     .recommendation {
       font-size: 11px;
       color: #D1D5DB;
@@ -1205,11 +1341,11 @@ function getShadowStyles() {
       display: none;
       padding: 8px 0 4px;
     }
-
+    
     .bias-receipt.open .receipt-content {
       display: block;
     }
-
+    
     .receipt-section {
       margin-bottom: 8px;
     }
@@ -1436,24 +1572,26 @@ function createDashboard(data) {
       `<div class="audit-flag ${flag.type}"><span class="flag-dot ${flag.type}"></span>${esc(flag.text)}</div>`
     ).join('')
 
+    console.log('[Silenced] Rendering sustainability audit UI for KPMG challenge')
+
     // Build detailed analysis HTML if available
     let detailedHtml = ''
     if (detailed) {
       const { greenwashingRisk, claimVerification, sourceCredibility } = detailed
-      
+
       // Greenwashing Risk Card
-      const riskColor = greenwashingRisk.level === 'HIGH' ? '#EF4444' : 
-                       greenwashingRisk.level === 'MODERATE' ? '#F59E0B' : '#10B981'
-      const riskIssuesHtml = greenwashingRisk.issues.map(issue => 
+      const riskColor = greenwashingRisk.level === 'HIGH' ? '#EF4444' :
+        greenwashingRisk.level === 'MODERATE' ? '#F59E0B' : '#10B981'
+      const riskIssuesHtml = greenwashingRisk.issues.map(issue =>
         `<li class="sustainability-issue">${esc(issue)}</li>`
       ).join('')
-      const riskPositivesHtml = greenwashingRisk.positives.map(pos => 
+      const riskPositivesHtml = greenwashingRisk.positives.map(pos =>
         `<li class="sustainability-positive">${esc(pos)}</li>`
       ).join('')
-      
+
       // Claim Verification
-      const verificationRate = claimVerification.totalClaims > 0 
-        ? Math.round((claimVerification.verifiedClaims / claimVerification.totalClaims) * 100) 
+      const verificationRate = claimVerification.totalClaims > 0
+        ? Math.round((claimVerification.verifiedClaims / claimVerification.totalClaims) * 100)
         : 0
       const claimsHtml = claimVerification.claims.slice(0, 3).map(claim => `
         <div class="claim-item ${claim.verified ? 'verified' : 'unverified'}">
@@ -1463,16 +1601,55 @@ function createDashboard(data) {
           ${claim.issue ? `<div class="claim-issue">${esc(claim.issue)}</div>` : ''}
         </div>
       `).join('')
-      
+
       // Source Credibility
-      const sourceIcon = sourceCredibility.type === 'CORPORATE' ? '🏢' : 
-                        sourceCredibility.type === 'INDEPENDENT' ? '🔬' : 
-                        sourceCredibility.type === 'COMMUNITY' ? '🌍' : '❓'
+      const sourceIcon = sourceCredibility.type === 'CORPORATE' ? '🏢' :
+        sourceCredibility.type === 'INDEPENDENT' ? '🔬' :
+          sourceCredibility.type === 'COMMUNITY' ? '🌍' : '❓'
       const credibilityColor = sourceCredibility.credibilityLevel === 'HIGH' ? '#10B981' :
-                               sourceCredibility.credibilityLevel === 'MODERATE' ? '#F59E0B' : '#EF4444'
-      const conflictsHtml = sourceCredibility.conflicts.map(conflict => 
+        sourceCredibility.credibilityLevel === 'MODERATE' ? '#F59E0B' : '#EF4444'
+      const conflictsHtml = sourceCredibility.conflicts.map(conflict =>
         `<li class="conflict-item">${esc(conflict)}</li>`
       ).join('')
+
+      // AI-powered greenwashing flags (from backend)
+      let aiAnalysisHtml = ''
+      if (greenwashingRisk.aiFlags && greenwashingRisk.aiFlags.length > 0) {
+        const aiRiskColor = greenwashingRisk.aiRiskLevel === 'high' ? '#EF4444' :
+          greenwashingRisk.aiRiskLevel === 'medium' ? '#F59E0B' : '#10B981'
+
+        const aiWarnings = greenwashingRisk.aiFlags.filter(f => f.type === 'warning').map(f => `
+          <li class="ai-flag warning">
+            <span class="flag-type">⚠️</span>
+            <div class="flag-content">
+              <div class="flag-text">${esc(f.text)}</div>
+              ${f.evidence ? `<div class="flag-evidence">"${esc(f.evidence.substring(0, 150))}..."</div>` : ''}
+            </div>
+          </li>
+        `).join('')
+
+        const aiPositives = greenwashingRisk.aiFlags.filter(f => f.type === 'positive').map(f => `
+          <li class="ai-flag positive">
+            <span class="flag-type">✓</span>
+            <div class="flag-content">
+              <div class="flag-text">${esc(f.text)}</div>
+              ${f.evidence ? `<div class="flag-evidence">"${esc(f.evidence.substring(0, 150))}..."</div>` : ''}
+            </div>
+          </li>
+        `).join('')
+
+        aiAnalysisHtml = `
+          <div class="ai-greenwashing-analysis">
+            <div class="ai-analysis-header">
+              <span class="ai-badge">🤖 AI Analysis</span>
+              <span class="ai-transparency">Transparency: ${greenwashingRisk.aiTransparencyScore}/100</span>
+            </div>
+            ${aiWarnings ? `<ul class="ai-flags-list warnings">${aiWarnings}</ul>` : ''}
+            ${aiPositives ? `<ul class="ai-flags-list positives">${aiPositives}</ul>` : ''}
+            <div class="ai-method-note">Analysis: ${greenwashingRisk.analysisMethod || 'gemini'}</div>
+          </div>
+        `
+      }
 
       detailedHtml = `
         <div class="sustainability-detailed" id="sustainability-detailed">
@@ -1491,6 +1668,7 @@ function createDashboard(data) {
               </div>
               ${riskIssuesHtml ? `<ul class="sustainability-list">${riskIssuesHtml}</ul>` : ''}
               ${riskPositivesHtml ? `<ul class="sustainability-list positives">${riskPositivesHtml}</ul>` : ''}
+              ${aiAnalysisHtml}
             </div>
           </div>
 
@@ -1529,33 +1707,45 @@ function createDashboard(data) {
               <p class="recommendation">${esc(sourceCredibility.recommendation)}</p>
               ${conflictsHtml ? `<ul class="conflicts-list">${conflictsHtml}</ul>` : ''}
             </div>
-          </div>
         </div>
-      `
+      </div>
+    `
     }
 
     sustainabilityHtml = `
       <div class="sustainability-section">
-        <button class="sustainability-header-toggle" id="sustainability-toggle" aria-expanded="false">
+        <button class="sustainability-header-toggle" id="sustainability-toggle" aria-expanded="true">
           <div class="sustainability-header">
-            <span class="sustainability-title">🌍 Sustainability Analysis</span>
+            <span class="sustainability-title">🌍 KPMG Sustainability Audit</span>
             <span class="transparency-score ${audit.tier}">${audit.transparencyScore}/100</span>
           </div>
           <span class="sustainability-arrow">▼</span>
         </button>
-        <div class="sustainability-content" id="sustainability-content" style="display: none;">
+        <div class="sustainability-content" id="sustainability-content" style="display: block;">
+          <div class="audit-category-badge">📋 Category: ${esc(audit.category || 'General')}</div>
           ${flagsHtml ? `<div class="audit-flags">${flagsHtml}</div>` : ''}
           ${detailedHtml}
         </div>
       </div>
     `
+  } else {
+    // Show a minimal indicator that this isn't sustainability content
+    sustainabilityHtml = `
+      <div class="sustainability-section sustainability-inactive">
+        <div class="sustainability-header-static">
+          <span class="sustainability-title-muted">🌍 Sustainability Audit</span>
+          <span class="sustainability-na-badge">N/A</span>
+        </div>
+        <div class="sustainability-na-text">Not sustainability-related content</div>
+      </div>
+    `
   }
-  
+
   // Build explanation list
   const explainHtml = explainReasons.length > 0
     ? `<ul class="explain-list">${explainReasons.map(r => `<li>${esc(r)}</li>`).join('')}</ul>`
     : `<p>${isAdvantaged ? 'This channel has significant platform advantage.' : 'This creator has limited algorithmic visibility.'}</p>`
-  
+
   return `
     <div class="silenced-panel">
       <!-- Header -->
@@ -1564,14 +1754,14 @@ function createDashboard(data) {
           <span class="brand-name">silenced</span>
           </div>
         <div class="header-tier ${tierClass}">${tier.label}</div>
-      </div>
-      
+        </div>
+        
       <!-- Score Section -->
           <div class="score-section">
         <div class="score-row">
           ${channel?.thumbnail
-            ? `<img class="channel-avatar" src="${channel.thumbnail}" alt="">`
-            : '<div class="channel-avatar"></div>'}
+      ? `<img class="channel-avatar" src="${channel.thumbnail}" alt="">`
+      : '<div class="channel-avatar"></div>'}
           <div class="channel-info">
             <div class="channel-name">${esc(video?.channel || 'Unknown')}</div>
             <div class="channel-meta">${fmt(subs)} subscribers</div>
@@ -1636,39 +1826,39 @@ function formatDiversityMethod(method) {
   if (!method || method === 'unknown') {
     return 'exposure-adjusted ranking'
   }
-  
+
   const methodLower = method.toLowerCase()
-  
+
   // Check for transcript-analyzed Gemini (best quality)
-  if (methodLower.includes('transcript_analyzed_gemini')) {
+  if (methodLower.includes('gemini-transcript') || methodLower.includes('transcript_analyzed_gemini')) {
     return '🎯 AI transcript analysis + exposure ranking'
   }
-  
+
   // Check for transcript-analyzed heuristic
   if (methodLower.includes('transcript_analyzed_heuristic') || methodLower.includes('heuristic-transcript')) {
     return '🎯 transcript verified + exposure ranking'
   }
-  
+
   // Check for Gemini quality filtering (no transcript)
   if (methodLower.includes('quality_filtered_gemini') || methodLower.includes('gemini')) {
     return 'AI quality filter + exposure ranking'
   }
-  
+
   // Check for heuristic quality filtering
   if (methodLower.includes('quality_filtered_heuristic') || methodLower.includes('quality_filtered')) {
     return 'quality filter + exposure ranking'
   }
-  
+
   // Check for ML diversification methods
   if (methodLower.includes('greedy_cosine') || methodLower.includes('cosine') || methodLower.includes('embedding')) {
     return 'exposure-adjusted ranking + ML diversification'
   }
-  
+
   // Check for fallback
   if (methodLower.includes('fallback') || methodLower.includes('heuristic')) {
     return 'exposure-adjusted ranking (fallback)'
   }
-  
+
   // Default: exposure-adjusted ranking
   return 'exposure-adjusted ranking'
 }
@@ -1678,7 +1868,7 @@ function renderImpactSnapshot(auditMetrics) {
     return `
       <div class="impact-snapshot">
         <div class="impact-snapshot-title">Impact Snapshot</div>
-        <div class="impact-unavailable">Metrics unavailable</div>
+        <div class="impact-unavailable">Enable "Surface Under-represented Creators" above to see metrics</div>
           </div>
     `
   }
@@ -1710,7 +1900,7 @@ function renderImpactSnapshot(auditMetrics) {
       </div>
     `
   }
-  
+
   // Format transcript analysis display
   let transcriptHtml = ''
   if (transcriptAnalyzed > 0) {
@@ -1780,7 +1970,7 @@ function renderImpactSnapshot(auditMetrics) {
 function generateWaveform(score, isNoisy) {
   const barCount = 20
   const bars = []
-  
+
   for (let i = 0; i < barCount; i++) {
     // Create a wave pattern that responds to the score
     const position = i / barCount
@@ -1788,21 +1978,21 @@ function generateWaveform(score, isNoisy) {
     const noiseVariance = (Math.random() * 0.3 + 0.7)
     const scoreMultiplier = 0.3 + (score / 100) * 0.7
     const height = Math.round(baseHeight * noiseVariance * scoreMultiplier * 100)
-    
+
     // Color based on score - gradient from green (quiet) to red (noisy)
     const hue = 120 - (score * 1.2) // 120 = green, 0 = red
     const saturation = 70 + (score * 0.3)
     const lightness = 45 + (Math.random() * 10)
     const color = `hsl(${Math.max(0, hue)}, ${saturation}%, ${lightness}%)`
-    
+
     const isActive = score > 50 && i % 3 === 0
-    
+
     bars.push(`<div class="waveform-bar ${isActive ? 'active' : ''}" 
                    style="height: ${Math.max(8, height * 0.6)}px; 
                           background: ${color};
                           animation-delay: ${i * 0.05}s"></div>`)
   }
-  
+
   return bars.join('')
 }
 
@@ -1814,20 +2004,20 @@ let currentAnalysisData = null // Store for silence report
 function injectDashboard(data) {
   const sidebar = document.querySelector('#secondary-inner') || document.querySelector('#secondary')
   if (!sidebar) return false
-  
+
   // Store data for silence report
   currentAnalysisData = data
-  
+
   // Remove existing
   document.querySelector('#silenced-shadow-host')?.remove()
-  
+
   // Create Shadow DOM container
   const { host, shadow, container } = createShadowContainer('silenced-shadow-host', sidebar)
   shadowHost = host
-  
+
   // Insert dashboard content
   container.innerHTML = createDashboard(data)
-  
+
   // Attach event listeners inside shadow DOM
   const noiseCancelToggle = shadow.getElementById('noise-cancel-toggle')
   const refreshBtn = shadow.getElementById('refresh-btn')
@@ -1835,7 +2025,7 @@ function injectDashboard(data) {
   const impactContainer = shadow.getElementById('impact-snapshot-container')
   const sustainabilityToggle = shadow.getElementById('sustainability-toggle')
   const sustainabilityContent = shadow.getElementById('sustainability-content')
-  
+
   // Sustainability Toggle
   sustainabilityToggle?.addEventListener('click', () => {
     const isExpanded = sustainabilityToggle.getAttribute('aria-expanded') === 'true'
@@ -1845,14 +2035,14 @@ function injectDashboard(data) {
       sustainabilityContent.style.display = newState ? 'block' : 'none'
     }
   })
-  
+
   // Noise Cancellation Toggle
   noiseCancelToggle?.addEventListener('click', () => {
     window.silencedToggleNoiseCancellation()
     const switchEl = noiseCancelToggle.querySelector('.toggle-switch')
     switchEl?.classList.toggle('on', noiseCancellationActive)
     noiseCancelToggle.classList.toggle('active', noiseCancellationActive)
-    
+
     // Update toggle text
     const title = noiseCancelToggle.querySelector('.toggle-title')
     const desc = noiseCancelToggle.querySelector('.toggle-desc')
@@ -1868,7 +2058,7 @@ function injectDashboard(data) {
     const switchEl = auditToggle.querySelector('.audit-switch')
     switchEl?.classList.toggle('on', auditModeActive)
     auditToggle.classList.toggle('active', auditModeActive)
-    
+
     // Update impact snapshot
     if (impactContainer) {
       if (auditModeActive) {
@@ -1877,19 +2067,19 @@ function injectDashboard(data) {
         impactContainer.innerHTML = ''
       }
     }
-    
+
     // Re-inject unmuted voices to update audit info display
     if (noiseCancellationActive && discoveryCache) {
       injectUnmutedVoices()
     }
   })
-  
+
   refreshBtn?.addEventListener('click', () => {
     currentVideoId = null
     panelInjected = false
     run()
   })
-  
+
   panelInjected = true
   return true
 }
@@ -1902,7 +2092,7 @@ function showSilenceReport(shadow, data) {
   const score = noiseAnalysis?.totalScore || 0
   const voicesSilenced = noiseAnalysis?.voicesSilenced || { count: 0, breakdown: {} }
   const isNoisy = score > 50
-  
+
   // Create modal HTML
   const modalHtml = `
     <div class="silence-report-modal" id="silence-report-modal" role="dialog" aria-modal="true" aria-labelledby="report-title">
@@ -2015,28 +2205,28 @@ function showSilenceReport(shadow, data) {
       </div>
     </div>
   `
-  
+
   // Add modal to shadow DOM
   const modalContainer = document.createElement('div')
   modalContainer.innerHTML = modalHtml
   shadow.appendChild(modalContainer.firstElementChild)
-  
+
   // Get modal elements
   const modal = shadow.getElementById('silence-report-modal')
   const closeBtn = shadow.getElementById('report-close')
   const reportNoiseToggle = shadow.getElementById('report-noise-toggle')
-  
+
   // Close modal handlers
   const closeModal = () => {
     modal?.remove()
     silenceReportOpen = false
   }
-  
+
   closeBtn?.addEventListener('click', closeModal)
   modal?.addEventListener('click', (e) => {
     if (e.target === modal) closeModal()
   })
-  
+
   // Escape key to close
   const escHandler = (e) => {
     if (e.key === 'Escape') {
@@ -2045,21 +2235,21 @@ function showSilenceReport(shadow, data) {
     }
   }
   document.addEventListener('keydown', escHandler)
-  
+
   // Noise toggle in report
   reportNoiseToggle?.addEventListener('click', () => {
     window.silencedToggleNoiseCancellation()
     const switchEl = reportNoiseToggle.querySelector('.toggle-switch')
     switchEl?.classList.toggle('active', noiseCancellationActive)
     reportNoiseToggle.classList.toggle('active', noiseCancellationActive)
-    
+
     // Also update main toggle
     const mainToggle = shadow.getElementById('noise-cancel-toggle')
     const mainSwitch = mainToggle?.querySelector('.toggle-switch')
     mainSwitch?.classList.toggle('active', noiseCancellationActive)
     mainToggle?.classList.toggle('active', noiseCancellationActive)
   })
-  
+
   silenceReportOpen = true
 }
 
@@ -2070,13 +2260,18 @@ async function runNoiseCancellation(query) {
   if (!query) {
     query = extractCurrentQuery()
   }
-  
+
   console.log('[Silenced] 🎧 Activating noise cancellation for:', query)
-  
+
   const response = await safeSendMessage({ action: 'cancelNoise', query })
   if (response?.success) {
     discoveryCache = response.data
     console.log('[Silenced] ✓ Noise cancellation complete:', response.data)
+    console.log('[Silenced] Response has unmutedVideos:', Array.isArray(response.data?.unmutedVideos))
+    console.log('[Silenced] Unmuted videos count:', response.data?.unmutedVideos?.length || 0)
+    if (response.data?.unmutedVideos?.length === 0) {
+      console.warn('[Silenced] ⚠️ No unmuted videos in response - all may have been filtered or none found')
+    }
     return response.data
   } else {
     console.error('[Silenced] ✗ Noise cancellation failed:', response?.error)
@@ -2088,27 +2283,66 @@ function extractCurrentQuery() {
   if (isSearchPage()) {
     return new URLSearchParams(window.location.search).get('search_query') || ''
   }
-  
+
   if (isWatchPage()) {
-    const title = document.querySelector('h1.ytd-video-primary-info-renderer, h1.ytd-watch-metadata, yt-formatted-string.ytd-watch-metadata')?.textContent
-    return title?.split(/[-|:]/).slice(0, 2).join(' ').trim() || ''
+    // Try multiple selectors for video title (YouTube changes DOM frequently)
+    const titleSelectors = [
+      'h1.ytd-video-primary-info-renderer',
+      'h1.ytd-watch-metadata',
+      'yt-formatted-string.ytd-watch-metadata',
+      '#title h1',
+      '#title yt-formatted-string',
+      'h1.title',
+      '#above-the-fold #title yt-formatted-string',
+      'ytd-watch-metadata h1 yt-formatted-string',
+      '#info-contents h1',
+      '[itemprop="name"]'
+    ]
+
+    let title = null
+    for (const selector of titleSelectors) {
+      const el = document.querySelector(selector)
+      if (el?.textContent?.trim()) {
+        title = el.textContent.trim()
+        console.log(`[Silenced] Found video title using selector: ${selector}`)
+        break
+      }
+    }
+
+    if (!title) {
+      // Fallback: try to get from page title
+      const pageTitle = document.title.replace(' - YouTube', '').trim()
+      if (pageTitle && pageTitle !== 'YouTube') {
+        title = pageTitle
+        console.log('[Silenced] Using page title as fallback')
+      }
+    }
+
+    if (title) {
+      // Extract meaningful keywords from title
+      const query = title.split(/[-|:•]/).slice(0, 2).join(' ').trim()
+      console.log(`[Silenced] Extracted query from title: "${query}"`)
+      return query
+    }
   }
-  
+
+  // Default fallback
+  console.log('[Silenced] Using default query (no title found)')
   return 'sustainability climate environment'
 }
 
 // Renamed and enhanced toggle function
-window.silencedToggleNoiseCancellation = async function() {
+window.silencedToggleNoiseCancellation = async function () {
   noiseCancellationActive = !noiseCancellationActive
   await saveNoiseCancellationState(noiseCancellationActive)
-  
+
   // Update toggle UI if exists in shadow DOM
   if (shadowHost) {
     const toggle = shadowHost.shadowRoot?.querySelector('#noise-cancel-toggle')
     const switchEl = toggle?.querySelector('.toggle-switch')
     switchEl?.classList.toggle('on', noiseCancellationActive)
     toggle?.classList.toggle('active', noiseCancellationActive)
-    
+
     // Update toggle text
     const title = toggle?.querySelector('.toggle-title')
     const desc = toggle?.querySelector('.toggle-desc')
@@ -2117,7 +2351,7 @@ window.silencedToggleNoiseCancellation = async function() {
     if (desc) desc.textContent = noiseCancellationActive ? 'Showing hidden voices below ↓' : 'Reveal smaller creators on this topic'
     if (icon) icon.textContent = noiseCancellationActive ? '🎧' : '📢'
   }
-  
+
   // Update floating toggle if exists
   const floatingToggle = document.getElementById('silenced-noise-toggle')
   if (floatingToggle) {
@@ -2125,26 +2359,26 @@ window.silencedToggleNoiseCancellation = async function() {
     const statusEl = floatingToggle.querySelector('.toggle-status')
     if (statusEl) statusEl.textContent = noiseCancellationActive ? 'ACTIVE' : 'OFF'
   }
-  
+
   if (noiseCancellationActive) {
     const query = extractCurrentQuery()
     await runNoiseCancellation(query)
-    
+
     // Mute noisy videos in sidebar
     muteNoisyVideos()
-    
+
     // Inject unmuted alternatives
     injectUnmutedVoices()
-    
+
     // Setup observer
     setupNoiseCancellationObserver()
-    
+
     // Label thumbnails on homepage/search
     if (!isWatchPage()) {
       injectThumbnailStyles()
       labelVideoThumbnails()
     }
-    
+
     // Update stats
     if (discoveryCache) {
       await updateStats(discoveryCache.unmutedVideos?.length || 0, discoveryCache.channelsToMute?.length || 0)
@@ -2155,40 +2389,40 @@ window.silencedToggleNoiseCancellation = async function() {
       el.style.display = ''
       el.removeAttribute('data-silenced-muted')
     })
-    
+
     // Remove injected unmuted cards
     document.querySelectorAll('.silenced-unmuted-container').forEach(el => el.remove())
-    
+
     // Clear thumbnail labels
     clearThumbnailLabels()
-    
+
     if (discoveryObserver) {
       discoveryObserver.disconnect()
       discoveryObserver = null
     }
   }
-  
+
   console.log('[Silenced] 🎧 Noise Cancellation:', noiseCancellationActive ? 'ACTIVE' : 'OFF')
 }
 
 // Backward compatibility alias
 window.silencedToggleDiscovery = window.silencedToggleNoiseCancellation
-  
+
 // Mute noisy videos in sidebar (>100K subs)
 function muteNoisyVideos() {
   const noisyIds = new Set(discoveryCache?.noisyChannelIds || discoveryCache?.monopolyChannelIds || [])
   if (noisyIds.size === 0) return
-  
+
   // Target sidebar recommendations
   const sidebarVideos = document.querySelectorAll('ytd-compact-video-renderer, ytd-watch-next-secondary-results-renderer ytd-item-section-renderer')
-  
+
   let mutedCount = 0
   sidebarVideos.forEach(video => {
     const channelLink = video.querySelector('a.ytd-channel-name, a[href^="/@"], a[href^="/channel/"]')
     if (channelLink) {
       const href = channelLink.getAttribute('href') || ''
       const channelId = href.match(/\/channel\/([^/]+)/)?.[1]
-      
+
       if (channelId && noisyIds.has(channelId)) {
         video.style.display = 'none'
         video.setAttribute('data-silenced-muted', 'noisy')
@@ -2196,7 +2430,7 @@ function muteNoisyVideos() {
       }
     }
   })
-  
+
   // Also mute first 3 sidebar videos by default (typically from noisy channels)
   const topSidebar = document.querySelectorAll('#secondary ytd-compact-video-renderer')
   topSidebar.forEach((video, i) => {
@@ -2206,7 +2440,7 @@ function muteNoisyVideos() {
       mutedCount++
     }
   })
-  
+
   console.log(`[Silenced] 🔇 Muted ${mutedCount} noisy videos`)
 }
 
@@ -2218,19 +2452,19 @@ function injectUnmutedVoices() {
   console.log('[Silenced] Attempting to inject unmuted voices')
   console.log('[Silenced] discoveryCache:', discoveryCache)
   console.log('[Silenced] unmutedVideos count:', discoveryCache?.unmutedVideos?.length || 0)
-  
+
   const videos = discoveryCache?.unmutedVideos || discoveryCache?.discoveredVideos || []
   const biasSnapshot = discoveryCache?.biasSnapshot
 
   if (videos.length === 0) {
     console.log('[Silenced] No videos to inject - unmutedVideos is empty')
-    
+
     // Show a message that no silenced voices were found for this topic
     document.querySelectorAll('.silenced-unmuted-container').forEach(el => el.remove())
-    
+
     const sidebar = document.querySelector('#secondary ytd-watch-next-secondary-results-renderer, #secondary-inner')
     if (!sidebar) return
-    
+
     const emptyContainer = document.createElement('div')
     emptyContainer.className = 'silenced-unmuted-container'
     emptyContainer.style.cssText = `
@@ -2249,7 +2483,7 @@ function injectUnmutedVoices() {
         <span style="font-size: 10px; color: #6b7280;">This topic may be dominated by large channels.</span>
       </div>
     `
-    
+
     const shadowHost = document.querySelector('#silenced-shadow-host')
     if (shadowHost) {
       shadowHost.after(emptyContainer)
@@ -2261,10 +2495,10 @@ function injectUnmutedVoices() {
 
   // Inject bias receipt styles (outside shadow DOM)
   injectBiasReceiptStyles()
-  
+
   // Remove existing injected cards
   document.querySelectorAll('.silenced-unmuted-container, .silenced-equity-container').forEach(el => el.remove())
-  
+
   // Find sidebar
   const sidebar = document.querySelector('#secondary ytd-watch-next-secondary-results-renderer, #secondary-inner')
   if (!sidebar) {
@@ -2272,7 +2506,7 @@ function injectUnmutedVoices() {
     return
   }
   console.log('[Silenced] Found sidebar, injecting', videos.length, 'videos')
-  
+
   // Create container
   const container = document.createElement('div')
   container.className = 'silenced-unmuted-container'
@@ -2296,23 +2530,28 @@ function injectUnmutedVoices() {
       margin-bottom: 12px;
     `
     const concentrationClass = biasSnapshot.topicConcentration > 70 ? 'color: #f59e0b;' : 'color: #10b981;'
-    
+
     // Fix 1: Different title when Audit Mode is ON
     const snapshotTitle = auditModeActive ? 'Platform Context' : 'Topic Bias Snapshot'
-    const subtitleHtml = auditModeActive 
-      ? '<div style="font-size: 8px; color: #4b5563; margin-bottom: 6px;">Baseline distribution for this topic</div>' 
+    const subtitleHtml = auditModeActive
+      ? '<div style="font-size: 8px; color: #4b5563; margin-bottom: 6px;">Baseline distribution for this topic</div>'
       : ''
-    
+
+    // Safely format percentage values
+    const topicConcentration = typeof biasSnapshot.topicConcentration === 'number' ? biasSnapshot.topicConcentration : 0
+    const underAmplifiedRate = typeof biasSnapshot.underAmplifiedRate === 'number' ? biasSnapshot.underAmplifiedRate : 0
+    const safeConcentrationClass = topicConcentration > 70 ? 'color: #f59e0b;' : 'color: #10b981;'
+
     snapshot.innerHTML = `
       <div style="font-size: 9px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: ${auditModeActive ? '2px' : '8px'};">${snapshotTitle}</div>
       ${subtitleHtml}
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
         <div style="padding: 6px 8px; background: #171717; border-radius: 4px;">
-          <div style="font-size: 14px; font-weight: 700; ${concentrationClass}">${biasSnapshot.topicConcentration}%</div>
+          <div style="font-size: 14px; font-weight: 700; ${safeConcentrationClass}">${topicConcentration}%</div>
           <div style="font-size: 8px; color: #6b7280;">Top 10 concentration</div>
         </div>
         <div style="padding: 6px 8px; background: #171717; border-radius: 4px;">
-          <div style="font-size: 14px; font-weight: 700; color: #10b981;">${biasSnapshot.underAmplifiedRate}%</div>
+          <div style="font-size: 14px; font-weight: 700; color: #10b981;">${underAmplifiedRate}%</div>
           <div style="font-size: 8px; color: #6b7280;">Under-amplified</div>
         </div>
       </div>
@@ -2320,11 +2559,26 @@ function injectUnmutedVoices() {
     container.appendChild(snapshot)
   }
 
-  // Header
+  // Check if current topic is sustainability-related
+  const currentQuery = extractCurrentQuery().toLowerCase()
+  const sustainabilityKeywords = ['climate', 'sustainable', 'sustainability', 'esg', 'carbon', 'renewable', 'green energy', 'clean energy', 'environment', 'eco-friendly', 'biodiversity', 'emissions', 'net zero', 'net-zero']
+  const isSustainabilityTopic = sustainabilityKeywords.some(kw => currentQuery.includes(kw))
+
+  // Header with KPMG sustainability badge if applicable
   const header = document.createElement('div')
-  header.style.cssText = 'font-size: 11px; font-weight: 600; color: #10b981; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px;'
-  header.textContent = 'Under-represented Voices'
+  header.style.cssText = 'font-size: 11px; font-weight: 600; color: #10b981; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; justify-content: space-between;'
+  header.innerHTML = `
+    <span>Under-represented Voices</span>
+    ${isSustainabilityTopic ? '<span style="font-size: 8px; background: #059669; color: #fff; padding: 2px 6px; border-radius: 3px; font-weight: 600;">🌍 KPMG</span>' : ''}
+  `
   container.appendChild(header)
+
+  if (isSustainabilityTopic) {
+    const sustainabilityNote = document.createElement('div')
+    sustainabilityNote.style.cssText = 'font-size: 10px; color: #6b7280; margin-bottom: 10px; padding: 8px 10px; background: #0a0a0a; border-radius: 4px; border-left: 2px solid #059669;'
+    sustainabilityNote.innerHTML = '🌿 <strong style="color: #10b981;">KPMG Sustainability Challenge:</strong> Surfacing smaller voices on environmental topics helps counter greenwashing from dominant corporate channels.'
+    container.appendChild(sustainabilityNote)
+  }
 
   // Add video cards with Bias Receipt
   videos.slice(0, 5).forEach((video, index) => {
@@ -2352,8 +2606,8 @@ function injectUnmutedVoices() {
       // Confidence dots
       const confidenceDots = ['low', 'medium', 'high'].map((level, i) => {
         const filled = (confidence === 'low' && i === 0) ||
-                       (confidence === 'medium' && i <= 1) ||
-                       (confidence === 'high')
+          (confidence === 'medium' && i <= 1) ||
+          (confidence === 'high')
         return `<span class="silenced-confidence-dot ${filled ? `filled ${confidence}` : ''}"></span>`
       }).join('')
 
@@ -2362,7 +2616,7 @@ function injectUnmutedVoices() {
           <div class="silenced-bias-receipt-toggle">
             <span class="silenced-receipt-title">
               Bias Receipt
-              ${method === 'heuristic' ? '<span class="silenced-receipt-method fallback">Fallback</span>' : ''}
+              ${method === 'heuristic' ? '<span class="silenced-receipt-method fallback">Fallback</span>' : method === 'gemini' ? '<span class="silenced-receipt-method ai">AI</span>' : ''}
             </span>
             <span class="silenced-receipt-arrow">▼</span>
           </div>
@@ -2391,26 +2645,38 @@ function injectUnmutedVoices() {
         </div>
       `
     }
-    
+
     // Build audit info line (only when audit mode is active)
     // Fix 3: Use improved method label formatting
     const surfaceMethod = video.surfaceMethod || 'engagement_ranking'
     const diversityNote = video.diversityNote || ''
     const methodDisplay = formatDiversityMethod(surfaceMethod)
-    
+
     // Check if this video was transcript-verified
     const isTranscriptVerified = surfaceMethod.includes('transcript')
-    const transcriptBadge = isTranscriptVerified 
+    const transcriptBadge = isTranscriptVerified
       ? '<span style="background: #065f46; color: #10b981; padding: 1px 4px; border-radius: 3px; font-size: 8px; margin-left: 4px;">VERIFIED</span>'
       : ''
-    
+
+    // KPMG Sustainability badge for this video
+    let sustainabilityBadgeHtml = ''
+    if (video.isSustainabilityVideo && video.sustainabilityCredibility) {
+      const credColors = {
+        high: { bg: '#065f46', color: '#10b981', label: '✓ VERIFIED' },
+        moderate: { bg: '#78350f', color: '#fbbf24', label: '? REVIEW' },
+        caution: { bg: '#7f1d1d', color: '#f87171', label: '⚠ CAUTION' }
+      }
+      const cred = credColors[video.sustainabilityCredibility] || credColors.moderate
+      sustainabilityBadgeHtml = `<span style="background: ${cred.bg}; color: ${cred.color}; padding: 1px 5px; border-radius: 3px; font-size: 8px; font-weight: 600; margin-left: 6px;">${cred.label}</span>`
+    }
+
     const auditInfoHtml = auditModeActive ? `
       <div style="padding: 6px 10px; border-top: 1px solid #262626; font-size: 10px; color: #6b7280; font-family: 'SF Mono', Monaco, monospace;">
         Subs: ${fmt(video.subscriberCount)} · Surfaced via: ${methodDisplay}${transcriptBadge}
         ${diversityNote ? `<div style="font-size: 9px; color: #4b5563; margin-top: 2px;">${esc(diversityNote)}</div>` : ''}
       </div>
     ` : ''
-    
+
     card.innerHTML = `
       <a href="/watch?v=${video.videoId}" class="video-link" style="display: block; padding: 10px; text-decoration: none;">
         <div style="display: flex; gap: 10px;">
@@ -2419,14 +2685,14 @@ function injectUnmutedVoices() {
             <div style="font-size: 12px; font-weight: 500; color: #e5e5e5; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
             ${esc(video.title)}
           </div>
-            <div style="font-size: 10px; color: #9ca3af; margin-top: 3px;">${esc(video.channelTitle)} · ${fmt(video.subscriberCount)} subs</div>
+            <div style="font-size: 10px; color: #9ca3af; margin-top: 3px;">${esc(video.channelTitle)} · ${fmt(video.subscriberCount)} subs${sustainabilityBadgeHtml}</div>
           </div>
         </div>
       </a>
       ${auditInfoHtml}
       ${biasReceipt ? `<div style="padding: 0 10px 10px;">${biasReceiptHtml}</div>` : ''}
     `
-    
+
     // Add hover effects
     card.addEventListener('mouseenter', () => {
       card.style.background = '#222222'
@@ -2451,14 +2717,15 @@ function injectUnmutedVoices() {
     container.appendChild(card)
   })
 
-  // Footer with muted count
+  // Footer with muted count and KPMG badge
   const mutedChannels = discoveryCache?.channelsToMute || []
-  if (mutedChannels.length > 0) {
-    const footer = document.createElement('div')
-    footer.style.cssText = 'font-size: 10px; color: #6b7280; margin-top: 10px; padding-top: 8px; border-top: 1px solid #262626;'
-    footer.textContent = `${mutedChannels.length} dominant channels de-prioritized`
-    container.appendChild(footer)
-  }
+  const footer = document.createElement('div')
+  footer.style.cssText = 'font-size: 10px; color: #6b7280; margin-top: 10px; padding-top: 8px; border-top: 1px solid #262626; display: flex; justify-content: space-between; align-items: center;'
+  footer.innerHTML = `
+    <span>${mutedChannels.length > 0 ? `${mutedChannels.length} dominant channels de-prioritized` : 'Surfacing under-represented voices'}</span>
+    <span style="font-size: 8px; color: #4b5563;">Hack the Bias '26 ${isSustainabilityTopic ? '· KPMG Challenge' : ''}</span>
+  `
+  container.appendChild(footer)
 
   // Insert after shadow host
   const shadowHost = document.querySelector('#silenced-shadow-host')
@@ -2483,10 +2750,10 @@ function setupNoiseCancellationObserver() {
   if (discoveryObserver) {
     discoveryObserver.disconnect()
   }
-  
+
   discoveryObserver = new MutationObserver((mutations) => {
     if (!noiseCancellationActive) return
-    
+
     for (const mutation of mutations) {
       for (const node of mutation.addedNodes) {
         if (node.nodeType === Node.ELEMENT_NODE) {
@@ -2498,7 +2765,7 @@ function setupNoiseCancellationObserver() {
       }
     }
   })
-  
+
   discoveryObserver.observe(document.body, { childList: true, subtree: true })
 }
 
@@ -2516,10 +2783,10 @@ function createFloatingToggle() {
     if (statusEl) statusEl.textContent = noiseCancellationActive ? 'ACTIVE' : 'OFF'
     return
   }
-  
+
   // Also remove old toggle if exists
   document.getElementById('silenced-discovery-toggle')?.remove()
-  
+
   const toggle = document.createElement('div')
   toggle.id = 'silenced-noise-toggle'
   toggle.className = noiseCancellationActive ? 'active' : ''
@@ -2527,7 +2794,7 @@ function createFloatingToggle() {
   toggle.setAttribute('aria-checked', noiseCancellationActive)
   toggle.setAttribute('aria-label', 'Toggle Noise Cancellation to unmute silenced voices')
   toggle.setAttribute('tabindex', '0')
-  
+
   toggle.innerHTML = `
     <div class="toggle-inner">
       <div class="toggle-icon">◉</div>
@@ -2537,7 +2804,7 @@ function createFloatingToggle() {
       </div>
     </div>
   `
-  
+
   toggle.addEventListener('click', () => window.silencedToggleNoiseCancellation())
   toggle.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') {
@@ -2545,7 +2812,7 @@ function createFloatingToggle() {
       window.silencedToggleNoiseCancellation()
     }
   })
-  
+
   document.body.appendChild(toggle)
 }
 
@@ -2555,27 +2822,27 @@ function createFloatingToggle() {
 async function run() {
   const videoId = getVideoId()
   if (!videoId || (videoId === currentVideoId && panelInjected)) return
-  
+
   currentVideoId = videoId
   panelInjected = false
   breakdownOpen = false
   silenceReportOpen = false
-  
+
   // Wait for sidebar
   for (let i = 0; i < 15; i++) {
     if (document.querySelector('#secondary')) break
     await new Promise(r => setTimeout(r, 1000))
   }
-  
+
   // Show loading state (inject minimal dashboard first)
   const sidebar = document.querySelector('#secondary-inner') || document.querySelector('#secondary')
   if (!sidebar) return
-  
+
   // Create shadow host with loading state
   document.querySelector('#silenced-shadow-host')?.remove()
   const { host, shadow, container } = createShadowContainer('silenced-shadow-host', sidebar)
   shadowHost = host
-  
+
   container.innerHTML = `
     <div class="silenced-panel">
       <div class="panel-header">
@@ -2590,20 +2857,20 @@ async function run() {
       </div>
     </div>
   `
-  
+
   // Fetch transcript
   const transcript = await getTranscript(videoId)
-  
+
   // Get analysis from background script
-  const response = await safeSendMessage({ 
-    action: 'analyze', 
-    videoId, 
-    transcript: transcript?.substring(0, 8000) 
+  const response = await safeSendMessage({
+    action: 'analyze',
+    videoId,
+    transcript: transcript?.substring(0, 8000)
   })
-  
+
   if (response?.success && response?.data) {
     injectDashboard(response.data)
-    
+
     // If noise cancellation is active, run it
     if (noiseCancellationActive) {
       const query = extractCurrentQuery()
@@ -2653,7 +2920,7 @@ async function getTranscript(videoId) {
         }
       }
     }
-  } catch {}
+  } catch { }
   return null
 }
 
@@ -2687,18 +2954,18 @@ new MutationObserver(() => {
     currentVideoId = null
     panelInjected = false
     processedVideoCards.clear()
-    
+
     // Remove old UI
     document.querySelector('#silenced-shadow-host')?.remove()
     document.querySelectorAll('.silenced-unmuted-container, .silenced-equity-container').forEach(el => el.remove())
-    
+
     if (isWatchPage()) {
       setTimeout(run, 1500)
     }
-    
+
     // Update floating toggle
     createFloatingToggle()
-    
+
     // Re-run noise cancellation on navigation
     if (noiseCancellationActive) {
       setTimeout(async () => {
@@ -2718,17 +2985,17 @@ window.addEventListener('yt-navigate-finish', () => {
   panelInjected = false
   processedVideoCards.clear()
   processedThumbnails.clear()
-  
+
   if (isWatchPage()) setTimeout(run, 1500)
   createFloatingToggle()
-  
+
   // Label thumbnails on homepage/search when noise cancellation is active
   if (noiseCancellationActive && !isWatchPage()) {
     injectThumbnailStyles()
     setTimeout(() => labelVideoThumbnails(), 2000)
     setTimeout(() => labelVideoThumbnails(), 4000) // Re-run for lazy-loaded content
   }
-  
+
   if (noiseCancellationActive) {
     setTimeout(async () => {
       const query = extractCurrentQuery()
@@ -2747,26 +3014,26 @@ window.addEventListener('yt-navigate-finish', () => {
 async function init() {
   // Load persisted noise cancellation state
   await loadNoiseCancellationState()
-  
+
   // Load session stats
   const stored = await chrome.storage.local.get(['discoveredCount', 'hiddenCount'])
   stats.voicesUnmuted = stored.discoveredCount || 0
   stats.noiseMuted = stored.hiddenCount || 0
-  
+
   // Create floating toggle
   setTimeout(createFloatingToggle, 2000)
-  
+
   // Run analysis on watch pages
   if (isWatchPage()) {
     setTimeout(run, 2000)
   }
-  
+
   // Label thumbnails on homepage/search if noise cancellation is active
   if (noiseCancellationActive && !isWatchPage()) {
     injectThumbnailStyles()
     setTimeout(() => labelVideoThumbnails(), 2500)
   }
-  
+
   // Auto-enable noise cancellation if it was on
   if (noiseCancellationActive) {
     setTimeout(async () => {
