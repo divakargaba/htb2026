@@ -2303,8 +2303,6 @@ function createGemCard(gem, index) {
     <tr><td>Views/Day</td><td>${gem.metrics?.viewsPerDay || '-'}</td></tr>
     <tr><td>Like Rate</td><td>${gem.metrics?.likeRate || '-'}%</td></tr>
     <tr><td>Comment Rate</td><td>${gem.metrics?.commentRate || '-'}%</td></tr>
-    <tr><td>WPM</td><td>${gem.metrics?.wpm || '-'}</td></tr>
-    <tr><td>Citations</td><td>${gem.metrics?.citations || 0}</td></tr>
     <tr><td>Duration</td><td>${gem.metrics?.durationMin || '-'} min</td></tr>
   `
   
@@ -2312,8 +2310,6 @@ function createGemCard(gem, index) {
   const breakdownRows = gem.breakdown ? `
     <div class="breakdown-item ${gem.breakdown.likeScore > 0 ? 'positive' : ''}">Like Score: +${gem.breakdown.likeScore}</div>
     <div class="breakdown-item ${gem.breakdown.commentScore > 0 ? 'positive' : ''}">Comment Score: +${gem.breakdown.commentScore}</div>
-    <div class="breakdown-item ${gem.breakdown.wpmScore > 0 ? 'positive' : ''}">WPM Score: +${gem.breakdown.wpmScore}</div>
-    <div class="breakdown-item ${gem.breakdown.citationScore > 0 ? 'positive' : ''}">Citation Score: +${gem.breakdown.citationScore}</div>
     <div class="breakdown-item ${gem.breakdown.durationScore > 0 ? 'positive' : ''}">Duration Score: +${gem.breakdown.durationScore}</div>
     ${gem.breakdown.clickbaitPenalty < 0 ? `<div class="breakdown-item negative">Clickbait: ${gem.breakdown.clickbaitPenalty}</div>` : ''}
     ${gem.breakdown.spamPenalty < 0 ? `<div class="breakdown-item negative">Spam: ${gem.breakdown.spamPenalty}</div>` : ''}

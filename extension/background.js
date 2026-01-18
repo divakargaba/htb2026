@@ -38,14 +38,14 @@ const AI_OFFLINE_THRESHOLD = 3 // Consider offline after 3 consecutive failures
 
 function getQualityThreshold() {
   // If AI has failed 3+ times consecutively and hasn't succeeded in last 5 min, use strict threshold
-  const aiOffline = consecutiveAIFails >= AI_OFFLINE_THRESHOLD && 
-                    (Date.now() - lastAISuccess > 300000)
+  const aiOffline = consecutiveAIFails >= AI_OFFLINE_THRESHOLD &&
+    (Date.now() - lastAISuccess > 300000)
   return aiOffline ? MIN_VIDEO_QUALITY_SCORE_HEURISTIC : MIN_VIDEO_QUALITY_SCORE_AI
 }
 
 function isAIOffline() {
-  return consecutiveAIFails >= AI_OFFLINE_THRESHOLD && 
-         (Date.now() - lastAISuccess > 300000)
+  return consecutiveAIFails >= AI_OFFLINE_THRESHOLD &&
+    (Date.now() - lastAISuccess > 300000)
 }
 
 // Quota costs
@@ -734,39 +734,83 @@ async function generateBiasReceiptWithAI(params) {
     ? `TRANSCRIPT (first 3000 chars):\n"${transcript.slice(0, 3000)}"`
     : `DESCRIPTION:\n"${videoDescription.slice(0, 800)}"`
 
-  console.log(`[Silenced] Gemini analysis using ${hasTranscript ? 'TRANSCRIPT' : 'DESCRIPTION'} (${hasTranscript ? transcript.length : videoDescription.length} chars)`)
+  console.log(`[Silenced] DeepSeek analysis using ${hasTranscript ? 'TRANSCRIPT' : 'DESCRIPTION'} (${hasTranscript ? transcript.length : videoDescription.length} chars)`)
 
-  const prompt = `You are analyzing a YouTube video that was algorithmically suppressed. Your job is to explain what this video is ACTUALLY ABOUT based on its content.
+  // Format metrics for context
+  const avgSubs = Math.round(avgSubsInTopic || 0)
+  const topicConc = topicConcentration || 0
+  const engagementRatioStr = typeof engagementRatio === 'number' ? engagementRatio.toFixed(2) : 'N/A'
+  const viewsPerDayStr = Math.round(viewsPerDay || 0)
+  const risingSignal = isRisingSignal ? 'Yes - channel outperforming its size' : 'No'
+
+  const prompt = `You are an algorithmic bias auditor analyzing YouTube recommendations.
+
+Your task:
+Explain WHY a specific video or creator is under-exposed by the platform, and WHY it deserves visibility anyway.
+
+Context you are given:
+- Channel size and growth
+- Engagement metrics (likes, comments, watch time)
+- Topic-level competition and concentration
+- Platform incentives (recency, scale, upload frequency)
+- Comparison to dominant channels in the same topic
 
 VIDEO INFO:
 Title: "${videoTitle}"
 Channel: ${channelTitle}
 Subscribers: ${fmt(subscriberCount)}
+Average subscribers in topic: ${fmt(avgSubs)}
+Topic concentration (top 10 channels): ${topicConc}%
+Engagement ratio: ${engagementRatioStr}
+Views per day: ${viewsPerDayStr}
+Rising signal: ${risingSignal}
 ${contentSource}
 
-TASK: Analyze this video's ACTUAL CONTENT and generate a detailed bias receipt.
+Your output MUST follow this structure exactly:
+
+1) WHY THIS CONTENT IS SILENCED
+Explain the systemic or algorithmic factors that reduce visibility.
+Focus on platform incentives (scale, recency, virality, volume).
+Do NOT blame the creator.
+
+2) WHO IS AFFECTED
+Briefly identify the type of creator or perspective that is disadvantaged
+(e.g. independent creators, long-form analysis, minority viewpoints, non-sensational content).
+
+3) WHY THIS CONTENT STILL MATTERS
+Explain what the algorithm undervalues here.
+Use engagement quality, depth, originality, or audience response.
+
+4) COUNTERFACTUAL INSIGHT
+One sentence explaining what would likely happen if this content were surfaced equally.
+
+Rules:
+- Be concise (max 2 short bullet points per section)
+- Be confident, not speculative
+- Avoid technical jargon
+- Avoid moralizing language
+- Do NOT mention "AI", "model", or "analysis process"
+- Write for a non-technical audience
+
+Tone:
+Clear, calm, factual, human.
 
 Return JSON with this EXACT structure:
 {
-  "contentSummary": "A 2-3 sentence summary explaining WHAT THIS VIDEO TEACHES OR DISCUSSES. Be specific about the actual topics, arguments, or information presented. NOT generic - describe the real content.",
-  "whyNotShown": [
-    "Specific algorithmic reason 1 (15-25 words)",
-    "Specific algorithmic reason 2 (15-25 words)"
+  "whySilenced": [
+    "Algorithmic factor 1 (15-25 words)",
+    "Algorithmic factor 2 (15-25 words)"
   ],
-  "whySurfaced": [
-    "What specific value/insight this content provides (20-30 words, reference actual topics from the video)",
-    "What unique perspective this creator brings on this specific topic (20-30 words)",
-    "Why this particular content deserves more visibility (20-30 words)"
+  "whoAffected": [
+    "Creator/perspective type 1 (15-20 words)",
+    "Creator/perspective type 2 (15-20 words)"
   ],
-  "confidence": "high"
-}
-
-CRITICAL RULES:
-- contentSummary MUST describe the actual video content, NOT just repeat the title
-- Example good summary: "This video examines the psychological and social factors behind different types of religious faith, exploring how childhood upbringing, personal experiences, and cultural environment shape belief systems. The creator discusses 11 distinct faith categories including blind faith, intellectual faith, and experiential faith."
-- Example BAD summary: "This video explores types of faith from an alternative perspective." (too generic!)
-- whySurfaced bullets MUST reference specific topics/insights from the video content
-- If you have transcript, analyze what the creator actually SAYS and ARGUES`
+  "whyMatters": [
+    "Undervalued quality 1 (20-30 words)",
+    "Undervalued quality 2 (20-30 words)"
+  ],
+  "counterfactualInsight": "One sentence explaining what would likely happen if this content were surfaced equally (20-30 words)"
+}`
 
   try {
     const text = await callGeminiAPI(prompt, {
@@ -783,16 +827,22 @@ CRITICAL RULES:
     const parsed = JSON.parse(jsonMatch[0])
 
     // Validate structure
-    if (!Array.isArray(parsed.whyNotShown) || !Array.isArray(parsed.whySurfaced)) {
+    if (!Array.isArray(parsed.whySilenced) || !Array.isArray(parsed.whoAffected) ||
+      !Array.isArray(parsed.whyMatters) || !parsed.counterfactualInsight) {
       return null
     }
 
+    // Return new structure
     return {
-      contentSummary: parsed.contentSummary || null,
-      whyNotShown: parsed.whyNotShown.slice(0, 4),
-      whySurfaced: parsed.whySurfaced.slice(0, 4),
-      confidence: ['low', 'medium', 'high'].includes(parsed.confidence) ? parsed.confidence : 'medium',
-      method: 'gemini'
+      whySilenced: parsed.whySilenced.slice(0, 2),
+      whoAffected: parsed.whoAffected.slice(0, 2),
+      whyMatters: parsed.whyMatters.slice(0, 2),
+      counterfactualInsight: parsed.counterfactualInsight,
+      // Backward compatibility mapping
+      whyNotShown: parsed.whySilenced.slice(0, 2),
+      whySurfaced: parsed.whyMatters.slice(0, 2),
+      contentSummary: parsed.counterfactualInsight || null,
+      method: 'deepseek'
     }
   } catch (err) {
     console.error('[Silenced] Gemini API error:', err)
@@ -872,7 +922,7 @@ async function fetchVideoTranscript(videoId) {
       // YouTube returns 200 OK with empty body when no transcript exists
       const text = await response.text()
       if (!text || text.length < 10) continue
-      
+
       let data
       try {
         data = JSON.parse(text)
@@ -2035,7 +2085,7 @@ async function getChannelActivities(channelId) {
   // This is a known limitation - we'll use alternative data sources
   console.log(`[Silenced] Skipping activities API for ${channelId} (requires OAuth)`)
   return []
-  
+
   /* DISABLED - Requires OAuth authentication
   // Get recent uploads to calculate upload density
   try {
@@ -2152,14 +2202,14 @@ function detectClickbait(title, transcript) {
   const titleLower = title.toLowerCase()
   const sensationalTerms = ['shocking', 'insane', 'you won\'t believe', 'destroyed', 'exposed', 'unbelievable', 'mind-blowing', 'crazy']
   const hasSensationalTitle = sensationalTerms.some(t => titleLower.includes(t))
-  
+
   if (!hasSensationalTitle) return false
   if (!transcript) return true // Sensational title with no transcript = likely clickbait
-  
+
   const transcriptLower = transcript.toLowerCase()
   const substantiveTerms = ['because', 'evidence', 'data', 'explained', 'reason', 'actually', 'specifically']
   const hasSubstance = substantiveTerms.some(t => transcriptLower.includes(t))
-  
+
   return !hasSubstance
 }
 
@@ -2171,7 +2221,7 @@ function detectSpam(title) {
   const capsRatio = (title.match(/[A-Z]/g) || []).length / title.length
   const hashtagCount = (title.match(/#/g) || []).length
   const emojiCount = (title.match(/[\u{1F300}-\u{1F9FF}]/gu) || []).length
-  
+
   return capsRatio > 0.5 || hashtagCount > 3 || emojiCount > 3
 }
 
@@ -2187,19 +2237,19 @@ function computeQualityScore(video, channel, transcript) {
   const durationSec = parseDurationToSeconds(video.contentDetails?.duration)
   const durationMin = durationSec / 60
   const title = video.snippet?.title || ''
-  
+
   // Calculate rates
   const likeRate = likes / views
   const commentRate = comments / views
   const viewsPerDay = views / Math.max(1, (Date.now() - new Date(video.snippet?.publishedAt).getTime()) / 86400000)
   const viewsToSubs = views / subs
-  
+
   // === Engagement Quality (35 pts) ===
   // likeRate: 5% -> 20 pts (normalized to 0-20)
   const likeScore = Math.min(20, Math.round(likeRate * 400))
   // commentRate: 1% -> 15 pts
   const commentScore = Math.min(15, Math.round(commentRate * 1500))
-  
+
   // === Informational Value (35 pts) ===
   // WPM: 120-170 is ideal for educational content
   let wpmScore = 0
@@ -2212,11 +2262,11 @@ function computeQualityScore(video, channel, transcript) {
       wpmScore = Math.max(0, Math.round(15 - Math.abs(wpm - 145) / 10))
     }
   }
-  
+
   // Citations: 2 points per citation, max 10
   const citations = countCitations(transcript)
   const citationScore = Math.min(10, citations * 2)
-  
+
   // Duration: 6-20 minutes is ideal
   let durationScore = 0
   if (durationMin >= 6 && durationMin <= 20) {
@@ -2224,14 +2274,14 @@ function computeQualityScore(video, channel, transcript) {
   } else if (durationMin >= 2) {
     durationScore = Math.max(0, Math.round(10 - Math.abs(durationMin - 13) / 2))
   }
-  
+
   // === Authenticity (30 pts) ===
   // Clickbait penalty
   const clickbaitPenalty = detectClickbait(title, transcript) ? -15 : 0
-  
+
   // Spam title penalty
   const spamPenalty = detectSpam(title) ? -10 : 0
-  
+
   // Underexposure bonus: good engagement but low views-to-subs ratio
   let underexposureBonus = 0
   if (viewsToSubs < 0.5 && likeRate > 0.03) {
@@ -2239,20 +2289,20 @@ function computeQualityScore(video, channel, transcript) {
   } else if (viewsToSubs < 1 && likeRate > 0.02) {
     underexposureBonus = 10
   }
-  
+
   // Calculate total
   const total = Math.max(0, Math.min(100,
     likeScore + commentScore + wpmScore + citationScore + durationScore +
     clickbaitPenalty + spamPenalty + underexposureBonus
   ))
-  
+
   // Calculate underexposure score (how suppressed the video appears)
   // Higher = more underexposed (high quality but low visibility)
   const expectedViews = subs * (likeRate * 10) // Simple proxy
   const underexposureScore = Math.min(100, Math.max(0, Math.round(
     (1 - Math.min(1, views / Math.max(1, expectedViews))) * 100
   )))
-  
+
   return {
     total,
     underexposureScore,
@@ -2281,34 +2331,104 @@ function computeQualityScore(video, channel, transcript) {
 
 /**
  * Get AI explanation for video quality (using DeepSeek)
+ * Uses algorithmic bias auditor format with video-specific content
  */
-async function getAIExplanation(metrics, videoTitle) {
-  const prompt = `You are analyzing a YouTube video. Using ONLY these metrics, explain why this video appears high-quality. Give 3 bullet reasons tied to numbers, then 1 caution. Keep it under 90 words.
+async function getAIExplanation(metrics, videoTitle, transcript = null, videoDescription = '', channelTitle = '', subscriberCount = 0) {
+  // Build content context from transcript or description
+  const hasTranscript = transcript && transcript.length > 200
+  const contentSource = hasTranscript
+    ? `TRANSCRIPT (first 2000 chars):\n"${transcript.slice(0, 2000)}"`
+    : videoDescription.length > 0
+      ? `DESCRIPTION:\n"${videoDescription.slice(0, 800)}"`
+      : ''
 
-Video: "${videoTitle}"
-Metrics: 
+  const contentNote = hasTranscript
+    ? 'You have access to the actual video transcript - analyze what the creator actually discusses and argues. Reference specific topics, arguments, or insights from the content.'
+    : videoDescription.length > 0
+      ? 'You have access to the video description - use it to understand what the video covers.'
+      : ''
+
+  const prompt = `You are an algorithmic bias auditor analyzing YouTube recommendations.
+
+Your task:
+Explain WHY THIS SPECIFIC VIDEO or creator is under-exposed by the platform, and WHY it deserves visibility anyway.
+
+BE SPECIFIC TO THIS VIDEO. Reference actual topics, arguments, or content discussed. Do NOT use generic language.
+
+VIDEO INFO:
+Title: "${videoTitle}"
+Channel: ${channelTitle || 'Unknown'}
+Subscribers: ${subscriberCount ? fmt(subscriberCount) : 'Unknown'}
+
+${contentSource}
+
+METRICS:
 - Like rate: ${metrics.likeRate}%
 - Comment rate: ${metrics.commentRate}%
 - Comments per 1k views: ${metrics.commentsPerKViews}
-- Speaking pace: ${metrics.wpm} WPM
-- Source citations: ${metrics.citations}
 - Duration: ${metrics.durationMin} minutes
-- Views per day: ${metrics.viewsPerDay}`
+- Views per day: ${metrics.viewsPerDay}
+
+${contentNote}
+
+Your output MUST follow this structure exactly:
+
+1) WHY THIS CONTENT IS SILENCED
+Explain the systemic or algorithmic factors that reduce THIS VIDEO'S visibility.
+Reference specific characteristics of this video (its topic, format, creator size, etc.).
+Focus on platform incentives (scale, recency, virality, volume).
+Do NOT blame the creator.
+
+2) WHO IS AFFECTED
+Briefly identify the type of creator or perspective THIS VIDEO represents that is disadvantaged.
+Be specific - what kind of content is this? What viewpoint or format?
+
+3) WHY THIS CONTENT STILL MATTERS
+Explain what the algorithm undervalues about THIS SPECIFIC VIDEO.
+Reference actual topics, arguments, or insights from the video content.
+Use engagement quality, depth, originality, or audience response specific to this video.
+
+4) COUNTERFACTUAL INSIGHT
+One sentence explaining what would likely happen if THIS VIDEO were surfaced equally.
+
+Rules:
+- Be concise (max 2 short bullet points per section)
+- Be SPECIFIC to this video - reference actual content, topics, or arguments
+- Be confident, not speculative
+- Avoid technical jargon
+- Avoid moralizing language
+- Do NOT mention "AI", "model", or "analysis process"
+- Write for a non-technical audience
+- If you have transcript/description, USE IT - be concrete about what this video discusses
+
+Tone:
+Clear, calm, factual, human.
+
+Format your response as plain text with 4 clear sections, using bullets where appropriate.`
 
   try {
     // Call DeepSeek API directly
-    const aiResponse = await callDeepSeekAPI(prompt, { maxTokens: 150 })
+    const aiResponse = await callDeepSeekAPI(prompt, { maxTokens: 500 })
     if (aiResponse) return aiResponse
-    
+
   } catch (err) {
     console.warn('[Silenced] AI explanation failed:', err.message)
   }
-  
+
   // Fallback template
-  return `• High engagement for its size: ${metrics.likeRate}% like rate
-• Active discussion: ${metrics.commentsPerKViews} comments per 1k views
-• Good pacing: ${metrics.wpm > 0 ? metrics.wpm + ' WPM' : metrics.durationMin + ' min duration'}
-⚠️ Caution: Metrics alone don't guarantee quality—watch to verify.`
+  return `WHY SILENCED:
+• Small channel size (${subscriberCount ? fmt(subscriberCount) : 'unknown'} subs) limits algorithmic reach
+• Platform favors high-velocity, high-volume content
+
+WHO AFFECTED:
+• Independent creators with quality engagement but limited scale
+
+WHY IT MATTERS:
+• ${metrics.likeRate}% like rate indicates strong audience connection
+• ${metrics.commentsPerKViews} comments per 1k views shows active discussion
+
+COUNTERFACTUAL:
+If surfaced equally, this content would likely maintain its strong engagement ratios with a broader audience.`
 }
 
 /**
@@ -2320,10 +2440,10 @@ async function fetchTranscriptForScoring(videoId) {
       const url = `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}&fmt=json3`
       const res = await fetch(url)
       if (!res.ok) continue
-      
+
       const rawText = await res.text()
       if (!rawText || rawText.length < 50) continue
-      
+
       try {
         const data = JSON.parse(rawText)
         if (data.events?.length) {
@@ -2347,7 +2467,7 @@ async function fetchTranscriptForScoring(videoId) {
         }
       }
     }
-  } catch {}
+  } catch { }
   return null
 }
 
@@ -2357,10 +2477,10 @@ async function fetchTranscriptForScoring(videoId) {
  */
 async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle = '') {
   console.log(`[Silenced] 💎 Discovering hidden gems for video: ${currentVideoId}`)
-  
+
   const gems = []
   const seenChannels = new Set([currentChannelId])
-  
+
   // #region agent log H2
   // Constraint ranges - RELAXED for better results
   // Original was too strict: 1k-100k subs with 20k-80k views is extremely rare
@@ -2369,7 +2489,7 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
   let maxResults = 50  // Start with 50, not 25
   let useRelated = false  // DISABLED: relatedToVideoId deprecated Aug 2023
   // #endregion
-  
+
   // Broadening steps (already start with relaxed constraints)
   const broadeningSteps = [
     () => { subsMax = 1000000; console.log('[Silenced] Broadening: subs to 1M') },
@@ -2377,7 +2497,7 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
     () => { subsMin = 100; console.log('[Silenced] Broadening: subs min to 100') }
   ]
   let broadeningIndex = 0
-  
+
   while (gems.length < 2 && broadeningIndex <= broadeningSteps.length) {
     try {
       // Build search URL
@@ -2386,7 +2506,7 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
       searchUrl.searchParams.set('type', 'video')
       searchUrl.searchParams.set('maxResults', String(maxResults))
       searchUrl.searchParams.set('key', YOUTUBE_API_KEY)
-      
+
       // #region agent log H1
       // IMPORTANT: relatedToVideoId was DEPRECATED by YouTube in August 2023!
       // Always use query search instead
@@ -2401,31 +2521,31 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
           .slice(0, 4)
           .join(' ')
         // #region agent log H3
-        fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'background.js:discoverHiddenGems:queryBuild',message:'Query search params',data:{currentVideoId,currentTitle,keywords:keywords||'educational'},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H3'})}).catch(()=>{});
+        fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'background.js:discoverHiddenGems:queryBuild', message: 'Query search params', data: { currentVideoId, currentTitle, keywords: keywords || 'educational' }, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'H3' }) }).catch(() => { });
         // #endregion
         searchUrl.searchParams.set('q', keywords || 'educational')
         searchUrl.searchParams.set('order', 'relevance')
       }
-      
+
       console.log(`[Silenced] Searching with query="${searchUrl.searchParams.get('q')}", maxResults=${maxResults}`)
-      
+
       const searchRes = await fetch(searchUrl.toString())
       if (!searchRes.ok) {
         const errorData = await searchRes.json().catch(() => ({}))
         console.error('[Silenced] Search API error:', searchRes.status, errorData)
         // #region agent log H1
-        fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'background.js:discoverHiddenGems:searchError',message:'Search API failed',data:{status:searchRes.status,errorData,searchUrl:searchUrl.toString().replace(YOUTUBE_API_KEY,'REDACTED')},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
+        fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'background.js:discoverHiddenGems:searchError', message: 'Search API failed', data: { status: searchRes.status, errorData, searchUrl: searchUrl.toString().replace(YOUTUBE_API_KEY, 'REDACTED') }, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'H1' }) }).catch(() => { });
         // #endregion
         throw new Error(`Search API error: ${searchRes.status}`)
       }
-      
+
       const searchData = await searchRes.json()
       quotaUsed += 100
-      
+
       const candidateIds = (searchData.items || [])
         .map(item => item.id?.videoId)
         .filter(id => id && id !== currentVideoId)
-      
+
       if (candidateIds.length === 0) {
         console.log('[Silenced] No candidates found')
         if (broadeningIndex < broadeningSteps.length) {
@@ -2435,49 +2555,49 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
         }
         break
       }
-      
+
       console.log(`[Silenced] Found ${candidateIds.length} candidates`)
-      
+
       // Fetch video details
       const videosUrl = new URL('https://www.googleapis.com/youtube/v3/videos')
       videosUrl.searchParams.set('part', 'snippet,contentDetails,statistics')
       videosUrl.searchParams.set('id', candidateIds.join(','))
       videosUrl.searchParams.set('key', YOUTUBE_API_KEY)
-      
+
       const videosRes = await fetch(videosUrl.toString())
       if (!videosRes.ok) throw new Error(`Videos API error: ${videosRes.status}`)
-      
+
       const videosData = await videosRes.json()
       quotaUsed += 1
-      
+
       // Get unique channel IDs
       const channelIds = [...new Set((videosData.items || []).map(v => v.snippet?.channelId).filter(Boolean))]
-      
+
       // Fetch channel details
       const channelsUrl = new URL('https://www.googleapis.com/youtube/v3/channels')
       channelsUrl.searchParams.set('part', 'statistics,snippet')
       channelsUrl.searchParams.set('id', channelIds.join(','))
       channelsUrl.searchParams.set('key', YOUTUBE_API_KEY)
-      
+
       const channelsRes = await fetch(channelsUrl.toString())
       if (!channelsRes.ok) throw new Error(`Channels API error: ${channelsRes.status}`)
-      
+
       const channelsData = await channelsRes.json()
       quotaUsed += 1
-      
+
       // Build channel map
       const channelMap = new Map()
       for (const ch of (channelsData.items || [])) {
         channelMap.set(ch.id, ch)
       }
-      
+
       // Filter and score candidates
       const candidates = []
-      
+
       // #region agent log H2
       const filterStats = { total: 0, noChannel: 0, seenChannel: 0, subsTooLow: 0, subsTooHigh: 0, viewsTooLow: 0, viewsTooHigh: 0, tooShort: 0, isShorts: 0, isSpam: 0, passed: 0 }
       // #endregion
-      
+
       for (const video of (videosData.items || [])) {
         // #region agent log H2
         filterStats.total++
@@ -2489,15 +2609,15 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
           // #endregion
           continue
         }
-        
+
         const channel = channelMap.get(channelId)
         if (!channel) continue
-        
+
         const subs = parseInt(channel.statistics?.subscriberCount) || 0
         const views = parseInt(video.statistics?.viewCount) || 0
         const durationSec = parseDurationToSeconds(video.contentDetails?.duration)
         const title = video.snippet?.title || ''
-        
+
         // Apply constraints with logging
         // #region agent log H2
         if (subs < subsMin) { filterStats.subsTooLow++; continue }
@@ -2509,38 +2629,48 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
         if (detectSpam(title)) { filterStats.isSpam++; continue }
         filterStats.passed++
         // #endregion
-        
+
         candidates.push({ video, channel, subs, views, durationSec })
       }
-      
+
       // #region agent log H2
-      fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'background.js:discoverHiddenGems:filterStats',message:'Filter breakdown',data:{filterStats,subsMin,subsMax,viewsMin,viewsMax},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H2'})}).catch(()=>{});
+      fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'background.js:discoverHiddenGems:filterStats', message: 'Filter breakdown', data: { filterStats, subsMin, subsMax, viewsMin, viewsMax }, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'H2' }) }).catch(() => { });
       // #endregion
-      
+
       console.log(`[Silenced] ${candidates.length} candidates passed filters`)
-      
+
       // Score and select top candidates
       for (const candidate of candidates) {
         if (gems.length >= 2) break
         if (seenChannels.has(candidate.channel.id)) continue
-        
+
         // Fetch transcript for quality scoring
         const transcript = await fetchTranscriptForScoring(candidate.video.id)
-        
+
         // Compute quality score
         const quality = computeQualityScore(candidate.video, candidate.channel, transcript)
-        
+
         // Skip if quality is too low
         if (quality.total < 30) {
           console.log(`[Silenced] Skipping ${candidate.video.id} - low quality score: ${quality.total}`)
           continue
         }
-        
-        // Get Gemini explanation
-        const explanation = await getAIExplanation(quality.metrics, candidate.video.snippet.title)
-        
+
+        // Get AI explanation with video-specific details
+        const transcriptText = transcript && typeof transcript === 'string' ? transcript : null
+        const videoDescription = candidate.video.snippet?.description || ''
+        const channelTitle = candidate.video.snippet?.channelTitle || ''
+        const explanation = await getAIExplanation(
+          quality.metrics,
+          candidate.video.snippet.title,
+          transcriptText,
+          videoDescription,
+          channelTitle,
+          candidate.subs
+        )
+
         seenChannels.add(candidate.channel.id)
-        
+
         gems.push({
           videoId: candidate.video.id,
           title: candidate.video.snippet.title,
@@ -2558,10 +2688,10 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
           explanation,
           hasTranscript: !!transcript
         })
-        
+
         console.log(`[Silenced] 💎 Found gem: "${candidate.video.snippet.title}" (Q:${quality.total}, U:${quality.underexposureScore})`)
       }
-      
+
       // If we still need more, try broadening
       if (gems.length < 2 && broadeningIndex < broadeningSteps.length) {
         broadeningSteps[broadeningIndex]()
@@ -2569,7 +2699,7 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
       } else {
         break
       }
-      
+
     } catch (err) {
       console.error('[Silenced] Hidden gems discovery error:', err)
       if (broadeningIndex < broadeningSteps.length) {
@@ -2580,18 +2710,18 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
       }
     }
   }
-  
+
   console.log(`[Silenced] 💎 Discovered ${gems.length} hidden gems`)
-  
+
   // #region agent log H2
-  fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'background.js:discoverHiddenGems:result',message:'Final result',data:{gemsCount:gems.length,gemTitles:gems.map(g=>g.title)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H2'})}).catch(()=>{});
+  fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'background.js:discoverHiddenGems:result', message: 'Final result', data: { gemsCount: gems.length, gemTitles: gems.map(g => g.title) }, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'H2' }) }).catch(() => { });
   // #endregion
-  
+
   return {
     gems,
-    message: gems.length === 0 
+    message: gems.length === 0
       ? 'Could not find 2 matching videos under current constraints'
-      : gems.length === 1 
+      : gems.length === 1
         ? 'Found 1 hidden gem (constraint limits reached)'
         : null
   }
@@ -3043,13 +3173,13 @@ async function runNoiseCancellation(query) {
   const preFilteredVideos = unmutedVideosPreQuality.filter(v => {
     const title = v.title || ''
     const titleLower = title.toLowerCase()
-    
+
     // 1. Block Shorts (check title for #shorts indicator)
     if (titleLower.includes('#shorts') || titleLower.includes('#short')) {
       console.log(`[Silenced] Pre-filter: Blocked Short "${title.slice(0, 40)}..."`)
       return false
     }
-    
+
     // 2. Block obvious spam titles
     const spamPatterns = [
       /FREE\s*(DOWNLOAD|MONEY|GIFT)/i,
@@ -3061,35 +3191,35 @@ async function runNoiseCancellation(query) {
       /\b(CLICK HERE|SUBSCRIBE NOW|LINK IN BIO)\b/i,
       /\d+\s*FREE\s*\w+/i,  // "100 FREE things"
     ]
-    
+
     for (const pattern of spamPatterns) {
       if (pattern.test(title)) {
         console.log(`[Silenced] Pre-filter: Blocked spam title "${title.slice(0, 40)}..."`)
         return false
       }
     }
-    
+
     // 3. Block videos with extremely short titles (likely spam/clickbait)
     if (title.length < 10) {
       console.log(`[Silenced] Pre-filter: Blocked short title "${title}"`)
       return false
     }
-    
+
     // 4. Block channels with 0 subscribers (likely spam/bot channels)
     if (v.subscriberCount === 0) {
       console.log(`[Silenced] Pre-filter: Blocked 0-subscriber channel "${v.channelTitle}"`)
       return false
     }
-    
+
     // 5. Block channels with very few videos (newly created spam channels)
     if (v.videoCount && v.videoCount < 3) {
       console.log(`[Silenced] Pre-filter: Blocked new channel with only ${v.videoCount} videos`)
       return false
     }
-    
+
     return true
   })
-  
+
   console.log(`[Silenced] Pre-filter: ${unmutedVideosPreQuality.length} -> ${preFilteredVideos.length} videos passed hard filters`)
 
   if (preFilteredVideos.length === 0) {
@@ -3105,7 +3235,7 @@ async function runNoiseCancellation(query) {
   const qualityThreshold = getQualityThreshold()
   const aiStatus = isAIOffline() ? 'OFFLINE (strict mode)' : 'online'
   console.log(`[Silenced] Quality threshold: ${qualityThreshold} (AI ${aiStatus})`)
-  
+
   let qualityFilteredVideos = videosWithQuality.filter(v => {
     const passes = (v.qualityScore || 0) >= qualityThreshold
     if (!passes) {
@@ -3354,32 +3484,32 @@ async function runNoiseCancellation(query) {
  */
 async function analyzeHomepageVideos(videoIds, feedContext = {}) {
   console.log(`[BiasLens] Analyzing ${videoIds.length} homepage videos`)
-  
+
   const results = []
   const channelIds = new Set()
-  
+
   // Batch fetch video details
   const videos = await batchGetVideos(videoIds.slice(0, 24)) // Limit to 24 for performance
-  
+
   // Collect channel IDs
   for (const video of videos) {
     if (video?.snippet?.channelId) {
       channelIds.add(video.snippet.channelId)
     }
   }
-  
+
   // Batch fetch channel details
   const channels = await batchGetChannels([...channelIds])
   const channelMap = new Map(channels.map(c => [c.id, c]))
-  
+
   // Fetch activities for each channel (FIX: was missing before!)
   const activitiesMap = new Map()
   const channelIdList = [...channelIds]
-  
+
   // Batch activities fetch - limit to 8 channels to save quota
   const priorityChannels = channelIdList.slice(0, 8)
   console.log(`[BiasLens] Fetching activities for ${priorityChannels.length} channels`)
-  
+
   await Promise.all(priorityChannels.map(async (chId) => {
     try {
       const activities = await getChannelActivities(chId)
@@ -3388,16 +3518,16 @@ async function analyzeHomepageVideos(videoIds, feedContext = {}) {
       activitiesMap.set(chId, [])
     }
   }))
-  
+
   // Analyze each video
   for (const video of videos) {
     if (!video) continue
-    
+
     const channel = channelMap.get(video.snippet?.channelId)
     const videoId = video.id
     const channelId = video.snippet?.channelId
     const activities = activitiesMap.get(channelId) || []
-    
+
     // Calculate bias score using FULL data now (with activities!)
     const noiseAnalysis = calculateExposureAdvantageScore(channel, {
       viewCount: video.statistics?.viewCount,
@@ -3405,20 +3535,20 @@ async function analyzeHomepageVideos(videoIds, feedContext = {}) {
       commentCount: video.statistics?.commentCount,
       duration: video.contentDetails?.duration
     }, activities)
-    
+
     // Get subscriber count for tier-based tags
     const subs = parseInt(channel?.statistics?.subscriberCount || '0')
     const views = parseInt(video.statistics?.viewCount || '0')
     const videoAgeHours = getVideoAgeHours(video.snippet?.publishedAt)
     const viewsPerHour = videoAgeHours > 0 ? views / videoAgeHours : views
-    
+
     // Map to bias score format
     const biasScore = noiseAnalysis.totalScore
     const confidence = activities.length > 0 ? 0.85 : 0.6 // Higher if we have activities
-    
+
     // Generate contributions/tags - IMPROVED: Lower threshold + more factors
     const contributions = []
-    
+
     // Channel size contribution (always show for transparency)
     if (subs >= 10000000) {
       contributions.push({ factor: 'Mega Channel', value: 35, color: '#dc2626', description: '10M+ subscribers dominates algorithm' })
@@ -3431,7 +3561,7 @@ async function analyzeHomepageVideos(videoIds, feedContext = {}) {
     } else if (subs < 50000 && subs > 0) {
       contributions.push({ factor: 'Small Creator', value: -15, color: '#10b981', description: 'Under 50K - algorithm disadvantage' })
     }
-    
+
     // Velocity contribution
     if (viewsPerHour > 50000) {
       contributions.push({ factor: 'Viral Velocity', value: 25, color: '#8b5cf6', description: 'Extremely fast view accumulation' })
@@ -3440,7 +3570,7 @@ async function analyzeHomepageVideos(videoIds, feedContext = {}) {
     } else if (viewsPerHour > 1000) {
       contributions.push({ factor: 'Rising Fast', value: 10, color: '#c084fc', description: 'Above average view velocity' })
     }
-    
+
     // Upload frequency (if we have activities)
     if (activities.length > 0) {
       const uploadsPerWeek = activities.length / 4 // Approximate (activities are last ~month)
@@ -3450,23 +3580,23 @@ async function analyzeHomepageVideos(videoIds, feedContext = {}) {
         contributions.push({ factor: 'Active Channel', value: 8, color: '#22d3d1', description: 'Regular uploads help visibility' })
       }
     }
-    
+
     // Recency boost
     if (videoAgeHours < 24) {
       contributions.push({ factor: 'Fresh Upload', value: 12, color: '#22c55e', description: 'New videos get temporary boost' })
     } else if (videoAgeHours < 72) {
       contributions.push({ factor: 'Recent', value: 6, color: '#4ade80', description: 'Still in newness window' })
     }
-    
+
     // Engagement signals
     const likeRatio = views > 0 ? parseInt(video.statistics?.likeCount || '0') / views : 0
     if (likeRatio > 0.05) {
       contributions.push({ factor: 'High Engagement', value: 10, color: '#f472b6', description: '5%+ like ratio signals quality' })
     }
-    
+
     // Sort by absolute value
     contributions.sort((a, b) => Math.abs(b.value) - Math.abs(a.value))
-    
+
     // Generate tags from top contributions
     const tags = contributions.slice(0, 4).map(c => ({
       text: c.value > 0 ? `${c.factor} +${c.value}` : `${c.factor} ${c.value}`,
@@ -3475,7 +3605,7 @@ async function analyzeHomepageVideos(videoIds, feedContext = {}) {
       value: c.value,
       description: c.description
     }))
-    
+
     results.push({
       videoId,
       title: video.snippet?.title,
@@ -3503,10 +3633,10 @@ async function analyzeHomepageVideos(videoIds, feedContext = {}) {
       exposureTier: noiseAnalysis.exposureTier
     })
   }
-  
+
   // Calculate feed analysis
   const feedAnalysis = calculateFeedAnalysis(results, feedContext)
-  
+
   return {
     videos: results,
     feedAnalysis
@@ -3528,33 +3658,33 @@ function getVideoAgeHours(publishedAt) {
  */
 async function batchGetVideos(videoIds) {
   if (!videoIds || videoIds.length === 0) return []
-  
+
   const results = []
-  
+
   // Batch in groups of 50
   for (let i = 0; i < videoIds.length; i += 50) {
     if (quotaUsed + 1 > QUOTA_LIMIT) break
-    
+
     const batch = videoIds.slice(i, i + 50)
-    
+
     try {
       const url = new URL('https://www.googleapis.com/youtube/v3/videos')
       url.searchParams.set('part', 'snippet,statistics,contentDetails')
       url.searchParams.set('id', batch.join(','))
       url.searchParams.set('key', YOUTUBE_API_KEY)
-      
+
       const res = await fetch(url.toString())
       if (!res.ok) continue
-      
+
       const data = await res.json()
       quotaUsed += 1
-      
+
       results.push(...(data.items || []))
     } catch (err) {
       console.error('[BiasLens] Batch video fetch error:', err)
     }
   }
-  
+
   return results
 }
 
@@ -3563,13 +3693,13 @@ async function batchGetVideos(videoIds) {
  */
 function getVideoAge(publishedAt) {
   if (!publishedAt) return '--'
-  
+
   const now = new Date()
   const published = new Date(publishedAt)
   const diffMs = now - published
   const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
   const diffDays = Math.floor(diffHours / 24)
-  
+
   if (diffHours < 24) return `${diffHours}h`
   if (diffDays < 7) return `${diffDays}d`
   if (diffDays < 30) return `${Math.floor(diffDays / 7)}w`
@@ -3591,31 +3721,31 @@ function calculateFeedAnalysis(videoResults, feedContext = {}) {
       commercialPrevalence: 0
     }
   }
-  
+
   const biasScores = videoResults.map(v => v.biasScore)
   const avgBias = Math.round(biasScores.reduce((a, b) => a + b, 0) / biasScores.length)
-  
+
   // Distribution
   const high = biasScores.filter(s => s >= 70).length / biasScores.length
   const medium = biasScores.filter(s => s >= 40 && s < 70).length / biasScores.length
   const low = biasScores.filter(s => s < 40).length / biasScores.length
-  
+
   // Channel concentration
   const channelCounts = {}
   for (const v of videoResults) {
     const ch = v.channelName || 'Unknown'
     channelCounts[ch] = (channelCounts[ch] || 0) + 1
   }
-  
+
   const sortedChannels = Object.entries(channelCounts)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5)
-  
+
   const top5Share = sortedChannels.reduce((sum, [_, count]) => sum + count, 0) / videoResults.length
-  
+
   // Topic dominance (simplified - would need topic analysis)
   const topicDominance = feedContext.topics || []
-  
+
   return {
     avgBias,
     distribution: {
@@ -3645,11 +3775,11 @@ function calculateFeedAnalysis(videoResults, feedContext = {}) {
  */
 async function discoverSilencedVideos(topicMap, excludedChannels = [], filters = {}, feedContext = {}) {
   console.log('[BiasLens] Discovering silenced videos for topics:', topicMap)
-  
+
   // Build search query - prioritize actual content from user's feed
   let query = ''
   let querySource = ''
-  
+
   // Extended stop words for better keyword extraction
   const stopWords = new Set([
     'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
@@ -3665,12 +3795,12 @@ async function discoverSilencedVideos(topicMap, excludedChannels = [], filters =
     'made', 'take', 'took', 'come', 'came', 'going', 'goes', 'really', 'actually',
     'my', 'your', 'our', 'their', 'his', 'her', 'its', 'about', 'after', 'before'
   ])
-  
+
   // PRIORITY 1: Extract keywords directly from feed video titles
   // This is the most accurate because it reflects what user is actually watching
   if (feedContext.titles && feedContext.titles.length >= 3) {
     const wordFreq = {}
-    
+
     for (const title of feedContext.titles.slice(0, 15)) {
       if (!title) continue
       const words = title
@@ -3678,84 +3808,84 @@ async function discoverSilencedVideos(topicMap, excludedChannels = [], filters =
         .replace(/[^\w\s-]/g, ' ')
         .split(/\s+/)
         .filter(w => w.length > 2 && !stopWords.has(w) && !/^\d+$/.test(w))
-      
+
       for (const word of words) {
         wordFreq[word] = (wordFreq[word] || 0) + 1
       }
     }
-    
+
     // Get top 6 most frequent keywords
     const topWords = Object.entries(wordFreq)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 6)
       .map(([word]) => word)
-    
+
     if (topWords.length >= 2) {
       query = topWords.join(' ')
       querySource = 'title_keywords'
       console.log(`[BiasLens] Extracted keywords from ${feedContext.titles.length} titles: ${query}`)
     }
   }
-  
+
   // PRIORITY 2: Use topic keywords if we got them from TopicAnalyzer
   if (!query && topicMap && topicMap.length > 0) {
     const topTopics = topicMap
       .sort((a, b) => (b.weight || 0) - (a.weight || 0))
       .slice(0, 3)
-    
+
     // Collect all keywords from topics
     const keywords = topTopics
       .flatMap(t => t.keywords || [t.name || t])
       .filter(k => k && k.length > 2)
       .slice(0, 6)
-    
+
     if (keywords.length >= 2) {
       query = keywords.join(' ')
       querySource = 'topic_keywords'
       console.log(`[BiasLens] Using topic keywords: ${query}`)
     }
   }
-  
+
   // PRIORITY 3: If still no query, we CANNOT provide quality recommendations
   // Better to show nothing than random garbage
   if (!query || query.length < 5) {
     console.warn('[BiasLens] ⚠️ Cannot extract meaningful topics from feed - not enough signal')
-    return { 
-      videos: [], 
+    return {
+      videos: [],
       message: 'Not enough signal from your homepage. Scroll to load more videos or refresh.',
       insufficientData: true
     }
   }
-  
+
   console.log(`[BiasLens] Search query for silenced videos (${querySource}): "${query}"`)
-  
+
   // Use existing noise cancellation engine
   const result = await runNoiseCancellation(query)
-  
+
   // Check if we got results
   if (!result || (!result.unmutedVideos && !result.discoveredVideos)) {
     console.warn('[BiasLens] No silenced videos returned from search')
     return { videos: [], message: 'No under-represented creators found for this topic' }
   }
-  
+
   const rawVideos = result.unmutedVideos || result.discoveredVideos || []
   console.log(`[BiasLens] Got ${rawVideos.length} raw silenced videos`)
-  
+
   // Filter out excluded channels
   const excludedSet = new Set(excludedChannels)
   const filteredVideos = rawVideos
     .filter(v => !excludedSet.has(v.channelId))
     .map(v => {
       const subs = v.subscriberCount || 0
-      
+
       // Calculate quality score (heuristic based on engagement proxy)
       const engagementProxy = v.engagementProxy || 0.5
       const qualityScore = Math.round(
-        Math.min(100, Math.max(10, 
+        Math.min(100, Math.max(10,
           50 + (engagementProxy * 30) + (v.isRisingSignal ? 15 : 0)
         ))
       )
-      
+
       // Calculate silenced score (how under-exposed)
       let silencedScore = 80 // Default high
       if (subs > 500000) silencedScore = 20
@@ -3763,11 +3893,11 @@ async function discoverSilencedVideos(topicMap, excludedChannels = [], filters =
       else if (subs > 50000) silencedScore = 55
       else if (subs > 10000) silencedScore = 70
       else silencedScore = 90
-      
+
       // Exposure gap = quality - visibility
       const visibilityScore = 100 - silencedScore
       const exposureGap = qualityScore - visibilityScore
-      
+
       // Build "why good" reasons
       const whyGood = v.whySurfaced || []
       if (whyGood.length === 0) {
@@ -3777,14 +3907,14 @@ async function discoverSilencedVideos(topicMap, excludedChannels = [], filters =
         if (qualityScore > 60) whyGood.push('Quality content signals detected')
         whyGood.push('Under-represented in algorithmic feeds')
       }
-      
+
       // Build "why buried" reasons
       const whyBuried = []
       if (subs < 50000) whyBuried.push('Small channel size limits algorithmic reach')
       if (subs < 100000) whyBuried.push('Competing against channels with 10-100x more subscribers')
       whyBuried.push('Lower velocity than dominant channels')
       whyBuried.push('Algorithm favors proven engagement patterns')
-      
+
       return {
         videoId: v.videoId,
         title: v.title,
@@ -3805,12 +3935,12 @@ async function discoverSilencedVideos(topicMap, excludedChannels = [], filters =
         exposureTier: v.exposureTier || 'emerging'
       }
     })
-  
+
   console.log(`[BiasLens] Returning ${filteredVideos.length} filtered silenced videos`)
-  
+
   // Check if AI scoring is offline
   const aiIsOffline = isAIOffline()
-  
+
   return {
     videos: filteredVideos.slice(0, 12),
     biasSnapshot: result.biasSnapshot,
@@ -3831,7 +3961,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       .catch(err => sendResponse({ success: false, error: err.message }))
     return true
   }
-  
+
   // Discover silenced videos
   if (request.action === 'discoverSilenced') {
     discoverSilencedVideos(request.topicMap, request.excludedChannels, request.filters, request.feedContext || {})
@@ -3839,7 +3969,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       .catch(err => sendResponse({ success: false, error: err.message }))
     return true
   }
-  
+
   // Single video analysis (for hover popover)
   if (request.action === 'analyzeVideo') {
     const { videoData } = request
@@ -3855,21 +3985,21 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     })
     return false
   }
-  
+
   // Bias Lens state
   if (request.action === 'setBiasLens') {
     chrome.storage.local.set({ biasLensEnabled: request.enabled })
     sendResponse({ success: true })
     return false
   }
-  
+
   if (request.action === 'getBiasLens') {
     chrome.storage.local.get(['biasLensEnabled'], (result) => {
       sendResponse({ enabled: result.biasLensEnabled || false })
     })
     return true
   }
-  
+
   if (request.action === 'analyze') {
     analyzeVideo(request.videoId, request.transcript)
       .then(result => sendResponse({ success: true, data: result }))
