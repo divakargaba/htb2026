@@ -47,7 +47,7 @@
 
   /* Typography - 3 sizes only */
   --bias-font-family: "YouTube Sans", "Roboto", -apple-system, sans-serif;
-  --bias-font-size-meta: 11px;       /* Small, muted */
+  --bias-font-size-meta: 12px;       /* Small, muted */
   --bias-font-size-body: 13px;       /* Normal body */
   --bias-font-size-title: 15px;      /* Titles, medium weight */
 
@@ -219,30 +219,29 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--bias-spacing-sm);
-  margin-top: var(--bias-spacing-sm);
-  padding: var(--bias-spacing-xs) 0;
+  gap: 6px;
+  margin-top: 4px;
+  margin-bottom: 0;
+  padding: 2px 0;
   opacity: 0;
-  transform: translateY(2px);
-  transition: opacity var(--bias-transition-normal), transform var(--bias-transition-normal);
+  transition: opacity var(--bias-transition-normal);
 }
 
 .bias-overlay.visible {
   opacity: 1;
-  transform: translateY(0);
 }
 
 .bias-score-pill {
   display: inline-flex;
   align-items: center;
   gap: var(--bias-spacing-xs);
-  padding: 4px var(--bias-spacing-sm);
+  padding: 5px 12px;
   border-radius: var(--bias-radius-sm);
   background: var(--pill-color, var(--bias-bg-tertiary));
   color: var(--bias-text-primary);
   font-family: var(--bias-font-family);
-  font-size: var(--bias-font-size-meta);
-  font-weight: 500;
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
   transition: opacity var(--bias-transition-fast);
 }
@@ -259,13 +258,13 @@
 
 .bias-tag {
   display: inline-block;
-  padding: 2px var(--bias-spacing-sm);
+  padding: 4px 10px;
   border-radius: var(--bias-radius-sm);
   background: rgba(255, 255, 255, 0.08);
   border-left: 2px solid var(--tag-color, var(--bias-text-muted));
   color: var(--bias-text-secondary);
   font-family: var(--bias-font-family);
-  font-size: var(--bias-font-size-xs);
+  font-size: 12px;
   font-weight: 500;
   cursor: default;
   transition: all var(--bias-transition-fast);

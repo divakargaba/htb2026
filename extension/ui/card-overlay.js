@@ -65,29 +65,6 @@ function createOverlayElement(videoId, scoreData) {
   mainRow.appendChild(tagsContainer)
   overlay.appendChild(mainRow)
   
-  // Add breakdown chart if available (collapsible)
-  if (scoreData.breakdown) {
-    const breakdownToggle = document.createElement('div')
-    breakdownToggle.className = 'breakdown-toggle'
-    breakdownToggle.innerHTML = '<span class="toggle-icon">📊</span><span class="toggle-text">Details</span>'
-    breakdownToggle.style.cssText = 'display: flex; align-items: center; gap: 4px; font-size: 10px; color: #888; cursor: pointer; margin-top: 4px;'
-    
-    const chart = createBreakdownChart(scoreData.breakdown)
-    if (chart) {
-      chart.style.display = 'none'
-      
-      breakdownToggle.addEventListener('click', (e) => {
-        e.stopPropagation()
-        const isHidden = chart.style.display === 'none'
-        chart.style.display = isHidden ? 'flex' : 'none'
-        breakdownToggle.querySelector('.toggle-text').textContent = isHidden ? 'Hide' : 'Details'
-      })
-      
-      overlay.appendChild(breakdownToggle)
-      overlay.appendChild(chart)
-    }
-  }
-  
   // Add hover handler for popover
   overlay.addEventListener('mouseenter', (e) => handleOverlayHover(e, videoId, scoreData))
   overlay.addEventListener('mouseleave', handleOverlayLeave)
@@ -220,30 +197,29 @@ function getOverlayStyles() {
       flex-wrap: wrap;
       align-items: center;
       gap: 6px;
-      margin-top: 6px;
-      padding: 4px 0;
+      margin-top: 4px;
+      margin-bottom: 0;
+      padding: 2px 0;
       opacity: 0;
-      transform: translateY(-4px);
-      transition: all 0.2s ease;
+      transition: opacity 0.2s ease;
       position: relative;
       z-index: 100;
     }
     
     .bias-overlay.visible {
       opacity: 1;
-      transform: translateY(0);
     }
     
     .bias-score-pill {
       display: inline-flex;
       align-items: center;
       gap: 4px;
-      padding: 3px 8px;
+      padding: 5px 12px;
       border-radius: 12px;
       background: var(--pill-color, #6b7280);
       color: #fff;
       font-family: "YouTube Sans", "Roboto", sans-serif;
-      font-size: 11px;
+      font-size: 13px;
       font-weight: 600;
       cursor: pointer;
       transition: transform 0.15s ease, box-shadow 0.15s ease;
@@ -283,13 +259,13 @@ function getOverlayStyles() {
     
     .bias-tag {
       display: inline-block;
-      padding: 2px 6px;
+      padding: 4px 10px;
       border-radius: 4px;
       background: rgba(255, 255, 255, 0.08);
       border-left: 2px solid var(--tag-color, #6b7280);
       color: #ccc;
       font-family: "YouTube Sans", "Roboto", sans-serif;
-      font-size: 10px;
+      font-size: 12px;
       font-weight: 500;
       cursor: default;
       transition: all 0.15s ease;
@@ -514,36 +490,55 @@ function parseViewCount(str) {
 }
 
 /**
- * Find the injection point within a card (after title)
+ * Find the injection point within a card (after metadata line)
  */
 function findCardInjectionPoint(card) {
-  // Try different selectors for the metadata area
-  const selectors = [
-    '#meta',                            // Rich item renderer
-    '#metadata',                        // Video renderer
-    '.metadata',                        // Generic
-    '#details',                         // Details container
-    '#dismissible #details',            // Compact renderer
-    'ytd-video-meta-block',             // Shorts
-    '#video-title-link',                // Title link container
-    'a#video-title',                    // Title anchor
-    '.ytd-rich-grid-media #meta',       // Rich grid media
-    '#dismissible'                      // Dismissible container (fallback)
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'card-overlay.js:findCardInjectionPoint:entry',message:'Finding injection point',data:{cardTagName:card?.tagName},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
+  // #endregion
+  
+  // Find the metadata line (channel name, views) to insert AFTER
+  const metadataSelectors = [
+    '#metadata-line',                    // Primary: metadata line with views/age
+    'ytd-video-meta-block #metadata-line',
+    '#channel-name',                     // Channel name container
+    '.ytd-video-meta-block',
+    '#metadata'
   ]
   
-  for (const selector of selectors) {
+  for (const selector of metadataSelectors) {
     const element = card.querySelector(selector)
-    if (element) return element
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'card-overlay.js:findCardInjectionPoint:metadata',message:'Trying metadata selector',data:{selector,found:!!element},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
+    // #endregion
+    if (element) return { element, insertAfter: true }
   }
   
+  // Fallback: append to meta container
+  const containerSelectors = ['#meta', '#details', '#dismissible']
+  for (const selector of containerSelectors) {
+    const element = card.querySelector(selector)
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'card-overlay.js:findCardInjectionPoint:fallback',message:'Trying fallback selector',data:{selector,found:!!element},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
+    // #endregion
+    if (element) return { element, insertAfter: false }
+  }
+  
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'card-overlay.js:findCardInjectionPoint:fallbackCard',message:'Using card itself as fallback',data:{cardTag:card?.tagName},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
+  // #endregion
   // Ultimate fallback - return the card itself
-  return card
+  return { element: card, insertAfter: false }
 }
 
 /**
  * Add overlay to a single video card
  */
 function addOverlayToCard(card, scoreData) {
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'card-overlay.js:addOverlayToCard:entry',message:'Adding overlay to card',data:{hasScoreData:!!scoreData,cardTag:card?.tagName},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H4'})}).catch(()=>{});
+  // #endregion
+  
   // Check if already processed
   if (card.hasAttribute(PROCESSED_ATTR)) {
     // Update existing overlay if score changed
@@ -557,6 +552,9 @@ function addOverlayToCard(card, scoreData) {
   // Extract video data
   const videoData = extractVideoData(card)
   if (!videoData) {
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'card-overlay.js:addOverlayToCard:noVideoData',message:'No video data extracted',data:{},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H4'})}).catch(()=>{});
+    // #endregion
     return
   }
   
@@ -569,6 +567,9 @@ function addOverlayToCard(card, scoreData) {
   }
   
   if (!scoreData) {
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'card-overlay.js:addOverlayToCard:noScoreData',message:'No score data available',data:{videoId:videoData.videoId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H5'})}).catch(()=>{});
+    // #endregion
     // NO MOCK DATA - only show overlays for videos with real computed scores
     // If no score data, don't inject overlay at all
     // The card will get processed when real scores arrive via setScores()
@@ -577,12 +578,29 @@ function addOverlayToCard(card, scoreData) {
   }
   
   // Find injection point
-  const injectionPoint = findCardInjectionPoint(card)
-  if (!injectionPoint) return
+  const injection = findCardInjectionPoint(card)
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'card-overlay.js:addOverlayToCard:injection',message:'Injection point result',data:{hasInjection:!!injection,insertAfter:injection?.insertAfter,elementTag:injection?.element?.tagName},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H2'})}).catch(()=>{});
+  // #endregion
+  if (!injection) return
   
   // Create and inject overlay
   const overlay = createOverlayElement(videoData.videoId, scoreData)
-  injectionPoint.appendChild(overlay)
+  
+  if (injection.insertAfter) {
+    // Insert right after the metadata line
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'card-overlay.js:addOverlayToCard:insertAfter',message:'Using insertAdjacentElement',data:{elementTag:injection.element?.tagName,hasParent:!!injection.element?.parentNode},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H3'})}).catch(()=>{});
+    // #endregion
+    injection.element.insertAdjacentElement('afterend', overlay)
+  } else {
+    // Fallback: append to container
+    injection.element.appendChild(overlay)
+  }
+  
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'card-overlay.js:addOverlayToCard:success',message:'Overlay injected successfully',data:{videoId:videoData.videoId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H3'})}).catch(()=>{});
+  // #endregion
   
   // Animate in
   requestAnimationFrame(() => {

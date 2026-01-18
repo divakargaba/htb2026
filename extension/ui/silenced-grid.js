@@ -343,8 +343,8 @@ function getGridStyles() {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
-      padding: 16px 0;
-      margin-bottom: 16px;
+      padding: 12px 0;
+      margin-bottom: 12px;
       border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     }
     
@@ -394,7 +394,7 @@ function getGridStyles() {
     
     /* Content */
     .silenced-content {
-      min-height: 400px;
+      min-height: 300px;
     }
     
     .silenced-loading {
@@ -496,8 +496,8 @@ function getGridStyles() {
     /* Video Grid - YouTube native style */
     .silenced-videos {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
-      gap: 16px 16px;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 12px 12px;
     }
     
     @media (min-width: 1200px) {
@@ -583,7 +583,7 @@ function getGridStyles() {
     }
     
     .card-details {
-      padding: 12px;
+      padding: 10px;
     }
     
     .card-title {
@@ -619,7 +619,7 @@ function getGridStyles() {
     
     /* Card Summary - Always visible */
     .card-summary {
-      padding: 10px 12px;
+      padding: 8px 10px;
     }
 
     .summary-badges {
@@ -634,8 +634,8 @@ function getGridStyles() {
       font-weight: 500;
       padding: 3px 8px;
       border-radius: 3px;
-      background: rgba(59, 130, 246, 0.2);
-      color: #3b82f6;
+      background: rgba(255, 255, 255, 0.08);
+      color: #999;
     }
 
     .badge-strength {
@@ -659,7 +659,7 @@ function getGridStyles() {
       align-items: flex-start;
       gap: 6px;
       padding: 8px 10px;
-      background: rgba(139, 92, 246, 0.1);
+      background: rgba(255, 255, 255, 0.04);
       border-radius: 6px;
       margin-top: 8px;
     }
@@ -671,16 +671,16 @@ function getGridStyles() {
     
     .ai-explanation .ai-text {
       font-size: 12px;
-      color: #c4b5fd;
+      color: #999;
       line-height: 1.4;
     }
     
     /* 4-Section AI Analysis Container */
     .ai-analysis-container {
       margin-top: 10px;
-      background: rgba(139, 92, 246, 0.08);
+      background: rgba(255, 255, 255, 0.04);
       border-radius: 8px;
-      border: 1px solid rgba(139, 92, 246, 0.2);
+      border: 1px solid rgba(255, 255, 255, 0.08);
       overflow: hidden;
     }
     
@@ -689,13 +689,13 @@ function getGridStyles() {
       align-items: center;
       gap: 8px;
       padding: 10px 12px;
-      background: rgba(139, 92, 246, 0.15);
+      background: rgba(255, 255, 255, 0.06);
       cursor: pointer;
       transition: background 0.15s ease;
     }
     
     .ai-analysis-header:hover {
-      background: rgba(139, 92, 246, 0.2);
+      background: rgba(255, 255, 255, 0.1);
     }
     
     .ai-analysis-header .ai-icon {
@@ -706,23 +706,23 @@ function getGridStyles() {
       flex: 1;
       font-size: 12px;
       font-weight: 600;
-      color: #c4b5fd;
+      color: #999;
     }
     
     .ai-analysis-header .ai-expand-btn {
       font-size: 12px;
-      color: #a78bfa;
+      color: #888;
       transition: transform 0.15s ease;
     }
     
     .ai-analysis-content {
-      padding: 12px;
+      padding: 10px;
     }
     
     .ai-section {
-      margin-bottom: 14px;
-      padding-bottom: 12px;
-      border-bottom: 1px solid rgba(139, 92, 246, 0.1);
+      margin-bottom: 10px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
     }
     
     .ai-section:last-child {
@@ -734,7 +734,7 @@ function getGridStyles() {
     .ai-section-title {
       font-size: 11px;
       font-weight: 600;
-      color: #a78bfa;
+      color: #888;
       margin-bottom: 6px;
       display: flex;
       align-items: center;
@@ -743,7 +743,7 @@ function getGridStyles() {
     
     .ai-section-text {
       font-size: 12px;
-      color: #d4d4d4;
+      color: #ccc;
       line-height: 1.5;
       white-space: pre-wrap;
     }
@@ -769,15 +769,15 @@ function getGridStyles() {
     .comparison-section {
       margin-top: 10px;
       padding: 10px;
-      background: rgba(249, 115, 22, 0.08);
+      background: rgba(255, 255, 255, 0.04);
       border-radius: 8px;
-      border: 1px solid rgba(249, 115, 22, 0.2);
+      border: 1px solid rgba(255, 255, 255, 0.08);
     }
     
     .comparison-section .comparison-label {
       font-size: 10px;
       font-weight: 600;
-      color: #fb923c;
+      color: #888;
       margin-bottom: 8px;
     }
     
@@ -802,7 +802,7 @@ function getGridStyles() {
     
     .comparison-section .comparison-title {
       font-size: 12px;
-      color: #fdba74;
+      color: #ccc;
       line-height: 1.3;
       display: -webkit-box;
       -webkit-line-clamp: 2;
@@ -860,7 +860,7 @@ function getGridStyles() {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 8px 12px;
+      padding: 6px 10px;
       cursor: pointer;
       transition: background 0.1s ease-out;
     }
@@ -882,7 +882,7 @@ function getGridStyles() {
 
     /* Expanded Details - Hidden by default */
     .card-details-expanded {
-      padding: 0 12px 12px;
+      padding: 0 10px 10px;
     }
 
     .detail-section {

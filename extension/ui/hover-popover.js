@@ -85,13 +85,6 @@
         <div class="metrics-grid"></div>
       </div>
 
-      <div class="popover-section popover-why">
-        <div class="section-header">WHY THIS SCORE? <span class="ai-badge">AI</span></div>
-        <div class="why-content">
-          <div class="context-bullets">Hover longer for AI analysis</div>
-        </div>
-        <div class="why-footer">Click for full analysis</div>
-      </div>
       
       <div class="popover-section popover-comparison" style="display: none;">
         <div class="comparison-header">
@@ -472,42 +465,6 @@
       color: #f97316;
     }
 
-    /* AI Badge */
-    .ai-badge {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      padding: 1px 5px;
-      background: linear-gradient(135deg, #8b5cf6, #6366f1);
-      border-radius: 3px;
-      font-size: 9px;
-      font-weight: 600;
-      color: white;
-      margin-left: 6px;
-    }
-
-    /* Why Section */
-    .popover-why {
-      border-top: 1px solid rgba(255, 255, 255, 0.06);
-      padding-top: 12px;
-    }
-
-    .why-content {
-      font-size: 13px;
-      color: #999;
-      line-height: 1.5;
-      margin-bottom: 6px;
-    }
-
-    .why-footer {
-      font-size: 11px;
-      color: #555;
-      cursor: pointer;
-    }
-
-    .why-footer:hover {
-      color: #888;
-    }
 
     /* Metrics Grid */
     .metrics-grid {
@@ -1083,80 +1040,11 @@
         popoverElement.classList.add('visible')
       })
 
-      // Request AI explanation asynchronously
-      requestAIExplanation(videoId, scoreData)
+      // Skip AI explanation for homepage/noise - only use for silenced videos
+      // The metrics and breakdown bars are enough for the demo
     }, HOVER_DELAY)
   }
 
-  /**
-   * Request AI explanation from background script
-   */
-  async function requestAIExplanation(videoId, scoreData) {
-    if (!scoreData) return
-
-    try {
-      const response = await chrome.runtime.sendMessage({
-        type: 'GENERATE_BIAS_EXPLANATION',
-        videoData: {
-          title: scoreData.title || '',
-          channelName: scoreData.channelName || '',
-          views: scoreData.metrics?.views || 0,
-          subs: scoreData.metrics?.subs || 0,
-          ageText: scoreData.metrics?.age || '',
-          biasScore: scoreData.biasScore || 0,
-          breakdown: scoreData.breakdown,
-          hasSponsor: scoreData.hasSponsor || false,
-          titleBait: scoreData.metrics?.titleBait,
-          thumbAssessment: scoreData.metrics?.thumbAbuse
-        }
-      })
-
-      // Only update if still showing same video
-      if (currentVideoId === videoId && response?.success && response.explanation) {
-        updateAIExplanation(response.explanation)
-      }
-    } catch (err) {
-      console.warn('[BiasPopover] AI explanation request failed:', err)
-    }
-  }
-
-  /**
-   * Update the popover with AI explanation
-   */
-  function updateAIExplanation(explanation) {
-    if (!popoverElement || !explanation) return
-
-    // Update score breakdown bars
-    if (explanation.algorithmicAdvantage !== undefined) {
-      updateBreakdownBar('aas', explanation.algorithmicAdvantage)
-    }
-    if (explanation.manipulation !== undefined) {
-      updateBreakdownBar('ms', explanation.manipulation)
-    }
-    if (explanation.commercialInfluence !== undefined) {
-      updateBreakdownBar('cis', explanation.commercialInfluence)
-    }
-
-    // Update top contributor
-    const contribContainer = popoverElement.querySelector('.contributions-container')
-    if (contribContainer && explanation.topContributor) {
-      contribContainer.innerHTML = ''
-      const item = document.createElement('div')
-      item.className = 'contribution-item'
-      item.style.setProperty('--contrib-color', '#f97316')
-      item.innerHTML = `
-        <span class="contrib-label">${explanation.topContributor}</span>
-        <span class="contrib-value">+${explanation.algorithmicAdvantage || 0}</span>
-      `
-      contribContainer.appendChild(item)
-    }
-
-    // Update "Why this score" section
-    const whySection = popoverElement.querySelector('.context-bullets')
-    if (whySection && explanation.whyThisScore) {
-      whySection.innerHTML = `<div class="context-bullet">${explanation.whyThisScore}</div>`
-    }
-  }
 
   /**
    * Hide the popover
