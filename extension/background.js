@@ -332,16 +332,23 @@ async function generateBiasReceipt(params) {
   // Try Gemini if enabled and available
   if (ENABLE_ML_FEATURES && GEMINI_API_KEY) {
     try {
+      console.log(`[Silenced] Generating AI bias receipt for: ${params.videoTitle?.slice(0, 50)}...`)
+      console.log(`[Silenced] Description length: ${params.videoDescription?.length || 0} chars`)
       const geminiReceipt = await generateBiasReceiptWithGemini(params)
       if (geminiReceipt) {
+        console.log(`[Silenced] ✓ AI receipt generated successfully`)
         // Cache the result
         biasReceiptCache[cacheKey] = { data: geminiReceipt, timestamp: Date.now() }
         saveCache()
         return geminiReceipt
+      } else {
+        console.warn(`[Silenced] AI receipt returned null, falling back to heuristic`)
       }
     } catch (err) {
       console.warn('[Silenced] Gemini bias receipt failed, falling back to heuristic:', err.message)
     }
+  } else {
+    console.log(`[Silenced] Skipping AI receipt: ML=${ENABLE_ML_FEATURES}, hasKey=${!!GEMINI_API_KEY}`)
   }
 
   // Heuristic fallback - deterministic bullets based on thresholds
@@ -469,55 +476,110 @@ function generateHeuristicWhySurfaced(params) {
 }
 
 /**
- * Generate a content summary from video title and description (heuristic fallback)
+ * Generate a content summary by analyzing the video description (heuristic fallback)
+ * Extracts actual topics, themes, and key points from the description
  */
 function generateHeuristicContentSummary(params) {
-  const { videoTitle, videoDescription = '', channelTitle, subscriberCount } = params
+  const { videoTitle, videoDescription = '', channelTitle } = params
 
   if (!videoTitle) return null
 
-  // Clean the title
-  const cleanTitle = videoTitle
-    .replace(/\|.*$/, '') // Remove pipe sections
-    .replace(/[-–—].*$/, '') // Remove dash sections at end
-    .trim()
+  const desc = (videoDescription || '').slice(0, 1000)
 
-  // Extract key phrases from description
-  const desc = (videoDescription || '').slice(0, 300).toLowerCase()
-
-  // Determine content type from title/description patterns
-  let contentType = 'video'
-  if (/\b(explained|explanation|what is|how to|tutorial|guide)\b/i.test(videoTitle)) {
-    contentType = 'educational content'
-  } else if (/\b(review|unboxing|tested|compared)\b/i.test(videoTitle)) {
-    contentType = 'review'
-  } else if (/\b(documentary|story|journey|experience)\b/i.test(videoTitle)) {
-    contentType = 'documentary-style video'
-  } else if (/\b(interview|conversation|talks|discusses)\b/i.test(videoTitle)) {
-    contentType = 'discussion'
-  } else if (/\b(vlog|day in|routine)\b/i.test(videoTitle)) {
-    contentType = 'vlog'
-  } else if (/\b(news|breaking|update|announcement)\b/i.test(videoTitle)) {
-    contentType = 'news coverage'
-  } else if (/\b(analysis|deep dive|breakdown)\b/i.test(videoTitle)) {
-    contentType = 'in-depth analysis'
+  // If no description, we can't generate meaningful content summary
+  if (!desc || desc.length < 20) {
+    return null // Return null so UI shows nothing rather than generic text
   }
 
-  // Build the summary
-  const subLabel = subscriberCount < 10000 ? 'micro-creator' :
-                   subscriberCount < 50000 ? 'emerging creator' :
-                   subscriberCount < 100000 ? 'growing creator' : 'creator'
+  // Extract meaningful sentences from description (skip links, timestamps, social media)
+  const sentences = desc
+    .split(/[.!?\n]/)
+    .map(s => s.trim())
+    .filter(s => {
+      if (s.length < 20 || s.length > 200) return false
+      if (/^(http|www\.|@|#|follow|subscribe|like|comment|check out|link|click)/i.test(s)) return false
+      if (/^\d{1,2}:\d{2}/.test(s)) return false // Timestamps
+      if (/^(instagram|twitter|tiktok|facebook|patreon|merch|sponsor)/i.test(s)) return false
+      return true
+    })
 
-  // Generate a more natural summary
-  const summaries = [
-    `This ${contentType} from ${subLabel} ${channelTitle} explores "${cleanTitle}" - offering a perspective that may differ from mainstream coverage on this topic.`,
-    `${channelTitle}, a ${subLabel}, presents ${contentType} on "${cleanTitle}" - a voice that typically receives less algorithmic visibility despite covering important topics.`,
-    `An independent ${contentType} titled "${cleanTitle}" from ${channelTitle} - representing viewpoints often underrepresented in YouTube's recommendation algorithm.`
+  // Extract key topics from title and description
+  const fullText = `${videoTitle} ${desc}`.toLowerCase()
+
+  // Topic extraction - find what the video is actually about
+  const topicPatterns = [
+    { pattern: /\b(explains?|explaining|breakdown of|deep dive into|exploring|discusses?|discussing|covers?|covering)\s+(.{10,60})/gi, type: 'explains' },
+    { pattern: /\b(how to|guide to|tutorial on|learn|learning)\s+(.{10,50})/gi, type: 'tutorial' },
+    { pattern: /\b(the truth about|reality of|what really|behind the)\s+(.{10,50})/gi, type: 'exposé' },
+    { pattern: /\b(review of|reviewing|tested|testing|compared?|comparing)\s+(.{10,50})/gi, type: 'review' },
+    { pattern: /\b(story of|history of|journey|experience with)\s+(.{10,50})/gi, type: 'story' },
+    { pattern: /\b(interview with|conversation with|talking to|speaks with)\s+(.{10,50})/gi, type: 'interview' },
+    { pattern: /\b(analysis of|analyzing|examined?|examining)\s+(.{10,50})/gi, type: 'analysis' }
   ]
 
-  // Pick based on video ID hash for consistency
-  const hash = (videoTitle.length + (channelTitle?.length || 0)) % summaries.length
-  return summaries[hash]
+  let extractedTopic = null
+  let contentType = null
+
+  for (const { pattern, type } of topicPatterns) {
+    const match = pattern.exec(fullText)
+    if (match && match[2]) {
+      extractedTopic = match[2].trim().replace(/[,.]$/, '')
+      contentType = type
+      break
+    }
+  }
+
+  // If we found content sentences, use the first meaningful one
+  if (sentences.length > 0) {
+    // Find the most informative sentence (longer, contains verbs)
+    const bestSentence = sentences.find(s =>
+      s.length > 40 &&
+      /\b(is|are|was|were|explains|shows|demonstrates|reveals|covers|discusses|explores)\b/i.test(s)
+    ) || sentences[0]
+
+    if (bestSentence) {
+      // Clean up the sentence
+      let summary = bestSentence
+        .replace(/^(in this video,?|today,?|hey guys,?|welcome,?)/i, '')
+        .trim()
+
+      // Capitalize first letter
+      summary = summary.charAt(0).toUpperCase() + summary.slice(1)
+
+      // Add period if missing
+      if (!/[.!?]$/.test(summary)) summary += '.'
+
+      return summary
+    }
+  }
+
+  // If we extracted a topic from patterns, build a summary
+  if (extractedTopic && contentType) {
+    const typeLabels = {
+      'explains': 'This video explains',
+      'tutorial': 'A tutorial covering',
+      'exposé': 'An investigation into',
+      'review': 'A review examining',
+      'story': 'The story of',
+      'interview': 'A conversation about',
+      'analysis': 'An analysis of'
+    }
+    return `${typeLabels[contentType]} ${extractedTopic}.`
+  }
+
+  // Last resort: try to extract key nouns/phrases from title
+  const titleWords = videoTitle
+    .replace(/[|\-–—:]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 3 && !/^(the|and|for|with|this|that|from|have|will|what|how|why)$/i.test(w))
+    .slice(0, 5)
+    .join(' ')
+
+  if (titleWords.length > 10) {
+    return `Content covering: ${titleWords.toLowerCase()}.`
+  }
+
+  return null // Return null if we can't generate meaningful content
 }
 
 /**
@@ -2058,6 +2120,48 @@ async function searchSilencedCreators(query) {
 }
 
 // ===============================================
+// FETCH FULL VIDEO DETAILS (for better AI analysis)
+// ===============================================
+async function fetchFullVideoDetails(videoIds) {
+  if (!videoIds || videoIds.length === 0) return {}
+
+  try {
+    const url = new URL('https://www.googleapis.com/youtube/v3/videos')
+    url.searchParams.set('part', 'snippet')
+    url.searchParams.set('id', videoIds.join(','))
+    url.searchParams.set('key', YOUTUBE_API_KEY)
+
+    console.log(`[Silenced] Fetching full details for ${videoIds.length} videos...`)
+    const res = await fetch(url.toString())
+
+    if (!res.ok) {
+      console.warn('[Silenced] Failed to fetch full video details:', res.status)
+      return {}
+    }
+
+    const data = await res.json()
+    quotaUsed += 1 // Videos API costs 1 quota unit per call
+
+    // Build lookup map
+    const detailsMap = {}
+    for (const item of (data.items || [])) {
+      detailsMap[item.id] = {
+        title: item.snippet?.title,
+        description: item.snippet?.description || '',
+        tags: item.snippet?.tags || [],
+        categoryId: item.snippet?.categoryId
+      }
+    }
+
+    console.log(`[Silenced] ✓ Got full details for ${Object.keys(detailsMap).length} videos`)
+    return detailsMap
+  } catch (err) {
+    console.warn('[Silenced] Error fetching video details:', err.message)
+    return {}
+  }
+}
+
+// ===============================================
 // TOPIC SEARCH
 // ===============================================
 async function topicSearch(query, maxResults = 50) {
@@ -2512,6 +2616,10 @@ async function runNoiseCancellation(query) {
       return bScore - aScore
     })
 
+  // Fetch full video details for top 5 videos (Search API only returns truncated descriptions)
+  const top5VideoIds = unmutedVideosRaw.slice(0, 5).map(v => v.videoId)
+  const fullVideoDetails = await fetchFullVideoDetails(top5VideoIds)
+
   // Return videos immediately (fast path) - generate bias receipts in background
   // This allows the UI to show videos quickly while receipts load asynchronously
   // Generate bias receipts for top 5 videos (awaited so they're ready for display)
@@ -2519,9 +2627,16 @@ async function runNoiseCancellation(query) {
     unmutedVideosRaw.slice(0, 10).map(async (video, index) => {
       const { _receiptParams, ...cleanVideo } = video
 
-      // Generate bias receipt for top 5 videos
+      // Generate bias receipt for top 5 videos with full description
       if (index < 5 && _receiptParams) {
         try {
+          // Use full description from Videos API if available
+          const fullDetails = fullVideoDetails[video.videoId]
+          if (fullDetails?.description) {
+            _receiptParams.videoDescription = fullDetails.description
+            cleanVideo.description = fullDetails.description // Update video object too
+          }
+
           const biasReceipt = await generateBiasReceipt(_receiptParams)
           cleanVideo.biasReceipt = biasReceipt
         } catch (err) {
