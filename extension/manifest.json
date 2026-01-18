@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Silenced by the Algorithm",
-  "version": "3.1.0",
-  "description": "Surface under-represented YouTube creators. Exposure Advantage Score, explainability, bias snapshot, and KPMG sustainability auditing.",
+  "version": "4.0.0",
+  "description": "See what YouTube's algorithm amplifies (Noise) and discover high-quality videos it buries (Silenced). Bias Lens for transparent recommendations.",
   "permissions": [
     "activeTab",
     "storage",
@@ -10,19 +10,49 @@
   ],
   "host_permissions": [
     "https://www.youtube.com/*",
-    "https://www.googleapis.com/*"
+    "https://www.googleapis.com/*",
+    "https://i.ytimg.com/*"
   ],
   "background": {
     "service_worker": "background.js"
   },
   "content_scripts": [{
     "matches": ["https://www.youtube.com/*"],
-    "js": ["content.js"],
+    "js": [
+      "scoring.js",
+      "analysis/thumbnail.js",
+      "analysis/title.js",
+      "analysis/transcript.js",
+      "analysis/topics.js",
+      "ui/toggle.js",
+      "ui/tabbar.js",
+      "ui/card-overlay.js",
+      "ui/hover-popover.js",
+      "ui/bias-panel.js",
+      "ui/silenced-grid.js",
+      "content.js"
+    ],
     "css": ["overlay.css"],
     "run_at": "document_idle"
   }],
+  "web_accessible_resources": [{
+    "resources": [
+      "scoring.js",
+      "analysis/thumbnail.js",
+      "analysis/title.js",
+      "analysis/transcript.js",
+      "analysis/topics.js",
+      "ui/toggle.js",
+      "ui/tabbar.js",
+      "ui/card-overlay.js",
+      "ui/hover-popover.js",
+      "ui/bias-panel.js",
+      "ui/silenced-grid.js"
+    ],
+    "matches": ["https://www.youtube.com/*"]
+  }],
   "action": {
-    "default_title": "Silenced - Noise Cancellation for YouTube",
+    "default_title": "Bias Lens - See what YouTube amplifies and silences",
     "default_popup": "popup.html"
   }
 }

@@ -1,254 +1,590 @@
-/* Silenced by the Algorithm
-   Clean, professional UI - No gradients, minimal effects */
+/**
+ * Silenced by the Algorithm - Overlay Styles
+ * 
+ * YouTube-native dark theme styling for all Bias Lens components.
+ * Uses YouTube's color palette and typography for seamless integration.
+ */
 
-/* ===============================================
-   FLOATING TOGGLE
-   =============================================== */
+/* ============================================
+   CSS VARIABLES - YouTube Dark Theme
+   ============================================ */
 
-#silenced-noise-toggle {
-  position: fixed;
-  top: 70px;
-  right: 24px;
-  z-index: 9999;
-  background: #111111;
-  border: 1px solid #262626;
-  border-radius: 8px;
-  padding: 10px 14px;
-  cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+:root {
+  /* Background colors */
+  --bias-bg-primary: #0f0f0f;
+  --bias-bg-secondary: #1a1a1a;
+  --bias-bg-tertiary: #272727;
+  --bias-bg-hover: #3f3f3f;
+  --bias-bg-active: #4a4a4a;
+  
+  /* Text colors */
+  --bias-text-primary: #f1f1f1;
+  --bias-text-secondary: #aaaaaa;
+  --bias-text-muted: #717171;
+  
+  /* Accent colors */
+  --bias-accent-noise: #f97316;      /* Orange - for bias/noise indicators */
+  --bias-accent-silenced: #10b981;   /* Green - for quality/silenced indicators */
+  --bias-accent-warning: #ef4444;    /* Red - for high manipulation */
+  --bias-accent-info: #3b82f6;       /* Blue - for personalization */
+  --bias-accent-purple: #8b5cf6;     /* Purple - for engagement */
+  --bias-accent-cyan: #06b6d4;       /* Cyan - for authority */
+  --bias-accent-amber: #f59e0b;      /* Amber - for trending */
+  
+  /* Border colors */
+  --bias-border-subtle: rgba(255, 255, 255, 0.1);
+  --bias-border-medium: rgba(255, 255, 255, 0.2);
+  
+  /* Shadows */
+  --bias-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --bias-shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+  --bias-shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
+  
+  /* Typography */
+  --bias-font-family: "YouTube Sans", "Roboto", Arial, sans-serif;
+  --bias-font-size-xs: 10px;
+  --bias-font-size-sm: 11px;
+  --bias-font-size-base: 12px;
+  --bias-font-size-md: 13px;
+  --bias-font-size-lg: 14px;
+  
+  /* Spacing */
+  --bias-spacing-xs: 4px;
+  --bias-spacing-sm: 6px;
+  --bias-spacing-md: 8px;
+  --bias-spacing-lg: 12px;
+  --bias-spacing-xl: 16px;
+  
+  /* Border radius */
+  --bias-radius-sm: 4px;
+  --bias-radius-md: 8px;
+  --bias-radius-lg: 12px;
+  --bias-radius-full: 9999px;
+  
+  /* Transitions */
+  --bias-transition-fast: 0.15s ease;
+  --bias-transition-normal: 0.2s ease;
+  --bias-transition-slow: 0.3s ease;
 }
 
-#silenced-noise-toggle:hover {
-  background: #1a1a1a;
-  border-color: #333;
+/* ============================================
+   BASE STYLES
+   ============================================ */
+
+.bias-lens-element {
+  font-family: var(--bias-font-family);
+  font-size: var(--bias-font-size-base);
+  line-height: 1.4;
+  color: var(--bias-text-primary);
+  box-sizing: border-box;
 }
 
-#silenced-noise-toggle.active {
-  background: #111111;
-  border-color: #10b981;
+.bias-lens-element *,
+.bias-lens-element *::before,
+.bias-lens-element *::after {
+  box-sizing: border-box;
 }
 
-.toggle-inner {
+/* ============================================
+   TOGGLE BUTTON (Masthead)
+   ============================================ */
+
+#bias-lens-toggle {
   display: flex;
   align-items: center;
-  gap: 10px;
-}
-
-.toggle-icon {
-  font-size: 18px;
-  width: 24px;
-  text-align: center;
-}
-
-.toggle-label {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.toggle-title {
-  font-size: 12px;
+  gap: var(--bias-spacing-sm);
+  padding: var(--bias-spacing-sm) var(--bias-spacing-lg);
+  border: 1px solid var(--bias-border-medium);
+  border-radius: var(--bias-radius-full);
+  background: transparent;
+  color: var(--bias-text-secondary);
+  font-family: var(--bias-font-family);
+  font-size: var(--bias-font-size-md);
   font-weight: 500;
-  color: #e5e5e5;
+  cursor: pointer;
+  transition: all var(--bias-transition-normal);
+  margin-right: var(--bias-spacing-md);
 }
 
-.toggle-status {
-  font-size: 10px;
-  color: #6b7280;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  font-weight: 600;
+#bias-lens-toggle:hover {
+  background: var(--bias-bg-hover);
+  border-color: var(--bias-border-medium);
+  color: var(--bias-text-primary);
 }
 
-#silenced-noise-toggle.active .toggle-status {
-  color: #10b981;
+#bias-lens-toggle.bias-lens-on {
+  background: rgba(16, 185, 129, 0.15);
+  border-color: rgba(16, 185, 129, 0.5);
+  color: var(--bias-accent-silenced);
 }
 
-/* ===============================================
-   UNMUTED VOICES CONTAINER (External CSS backup)
-   =============================================== */
-
-.silenced-unmuted-container {
-  margin: 12px 0;
-  padding: 14px;
-  background: #111111;
-  border-radius: 8px;
-  border: 1px solid #262626;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+#bias-lens-toggle.bias-lens-on:hover {
+  background: rgba(16, 185, 129, 0.25);
+  border-color: rgba(16, 185, 129, 0.7);
 }
 
-.silenced-unmuted-container .unmuted-header {
-  font-size: 11px;
-  font-weight: 600;
-  color: #10b981;
-  margin-bottom: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+/* ============================================
+   TAB BAR (Below category chips)
+   ============================================ */
+
+#bias-tabs {
+  width: 100%;
+  padding: var(--bias-spacing-md) 0;
+  margin-bottom: var(--bias-spacing-md);
+  border-bottom: 1px solid var(--bias-border-subtle);
+  display: none;
 }
 
-.silenced-unmuted-card {
-  background: #1a1a1a;
-  border-radius: 6px;
-  margin-bottom: 8px;
-  overflow: hidden;
-  transition: background 0.15s ease;
-}
-
-.silenced-unmuted-card:hover {
-  background: #222222;
-}
-
-.silenced-unmuted-card a {
+#bias-tabs.visible {
   display: block;
-  padding: 10px;
-  text-decoration: none;
 }
 
-.silenced-unmuted-card img {
-  width: 100px;
-  height: 56px;
-  border-radius: 4px;
-  object-fit: cover;
-  background: #262626;
+.bias-tabs-inner {
+  display: flex;
+  align-items: center;
+  gap: var(--bias-spacing-md);
+  max-width: 1284px;
+  margin: 0 auto;
+  padding: 0 24px;
 }
 
-.silenced-unmuted-card .video-info {
-  flex: 1;
-  min-width: 0;
-}
-
-.silenced-unmuted-card .video-title {
-  font-size: 12px;
+.bias-tab {
+  display: flex;
+  align-items: center;
+  gap: var(--bias-spacing-sm);
+  padding: var(--bias-spacing-md) var(--bias-spacing-xl);
+  border: none;
+  border-radius: var(--bias-radius-md);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--bias-text-secondary);
+  font-family: var(--bias-font-family);
+  font-size: var(--bias-font-size-lg);
   font-weight: 500;
-  color: #e5e5e5;
-  line-height: 1.3;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  cursor: pointer;
+  transition: all var(--bias-transition-normal);
+  position: relative;
 }
 
-.silenced-unmuted-card .channel-name {
-  font-size: 10px;
-  color: #9ca3af;
-  margin-top: 3px;
+.bias-tab:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--bias-text-primary);
 }
 
-/* ===============================================
-   MUTED VIDEOS
-   =============================================== */
-
-[data-silenced-muted] {
-  display: none !important;
+.bias-tab.active {
+  background: rgba(255, 255, 255, 0.15);
+  color: var(--bias-text-primary);
 }
 
-/* ===============================================
-   THUMBNAIL BADGES (cleaner version)
-   =============================================== */
+.bias-tab[data-tab="noise"].active {
+  background: rgba(249, 115, 22, 0.15);
+  color: var(--bias-accent-noise);
+}
 
-.silenced-badge {
+.bias-tab[data-tab="silenced"].active {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--bias-accent-silenced);
+}
+
+.bias-tab::after {
+  content: '';
   position: absolute;
-  top: 6px;
-  left: 6px;
-  padding: 3px 6px;
-  border-radius: 3px;
-  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-  font-size: 9px;
+  bottom: -9px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 2px;
+  background: currentColor;
+  transition: width var(--bias-transition-normal);
+}
+
+.bias-tab.active::after {
+  width: 60%;
+}
+
+/* ============================================
+   CARD OVERLAY (Per-video bias tags)
+   ============================================ */
+
+.bias-overlay {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--bias-spacing-sm);
+  margin-top: var(--bias-spacing-sm);
+  padding: var(--bias-spacing-xs) 0;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: all var(--bias-transition-normal);
+}
+
+.bias-overlay.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.bias-score-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bias-spacing-xs);
+  padding: 3px var(--bias-spacing-md);
+  border-radius: var(--bias-radius-lg);
+  background: var(--pill-color, var(--bias-text-muted));
+  color: #fff;
+  font-family: var(--bias-font-family);
+  font-size: var(--bias-font-size-sm);
   font-weight: 600;
-  letter-spacing: 0.3px;
-  text-transform: uppercase;
-  z-index: 100;
+  cursor: pointer;
+  transition: transform var(--bias-transition-fast), box-shadow var(--bias-transition-fast);
+}
+
+.bias-score-pill:hover {
+  transform: scale(1.05);
+  box-shadow: var(--bias-shadow-sm);
+}
+
+.bias-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--bias-spacing-xs);
+}
+
+.bias-tag {
+  display: inline-block;
+  padding: 2px var(--bias-spacing-sm);
+  border-radius: var(--bias-radius-sm);
+  background: rgba(255, 255, 255, 0.08);
+  border-left: 2px solid var(--tag-color, var(--bias-text-muted));
+  color: var(--bias-text-secondary);
+  font-family: var(--bias-font-family);
+  font-size: var(--bias-font-size-xs);
+  font-weight: 500;
+  cursor: default;
+  transition: all var(--bias-transition-fast);
+}
+
+.bias-tag:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--bias-text-primary);
+}
+
+/* ============================================
+   HOVER POPOVER
+   ============================================ */
+
+#bias-popover {
+  position: fixed;
+  z-index: 9999;
+  width: 320px;
+  background: var(--bias-bg-secondary);
+  border: 1px solid var(--bias-border-subtle);
+  border-radius: var(--bias-radius-lg);
+  box-shadow: var(--bias-shadow-lg);
+  font-family: var(--bias-font-family);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(8px);
+  transition: all var(--bias-transition-normal);
   pointer-events: none;
 }
 
-.silenced-badge.noise {
-  background: #ef4444;
-  color: white;
+#bias-popover.visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+  pointer-events: auto;
 }
 
-.silenced-badge.amplified {
-  background: #f97316;
-  color: white;
+.popover-content {
+  padding: var(--bias-spacing-xl);
 }
 
-.silenced-badge.silenced {
-  background: #10b981;
-  color: #111;
+.popover-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: var(--bias-spacing-xl);
+  padding-bottom: var(--bias-spacing-lg);
+  border-bottom: 1px solid var(--bias-border-subtle);
 }
 
-.silenced-badge.quiet {
-  background: #22c55e;
-  color: #111;
+.popover-score {
+  font-size: 36px;
+  font-weight: 700;
+  color: var(--bias-accent-noise);
+  line-height: 1;
 }
 
-/* Dim dominant videos when noise cancellation active */
-.silenced-dimmed {
-  opacity: 0.35;
-  filter: grayscale(0.4);
-  transition: opacity 0.2s ease, filter 0.2s ease;
+.popover-section {
+  margin-bottom: var(--bias-spacing-lg);
 }
 
-.silenced-dimmed:hover {
-  opacity: 0.6;
-  filter: grayscale(0.2);
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: var(--bias-spacing-sm);
+  font-size: var(--bias-font-size-sm);
+  font-weight: 600;
+  color: var(--bias-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: var(--bias-spacing-md);
 }
 
-/* Highlight under-represented videos */
-.silenced-highlighted {
-  outline: 2px solid #10b981;
-  outline-offset: -2px;
+/* ============================================
+   BIAS PANEL (Top-right analytics)
+   ============================================ */
+
+#bias-panel {
+  position: fixed;
+  top: 70px;
+  right: 20px;
+  width: 280px;
+  background: var(--bias-bg-secondary);
+  border: 1px solid var(--bias-border-subtle);
+  border-radius: var(--bias-radius-lg);
+  box-shadow: var(--bias-shadow-md);
+  font-family: var(--bias-font-family);
+  z-index: 9998;
+  overflow: hidden;
+  transition: all var(--bias-transition-slow);
+  display: none;
 }
 
-/* ===============================================
-   RESPONSIVE
-   =============================================== */
-
-@media (max-width: 1200px) {
-  #silenced-noise-toggle {
-    top: auto;
-    bottom: 80px;
-    right: 16px;
-    padding: 8px 12px;
-  }
-
-  .toggle-title {
-    font-size: 11px;
-  }
+#bias-panel.visible {
+  display: block;
 }
+
+#bias-panel.collapsed {
+  width: 200px;
+}
+
+#bias-panel.expanded {
+  width: 320px;
+}
+
+.panel-header {
+  padding: var(--bias-spacing-lg) var(--bias-spacing-lg);
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--bias-transition-fast);
+}
+
+.panel-header:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.panel-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--bias-spacing-md);
+  padding: 0 var(--bias-spacing-lg) var(--bias-spacing-lg);
+  border-bottom: 1px solid var(--bias-border-subtle);
+}
+
+.summary-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--bias-spacing-md) var(--bias-spacing-xs);
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: var(--bias-radius-md);
+}
+
+.stat-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--bias-text-primary);
+}
+
+.stat-label {
+  font-size: var(--bias-font-size-xs);
+  color: var(--bias-text-muted);
+  margin-top: 2px;
+}
+
+/* ============================================
+   SILENCED GRID
+   ============================================ */
+
+#silenced-feed {
+  display: none;
+  padding: 0 24px;
+  max-width: 1284px;
+  margin: 0 auto;
+}
+
+#silenced-feed.visible {
+  display: block;
+}
+
+.silenced-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: var(--bias-spacing-xl) 0;
+  margin-bottom: var(--bias-spacing-xl);
+  border-bottom: 1px solid var(--bias-border-subtle);
+}
+
+.silenced-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--bias-text-primary);
+  margin: 0;
+}
+
+.silenced-videos {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 20px;
+}
+
+.silenced-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--bias-radius-lg);
+  overflow: hidden;
+  transition: all var(--bias-transition-normal);
+}
+
+.silenced-card:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(16, 185, 129, 0.3);
+  transform: translateY(-2px);
+}
+
+.quality-pill {
+  background: rgba(16, 185, 129, 0.2);
+  color: var(--bias-accent-silenced);
+}
+
+.silenced-pill {
+  background: rgba(139, 92, 246, 0.2);
+  color: var(--bias-accent-purple);
+}
+
+.gap-pill {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--bias-text-muted);
+}
+
+.gap-pill.positive {
+  background: rgba(16, 185, 129, 0.2);
+  color: var(--bias-accent-silenced);
+}
+
+/* ============================================
+   UTILITY CLASSES
+   ============================================ */
+
+.bias-lens-disabled .bias-overlay {
+  display: none !important;
+}
+
+.bias-hidden {
+  display: none !important;
+}
+
+.bias-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--bias-spacing-lg);
+  padding: 60px 0;
+  color: var(--bias-text-muted);
+}
+
+.loading-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid rgba(16, 185, 129, 0.2);
+  border-top-color: var(--bias-accent-silenced);
+  border-radius: 50%;
+  animation: bias-spin 1s linear infinite;
+}
+
+@keyframes bias-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ============================================
+   RESPONSIVE STYLES
+   ============================================ */
 
 @media (max-width: 800px) {
-  #silenced-noise-toggle {
-    bottom: 70px;
-    right: 12px;
+  #bias-lens-toggle .bias-lens-label {
+    display: none;
+  }
+  
+  #bias-lens-toggle {
+    padding: var(--bias-spacing-md);
+    border-radius: 50%;
+  }
+  
+  .bias-tabs-inner {
+    padding: 0 var(--bias-spacing-lg);
+  }
+  
+  .bias-tab {
+    padding: var(--bias-spacing-sm) var(--bias-spacing-lg);
+    font-size: var(--bias-font-size-md);
+  }
+  
+  #bias-panel {
+    right: 10px;
+    width: 180px;
+  }
+  
+  #bias-panel.expanded {
+    width: 280px;
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  * {
-    transition: none !important;
-    animation: none !important;
+@media (max-width: 600px) {
+  #silenced-feed {
+    padding: 0 var(--bias-spacing-lg);
+  }
+  
+  .silenced-header {
+    flex-direction: column;
+    gap: var(--bias-spacing-lg);
+  }
+  
+  .silenced-videos {
+    grid-template-columns: 1fr;
+  }
+  
+  #bias-popover {
+    width: 280px;
   }
 }
 
-@media print {
-  #silenced-noise-toggle,
-  #silenced-shadow-host,
-  .silenced-unmuted-container {
-    display: none !important;
+/* ============================================
+   ANIMATIONS
+   ============================================ */
+
+@keyframes biasFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
-/* ===============================================
-   Z-INDEX FIXES
-   =============================================== */
-
-#silenced-shadow-host {
-  position: relative;
-  z-index: 100;
+@keyframes biasPulse {
+  0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+  70% { box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
 }
 
-ytd-watch-flexy[theater] #silenced-noise-toggle {
-  top: auto;
-  bottom: 24px;
+.bias-animate-in {
+  animation: biasFadeIn 0.3s ease forwards;
+}
+
+.bias-pulse {
+  animation: biasPulse 0.6s ease-out;
 }

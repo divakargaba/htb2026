@@ -1,11 +1,11 @@
-// Silenced by the Algorithm - Noise Cancellation Engine
-// Hear the voices the algorithm drowns out
+// Silenced by the Algorithm - Bias Lens Engine
+// See what the algorithm amplifies, hear what it silences
 
 // ============================================
 // CONFIGURATION & VERSIONING
 // ============================================
-const SCHEMA_VERSION = '3.1.0'
-const ENGINE_VERSION = 'v3.1'
+const SCHEMA_VERSION = '4.0.0'
+const ENGINE_VERSION = 'v4.0'
 
 const YOUTUBE_API_KEY = 'AIzaSyDNdZOfU79GgP3-fZ-KezbiT158mGpi3dc'
 const MAX_SUBSCRIBER_THRESHOLD = 100000 // Noise cancellation threshold
@@ -2470,9 +2470,347 @@ async function runNoiseCancellation(query) {
 }
 
 // ===============================================
+// HOMEPAGE BIAS ANALYSIS
+// ===============================================
+
+/**
+ * Analyze homepage videos for bias scoring
+ * Called when Bias Lens is enabled on homepage
+ */
+async function analyzeHomepageVideos(videoIds, feedContext = {}) {
+  console.log(`[BiasLens] Analyzing ${videoIds.length} homepage videos`)
+  
+  const results = []
+  const channelIds = new Set()
+  
+  // Batch fetch video details
+  const videos = await batchGetVideos(videoIds.slice(0, 24)) // Limit to 24 for performance
+  
+  // Collect channel IDs
+  for (const video of videos) {
+    if (video?.snippet?.channelId) {
+      channelIds.add(video.snippet.channelId)
+    }
+  }
+  
+  // Batch fetch channel details
+  const channels = await batchGetChannels([...channelIds])
+  const channelMap = new Map(channels.map(c => [c.id, c]))
+  
+  // Analyze each video
+  for (const video of videos) {
+    if (!video) continue
+    
+    const channel = channelMap.get(video.snippet?.channelId)
+    const videoId = video.id
+    
+    // Calculate bias score using existing infrastructure
+    const noiseAnalysis = calculateExposureAdvantageScore(channel, {
+      viewCount: video.statistics?.viewCount,
+      likeCount: video.statistics?.likeCount,
+      commentCount: video.statistics?.commentCount,
+      duration: video.contentDetails?.duration
+    }, [])
+    
+    // Map to bias score format
+    const biasScore = noiseAnalysis.totalScore
+    const confidence = 0.7 // Base confidence from API data
+    
+    // Generate contributions/tags
+    const contributions = []
+    
+    if (noiseAnalysis.breakdown.reach.score > 50) {
+      contributions.push({
+        factor: 'Authority Boost',
+        value: Math.round(noiseAnalysis.breakdown.reach.score * 0.35),
+        color: '#06b6d4'
+      })
+    }
+    
+    if (noiseAnalysis.breakdown.velocity.score > 50) {
+      contributions.push({
+        factor: 'Trend Spike',
+        value: Math.round(noiseAnalysis.breakdown.velocity.score * 0.25),
+        color: '#f59e0b'
+      })
+    }
+    
+    if (noiseAnalysis.breakdown.frequency.score > 50) {
+      contributions.push({
+        factor: 'Upload Frequency',
+        value: Math.round(noiseAnalysis.breakdown.frequency.score * 0.20),
+        color: '#8b5cf6'
+      })
+    }
+    
+    if (noiseAnalysis.breakdown.recency.score > 50) {
+      contributions.push({
+        factor: 'Recency Boost',
+        value: Math.round(noiseAnalysis.breakdown.recency.score * 0.20),
+        color: '#f97316'
+      })
+    }
+    
+    // Sort by value
+    contributions.sort((a, b) => b.value - a.value)
+    
+    // Generate tags from contributions
+    const tags = contributions.slice(0, 4).map(c => ({
+      text: `${c.factor} +${c.value}`,
+      color: c.color,
+      key: c.factor.toLowerCase().replace(/\s+/g, '_'),
+      value: c.value
+    }))
+    
+    results.push({
+      videoId,
+      title: video.snippet?.title,
+      channelName: video.snippet?.channelTitle,
+      channelId: video.snippet?.channelId,
+      biasScore,
+      confidence,
+      scores: {
+        aas: noiseAnalysis.totalScore,
+        ms: 0, // Would need thumbnail/title analysis
+        cis: 0  // Would need description analysis
+      },
+      contributions,
+      tags,
+      metrics: {
+        views: parseInt(video.statistics?.viewCount || '0'),
+        subs: parseInt(channel?.statistics?.subscriberCount || '0'),
+        age: getVideoAge(video.snippet?.publishedAt),
+        velocity: noiseAnalysis.rawMetrics?.viewsPerDay > 10000 ? 'high' : 
+                  noiseAnalysis.rawMetrics?.viewsPerDay > 1000 ? 'medium' : 'low',
+        thumbAbuse: 0, // Would need thumbnail analysis
+        sponsorDetected: false // Would need description analysis
+      },
+      exposureTier: noiseAnalysis.exposureTier
+    })
+  }
+  
+  // Calculate feed analysis
+  const feedAnalysis = calculateFeedAnalysis(results, feedContext)
+  
+  return {
+    videos: results,
+    feedAnalysis
+  }
+}
+
+/**
+ * Batch get video details
+ */
+async function batchGetVideos(videoIds) {
+  if (!videoIds || videoIds.length === 0) return []
+  
+  const results = []
+  
+  // Batch in groups of 50
+  for (let i = 0; i < videoIds.length; i += 50) {
+    if (quotaUsed + 1 > QUOTA_LIMIT) break
+    
+    const batch = videoIds.slice(i, i + 50)
+    
+    try {
+      const url = new URL('https://www.googleapis.com/youtube/v3/videos')
+      url.searchParams.set('part', 'snippet,statistics,contentDetails')
+      url.searchParams.set('id', batch.join(','))
+      url.searchParams.set('key', YOUTUBE_API_KEY)
+      
+      const res = await fetch(url.toString())
+      if (!res.ok) continue
+      
+      const data = await res.json()
+      quotaUsed += 1
+      
+      results.push(...(data.items || []))
+    } catch (err) {
+      console.error('[BiasLens] Batch video fetch error:', err)
+    }
+  }
+  
+  return results
+}
+
+/**
+ * Get video age as human-readable string
+ */
+function getVideoAge(publishedAt) {
+  if (!publishedAt) return '--'
+  
+  const now = new Date()
+  const published = new Date(publishedAt)
+  const diffMs = now - published
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
+  const diffDays = Math.floor(diffHours / 24)
+  
+  if (diffHours < 24) return `${diffHours}h`
+  if (diffDays < 7) return `${diffDays}d`
+  if (diffDays < 30) return `${Math.floor(diffDays / 7)}w`
+  if (diffDays < 365) return `${Math.floor(diffDays / 30)}mo`
+  return `${Math.floor(diffDays / 365)}y`
+}
+
+/**
+ * Calculate overall feed analysis
+ */
+function calculateFeedAnalysis(videoResults, feedContext = {}) {
+  if (!videoResults || videoResults.length === 0) {
+    return {
+      avgBias: 0,
+      distribution: { high: 0, medium: 0, low: 0 },
+      topicDominance: [],
+      channelConcentration: { top5Share: 0, topChannels: [] },
+      manipulationPrevalence: 0,
+      commercialPrevalence: 0
+    }
+  }
+  
+  const biasScores = videoResults.map(v => v.biasScore)
+  const avgBias = Math.round(biasScores.reduce((a, b) => a + b, 0) / biasScores.length)
+  
+  // Distribution
+  const high = biasScores.filter(s => s >= 70).length / biasScores.length
+  const medium = biasScores.filter(s => s >= 40 && s < 70).length / biasScores.length
+  const low = biasScores.filter(s => s < 40).length / biasScores.length
+  
+  // Channel concentration
+  const channelCounts = {}
+  for (const v of videoResults) {
+    const ch = v.channelName || 'Unknown'
+    channelCounts[ch] = (channelCounts[ch] || 0) + 1
+  }
+  
+  const sortedChannels = Object.entries(channelCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+  
+  const top5Share = sortedChannels.reduce((sum, [_, count]) => sum + count, 0) / videoResults.length
+  
+  // Topic dominance (simplified - would need topic analysis)
+  const topicDominance = feedContext.topics || []
+  
+  return {
+    avgBias,
+    distribution: {
+      high: Math.round(high * 100),
+      medium: Math.round(medium * 100),
+      low: Math.round(low * 100)
+    },
+    topicDominance,
+    channelConcentration: {
+      top5Share: Math.round(top5Share * 100),
+      topChannels: sortedChannels.map(([name, count]) => ({
+        name,
+        count,
+        percentage: Math.round((count / videoResults.length) * 100)
+      }))
+    },
+    manipulationPrevalence: 0, // Would need thumbnail/title analysis
+    commercialPrevalence: 0 // Would need description analysis
+  }
+}
+
+/**
+ * Discover silenced videos for a topic
+ * Used by Silenced tab
+ */
+async function discoverSilencedVideos(topicMap, excludedChannels = [], filters = {}) {
+  console.log('[BiasLens] Discovering silenced videos for topics:', topicMap)
+  
+  // Build search query from topics
+  const topTopics = (topicMap || [])
+    .sort((a, b) => b.weight - a.weight)
+    .slice(0, 3)
+    .map(t => t.name || t)
+  
+  if (topTopics.length === 0) {
+    return { videos: [] }
+  }
+  
+  const query = topTopics.join(' ')
+  
+  // Use existing noise cancellation engine
+  const result = await runNoiseCancellation(query)
+  
+  // Filter out excluded channels
+  const excludedSet = new Set(excludedChannels)
+  const filteredVideos = (result.unmutedVideos || [])
+    .filter(v => !excludedSet.has(v.channelId))
+    .map(v => ({
+      videoId: v.videoId,
+      title: v.title,
+      channel: v.channelTitle,
+      thumbnail: v.thumbnail,
+      qualityScore: Math.round((v.qualityScore || 0.5) * 100),
+      silencedScore: 100 - (v.subscriberCount > 100000 ? 80 : v.subscriberCount > 50000 ? 60 : v.subscriberCount > 10000 ? 40 : 20),
+      exposureGap: Math.round((v.qualityScore || 0.5) * 100) - (v.subscriberCount > 100000 ? 80 : 40),
+      whyGood: v.whySurfaced || ['High quality content', 'Under-represented creator'],
+      whyBuried: [
+        v.subscriberCount < 50000 ? 'Small channel size limits algorithmic reach' : 'Moderate channel size',
+        'Lower velocity than dominant channels'
+      ],
+      views: v.subscriberCount * 10, // Estimate
+      publishedAt: v.publishedAt,
+      duration: 600 // Default 10 min
+    }))
+  
+  return {
+    videos: filteredVideos.slice(0, 12)
+  }
+}
+
+// ===============================================
 // MESSAGE HANDLING
 // ===============================================
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  // Homepage analysis
+  if (request.action === 'analyzeHomepage') {
+    analyzeHomepageVideos(request.videoIds, request.feedContext)
+      .then(result => sendResponse({ success: true, data: result }))
+      .catch(err => sendResponse({ success: false, error: err.message }))
+    return true
+  }
+  
+  // Discover silenced videos
+  if (request.action === 'discoverSilenced') {
+    discoverSilencedVideos(request.topicMap, request.excludedChannels, request.filters)
+      .then(result => sendResponse({ success: true, data: result }))
+      .catch(err => sendResponse({ success: false, error: err.message }))
+    return true
+  }
+  
+  // Single video analysis (for hover popover)
+  if (request.action === 'analyzeVideo') {
+    const { videoData } = request
+    // Quick analysis without full API call
+    sendResponse({
+      success: true,
+      data: {
+        videoId: videoData.videoId,
+        biasScore: 50, // Default - would need full analysis
+        confidence: 0.5,
+        tags: []
+      }
+    })
+    return false
+  }
+  
+  // Bias Lens state
+  if (request.action === 'setBiasLens') {
+    chrome.storage.local.set({ biasLensEnabled: request.enabled })
+    sendResponse({ success: true })
+    return false
+  }
+  
+  if (request.action === 'getBiasLens') {
+    chrome.storage.local.get(['biasLensEnabled'], (result) => {
+      sendResponse({ enabled: result.biasLensEnabled || false })
+    })
+    return true
+  }
+  
   if (request.action === 'analyze') {
     analyzeVideo(request.videoId, request.transcript)
       .then(result => sendResponse({ success: true, data: result }))
@@ -2598,4 +2936,4 @@ chrome.action.onClicked.addListener(async (tab) => {
   }
 })
 
-console.log('[Silenced] 🔇 Noise Cancellation Engine v3.0 loaded - Hear the voices the algorithm drowns out')
+console.log('[BiasLens] 🔍 Bias Lens Engine v4.0 loaded - See what the algorithm amplifies, hear what it silences')
