@@ -1677,9 +1677,8 @@ function injectUnmutedVoices() {
       `
     }
 
-    // Build audit info line (shows subs, surfaced via, and diversityNote paragraph)
+    // Build audit info line (shows subs, surfaced via, and content description)
     const surfaceMethod = video.surfaceMethod || 'engagement_ranking'
-    const diversityNote = video.diversityNote || video.qualityReason || ''
     const methodDisplay = formatDiversityMethod(surfaceMethod)
 
     // Check if this video was transcript-verified
@@ -1688,11 +1687,22 @@ function injectUnmutedVoices() {
       ? '<span style="background: #065f46; color: #10b981; padding: 1px 4px; border-radius: 3px; font-size: 8px; margin-left: 4px;">VERIFIED</span>'
       : ''
 
+    // Use AI content summary if available, otherwise fall back to diversityNote/qualityReason
+    const contentDescription = biasReceipt?.contentSummary || video.diversityNote || video.qualityReason || ''
+    const isAIGenerated = biasReceipt?.contentSummary && biasReceipt?.method === 'gemini'
+
     // Always show the audit info with subs, surfaced via, and description
     const auditInfoHtml = `
-      <div style="padding: 6px 10px; border-top: 1px solid #262626; font-size: 10px; color: #6b7280; font-family: 'SF Mono', Monaco, monospace;">
-        Subs: ${fmt(video.subscriberCount)} · Surfaced via: ${methodDisplay}${transcriptBadge}
-        ${diversityNote ? `<div style="font-size: 9px; color: #9ca3af; margin-top: 4px; font-family: -apple-system, sans-serif; line-height: 1.4;">${esc(diversityNote)}</div>` : ''}
+      <div style="padding: 8px 10px; border-top: 1px solid #262626;">
+        <div style="font-size: 10px; color: #6b7280; font-family: 'SF Mono', Monaco, monospace; margin-bottom: 6px;">
+          Subs: ${fmt(video.subscriberCount)} · Surfaced via: ${methodDisplay}${transcriptBadge}
+        </div>
+        ${contentDescription ? `
+          <div style="font-size: 11px; color: #d1d5db; line-height: 1.5; font-family: -apple-system, sans-serif;">
+            ${isAIGenerated ? '<span style="background: #1e3a5f; color: #60a5fa; padding: 1px 4px; border-radius: 3px; font-size: 8px; margin-right: 4px;">AI</span>' : ''}
+            ${esc(contentDescription)}
+          </div>
+        ` : ''}
       </div>
     `
 

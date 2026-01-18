@@ -348,8 +348,10 @@ async function generateBiasReceipt(params) {
   const whyNotShown = generateHeuristicWhyNotShown(params)
   const whySurfaced = generateHeuristicWhySurfaced(params)
   const confidence = calculateReceiptConfidence(params)
+  const contentSummary = generateHeuristicContentSummary(params)
 
   const receipt = {
+    contentSummary,
     whyNotShown,
     whySurfaced,
     confidence,
@@ -467,6 +469,58 @@ function generateHeuristicWhySurfaced(params) {
 }
 
 /**
+ * Generate a content summary from video title and description (heuristic fallback)
+ */
+function generateHeuristicContentSummary(params) {
+  const { videoTitle, videoDescription = '', channelTitle, subscriberCount } = params
+
+  if (!videoTitle) return null
+
+  // Clean the title
+  const cleanTitle = videoTitle
+    .replace(/\|.*$/, '') // Remove pipe sections
+    .replace(/[-–—].*$/, '') // Remove dash sections at end
+    .trim()
+
+  // Extract key phrases from description
+  const desc = (videoDescription || '').slice(0, 300).toLowerCase()
+
+  // Determine content type from title/description patterns
+  let contentType = 'video'
+  if (/\b(explained|explanation|what is|how to|tutorial|guide)\b/i.test(videoTitle)) {
+    contentType = 'educational content'
+  } else if (/\b(review|unboxing|tested|compared)\b/i.test(videoTitle)) {
+    contentType = 'review'
+  } else if (/\b(documentary|story|journey|experience)\b/i.test(videoTitle)) {
+    contentType = 'documentary-style video'
+  } else if (/\b(interview|conversation|talks|discusses)\b/i.test(videoTitle)) {
+    contentType = 'discussion'
+  } else if (/\b(vlog|day in|routine)\b/i.test(videoTitle)) {
+    contentType = 'vlog'
+  } else if (/\b(news|breaking|update|announcement)\b/i.test(videoTitle)) {
+    contentType = 'news coverage'
+  } else if (/\b(analysis|deep dive|breakdown)\b/i.test(videoTitle)) {
+    contentType = 'in-depth analysis'
+  }
+
+  // Build the summary
+  const subLabel = subscriberCount < 10000 ? 'micro-creator' :
+                   subscriberCount < 50000 ? 'emerging creator' :
+                   subscriberCount < 100000 ? 'growing creator' : 'creator'
+
+  // Generate a more natural summary
+  const summaries = [
+    `This ${contentType} from ${subLabel} ${channelTitle} explores "${cleanTitle}" - offering a perspective that may differ from mainstream coverage on this topic.`,
+    `${channelTitle}, a ${subLabel}, presents ${contentType} on "${cleanTitle}" - a voice that typically receives less algorithmic visibility despite covering important topics.`,
+    `An independent ${contentType} titled "${cleanTitle}" from ${channelTitle} - representing viewpoints often underrepresented in YouTube's recommendation algorithm.`
+  ]
+
+  // Pick based on video ID hash for consistency
+  const hash = (videoTitle.length + (channelTitle?.length || 0)) % summaries.length
+  return summaries[hash]
+}
+
+/**
  * Calculate confidence level for the receipt
  */
 function calculateReceiptConfidence(params) {
@@ -547,41 +601,66 @@ async function callGeminiAPI(prompt, config = {}) {
 
 /**
  * Generate bias receipt using Gemini AI (when ENABLE_ML_FEATURES is true)
+ * Now includes content analysis for richer descriptions
  */
 async function generateBiasReceiptWithGemini(params) {
   if (!GEMINI_API_KEY) return null
 
-  const { subscriberCount, viewsPerDay, engagementRatio, avgSubsInTopic, topicConcentration, videoTitle, channelTitle } = params
+  const {
+    subscriberCount,
+    viewsPerDay,
+    engagementRatio,
+    avgSubsInTopic,
+    topicConcentration,
+    videoTitle,
+    videoDescription = '',
+    channelTitle,
+    isRisingSignal
+  } = params
 
-  const prompt = `You are analyzing algorithmic bias in YouTube recommendations. Generate a bias receipt for this video.
+  // Truncate description if too long
+  const descSnippet = videoDescription.slice(0, 500)
 
-Video: "${videoTitle}" by ${channelTitle}
-Channel subscribers: ${fmt(subscriberCount)}
-Views/day: ${fmt(viewsPerDay)}
-Engagement ratio: ${engagementRatio.toFixed(2)}
-Topic avg subscribers: ${fmt(avgSubsInTopic)}
-Topic concentration by top channels: ${topicConcentration}%
+  const prompt = `You are analyzing a YouTube video that was algorithmically suppressed but surfaced by our bias-correction system.
 
-Generate a JSON response with EXACTLY this structure:
+VIDEO INFO:
+Title: "${videoTitle}"
+Channel: ${channelTitle}
+Description: "${descSnippet}"
+Subscribers: ${fmt(subscriberCount)}
+Rising creator: ${isRisingSignal ? 'Yes' : 'No'}
+Topic concentration by top 10 channels: ${topicConcentration}%
+
+TASK: Generate a detailed bias receipt explaining why this video deserves more visibility.
+
+Return JSON with this EXACT structure:
 {
-  "whyNotShown": ["bullet 1", "bullet 2", "bullet 3"],
-  "whySurfaced": ["bullet 1", "bullet 2", "bullet 3"],
+  "contentSummary": "A 1-2 sentence summary of what this video appears to cover based on the title and description. Be specific about the topic and angle.",
+  "whyNotShown": [
+    "Specific reason 1 why algorithm likely suppressed this (15-25 words)",
+    "Specific reason 2 about algorithmic disadvantage (15-25 words)",
+    "Specific reason 3 if applicable (15-25 words)"
+  ],
+  "whySurfaced": [
+    "Specific value this video offers viewers (15-25 words)",
+    "What perspective or insight this creator brings (15-25 words)",
+    "Why this voice matters in this topic space (15-25 words)"
+  ],
   "confidence": "low" | "medium" | "high"
 }
 
-RULES:
-- Each bullet must be under 15 words
-- Use neutral, non-defamatory language
-- Use phrases like "may indicate", "limited evidence", "based on public signals"
-- Do NOT make factual accusations
-- whyNotShown: 2-4 bullets explaining algorithmic disadvantage
-- whySurfaced: 2-4 bullets explaining why we're recommending this
-- Be concise and specific`
+GUIDELINES:
+- contentSummary: Be specific about the video's topic, not generic. Example: "This video explores 11 different types of faith and belief systems, comparing their core principles and how they shape worldviews."
+- whyNotShown: Focus on algorithmic mechanics (subscriber count disadvantage, watch time bias, upload frequency, etc.)
+- whySurfaced: Focus on content VALUE - what unique perspective, expertise, or insight this creator offers
+- Be descriptive and specific, not generic
+- Reference the actual video topic in your bullets
+- Use confident but qualified language`
 
   try {
     const text = await callGeminiAPI(prompt, {
-      temperature: 0.3,
-      maxOutputTokens: 500
+      temperature: 0.4,
+      maxOutputTokens: 800
     })
 
     if (!text) return null
@@ -598,6 +677,7 @@ RULES:
     }
 
     return {
+      contentSummary: parsed.contentSummary || null,
       whyNotShown: parsed.whyNotShown.slice(0, 4),
       whySurfaced: parsed.whySurfaced.slice(0, 4),
       confidence: ['low', 'medium', 'high'].includes(parsed.confidence) ? parsed.confidence : 'medium',
@@ -2413,6 +2493,7 @@ async function runNoiseCancellation(query) {
           exposureTier: v.exposureTier,
           isRisingSignal: v.isRisingSignal,
           videoTitle: v.title,
+          videoDescription: v.description || '',
           channelTitle: v.channelTitle
         }
       }
