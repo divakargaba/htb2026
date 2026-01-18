@@ -3,6 +3,12 @@
   "name": "Silenced by the Algorithm",
   "version": "5.0.0",
   "description": "See what YouTube's algorithm amplifies (Noise) and discover high-quality videos it buries (Silenced). Bias Lens for transparent recommendations.",
+  "icons": {
+    "16": "unsilencelogo.png",
+    "32": "unsilencelogo.png",
+    "48": "unsilencelogo.png",
+    "128": "unsilencelogo.png"
+  },
   "permissions": [
     "activeTab",
     "storage",
@@ -63,6 +69,11 @@
   }],
   "action": {
     "default_title": "Bias Lens - See what YouTube amplifies and silences",
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "unsilencelogo.png",
+      "32": "unsilencelogo.png",
+      "48": "unsilencelogo.png"
+    }
   }
 }

@@ -12,41 +12,29 @@
     }
 
     body {
-      width: 320px;
-      min-height: 380px;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: #111111;
-      color: #e5e5e5;
+      width: 300px;
+      font-family: "YouTube Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f0f0f;
+      color: #e8e8e8;
     }
 
     .header {
-      padding: 16px;
-      border-bottom: 1px solid #262626;
-    }
-
-    .header-top {
+      padding: 20px;
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     }
 
     .logo {
-      width: 36px;
-      height: 36px;
-      background: #10b981;
+      width: 40px;
+      height: 40px;
       border-radius: 8px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 18px;
+      object-fit: contain;
     }
 
-    .title-group {
-      flex: 1;
-    }
-
-    h1 {
-      font-size: 16px;
+    .title-group h1 {
+      font-size: 15px;
       font-weight: 600;
       color: #f5f5f5;
       margin-bottom: 2px;
@@ -54,192 +42,77 @@
 
     .tagline {
       font-size: 11px;
-      color: #6b7280;
+      color: #888;
     }
 
     .content {
-      padding: 14px;
+      padding: 20px;
     }
 
-    .hackathon-badge {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 10px 12px;
-      background: #1a1a1a;
-      border: 1px solid #262626;
-      border-radius: 6px;
-      margin-bottom: 14px;
-    }
-
-    .hackathon-badge-icon {
-      font-size: 16px;
-    }
-
-    .hackathon-badge-text {
-      flex: 1;
-    }
-
-    .hackathon-badge-title {
-      font-size: 11px;
-      font-weight: 600;
-      color: #a78bfa;
-    }
-
-    .hackathon-badge-subtitle {
-      font-size: 9px;
-      color: #7c3aed;
-    }
-
-    .stat-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-      margin-bottom: 14px;
-    }
-
-    .stat-card {
-      background: #1a1a1a;
-      border-radius: 8px;
-      padding: 14px;
-      border: 1px solid #262626;
-    }
-
-    .stat-value {
-      font-size: 24px;
-      font-weight: 700;
-      line-height: 1;
-      margin-bottom: 4px;
-    }
-
-    .stat-value.green { color: #10b981; }
-    .stat-value.amber { color: #f59e0b; }
-
-    .stat-label {
-      font-size: 10px;
-      color: #6b7280;
-      text-transform: uppercase;
-      letter-spacing: 0.3px;
-    }
-
-    .toggle-card {
-      background: #1a1a1a;
-      border: 1px solid #262626;
-      border-radius: 8px;
-      padding: 14px;
-      margin-bottom: 14px;
-      cursor: pointer;
-      transition: background 0.15s ease, border-color 0.15s ease;
-    }
-
-    .toggle-card:hover {
-      background: #222222;
-    }
-
-    .toggle-card.active {
-      border-color: #10b981;
-    }
-
-    .toggle-header {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-
-    .toggle-icon {
-      font-size: 20px;
-      width: 28px;
-      text-align: center;
-    }
-
-    .toggle-info {
-      flex: 1;
-    }
-
-    .toggle-title {
+    .description {
       font-size: 13px;
-      font-weight: 500;
-      color: #f5f5f5;
-      margin-bottom: 2px;
+      line-height: 1.5;
+      color: #aaa;
+      margin-bottom: 20px;
     }
 
-    .toggle-desc {
-      font-size: 10px;
-      color: #6b7280;
+    .features {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-bottom: 20px;
     }
 
-    .toggle-switch {
-      width: 44px;
-      height: 24px;
-      background: #404040;
-      border-radius: 12px;
-      position: relative;
-      transition: background 0.2s ease;
+    .feature {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
     }
 
-    .toggle-card.active .toggle-switch {
-      background: #10b981;
-    }
-
-    .toggle-thumb {
+    .feature-icon {
       width: 20px;
       height: 20px;
-      background: white;
-      border-radius: 50%;
-      position: absolute;
-      top: 2px;
-      left: 2px;
-      transition: transform 0.2s ease;
-    }
-
-    .toggle-card.active .toggle-thumb {
-      transform: translateX(20px);
-    }
-
-    .info-section {
-      background: #0a0a0a;
-      border-radius: 8px;
-      padding: 12px;
-      margin-bottom: 14px;
-    }
-
-    .info-title {
-      font-size: 10px;
-      font-weight: 600;
-      color: #6b7280;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin-bottom: 10px;
-    }
-
-    .info-item {
+      background: rgba(34, 197, 94, 0.15);
+      border-radius: 4px;
       display: flex;
       align-items: center;
-      gap: 8px;
-      padding: 6px 0;
-      border-bottom: 1px solid #1a1a1a;
+      justify-content: center;
+      font-size: 10px;
+      color: #22c55e;
+      flex-shrink: 0;
+      margin-top: 1px;
     }
 
-    .info-item:last-child {
-      border-bottom: none;
-    }
-
-    .info-icon {
+    .feature-text {
       font-size: 12px;
-      width: 20px;
-      text-align: center;
+      color: #999;
+      line-height: 1.4;
     }
 
-    .info-text {
-      flex: 1;
-      font-size: 11px;
-      color: #9ca3af;
+    .cta-button {
+      display: block;
+      width: 100%;
+      padding: 12px;
+      background: #22c55e;
+      border: none;
+      border-radius: 8px;
+      color: #000;
+      font-size: 13px;
+      font-weight: 600;
+      text-align: center;
+      text-decoration: none;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+
+    .cta-button:hover {
+      background: #16a34a;
     }
 
     .footer {
-      padding: 10px 14px;
-      background: #0a0a0a;
-      border-top: 1px solid #262626;
+      padding: 12px 20px;
+      background: rgba(255, 255, 255, 0.02);
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
       display: flex;
       justify-content: space-between;
       align-items: center;
@@ -247,90 +120,55 @@
 
     .footer-text {
       font-size: 10px;
-      color: #4b5563;
+      color: #555;
     }
 
-    .footer-link {
-      font-size: 10px;
-      color: #10b981;
-      text-decoration: none;
-    }
-
-    .footer-link:hover {
-      text-decoration: underline;
+    .footer-badge {
+      font-size: 9px;
+      color: #22c55e;
+      padding: 3px 8px;
+      background: rgba(34, 197, 94, 0.1);
+      border-radius: 4px;
     }
   </style>
 </head>
 <body>
   <div class="header">
-    <div class="header-top">
-      <div class="logo">S</div>
-      <div class="title-group">
-        <h1>silenced</h1>
-        <div class="tagline">Surface under-represented creators</div>
-      </div>
+    <img src="unsilencelogo.png" alt="Logo" class="logo">
+    <div class="title-group">
+      <h1>Silenced by the Algorithm</h1>
+      <div class="tagline">Surface under-represented creators</div>
     </div>
   </div>
 
   <div class="content">
-    <div class="hackathon-badge">
-      <span class="hackathon-badge-icon">◆</span>
-      <div class="hackathon-badge-text">
-        <div class="hackathon-badge-title">Hack the Bias '26</div>
-        <div class="hackathon-badge-subtitle">KPMG Sustainability Challenge</div>
+    <p class="description">
+      Discover high-quality videos that YouTube's algorithm buries. We analyze engagement quality, not just popularity.
+    </p>
+
+    <div class="features">
+      <div class="feature">
+        <span class="feature-icon">✓</span>
+        <span class="feature-text">Find hidden gems from smaller creators</span>
+      </div>
+      <div class="feature">
+        <span class="feature-icon">✓</span>
+        <span class="feature-text">See why videos get limited reach</span>
+      </div>
+      <div class="feature">
+        <span class="feature-icon">✓</span>
+        <span class="feature-text">AI-powered quality analysis</span>
       </div>
     </div>
 
-    <div class="stat-grid">
-      <div class="stat-card">
-        <div class="stat-value green" id="voices-unmuted">0</div>
-        <div class="stat-label">Voices Surfaced</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value amber" id="noise-muted">0</div>
-        <div class="stat-label">Dominant De-prioritized</div>
-      </div>
-    </div>
-
-    <div class="toggle-card" id="noise-toggle" role="switch" tabindex="0">
-      <div class="toggle-header">
-        <span class="toggle-icon">◉</span>
-        <div class="toggle-info">
-          <div class="toggle-title">Surface Silenced Voices</div>
-          <div class="toggle-desc">Find creators the algorithm misses</div>
-        </div>
-        <div class="toggle-switch">
-          <div class="toggle-thumb"></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="info-section">
-      <div class="info-title">How It Works</div>
-      <div class="info-item">
-        <span class="info-icon">→</span>
-        <span class="info-text">Calculates Exposure Advantage Score</span>
-      </div>
-      <div class="info-item">
-        <span class="info-icon">→</span>
-        <span class="info-text">Identifies under-represented creators</span>
-      </div>
-      <div class="info-item">
-        <span class="info-icon">→</span>
-        <span class="info-text">Shows why each video was surfaced</span>
-      </div>
-      <div class="info-item">
-        <span class="info-icon">→</span>
-        <span class="info-text">Audits sustainability claims (KPMG)</span>
-      </div>
-    </div>
+    <a href="https://youtube.com" target="_blank" class="cta-button">
+      Open YouTube
+    </a>
   </div>
 
   <div class="footer">
-    <span class="footer-text">silenced v3.1</span>
-    <a class="footer-link" href="https://youtube.com" target="_blank">Open YouTube</a>
+    <span class="footer-text">Hack the Bias '26</span>
+    <span class="footer-badge">v5.0</span>
   </div>
-
-  <script src="popup.js"></script>
 </body>
 </html>

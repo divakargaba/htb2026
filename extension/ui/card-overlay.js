@@ -493,10 +493,6 @@ function parseViewCount(str) {
  * Find the injection point within a card (after metadata line)
  */
 function findCardInjectionPoint(card) {
-  // #region agent log
-  fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'card-overlay.js:findCardInjectionPoint:entry',message:'Finding injection point',data:{cardTagName:card?.tagName},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
-  // #endregion
-  
   // Find the metadata line (channel name, views) to insert AFTER
   const metadataSelectors = [
     '#metadata-line',                    // Primary: metadata line with views/age
@@ -508,9 +504,6 @@ function findCardInjectionPoint(card) {
   
   for (const selector of metadataSelectors) {
     const element = card.querySelector(selector)
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'card-overlay.js:findCardInjectionPoint:metadata',message:'Trying metadata selector',data:{selector,found:!!element},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
-    // #endregion
     if (element) return { element, insertAfter: true }
   }
   
@@ -518,15 +511,9 @@ function findCardInjectionPoint(card) {
   const containerSelectors = ['#meta', '#details', '#dismissible']
   for (const selector of containerSelectors) {
     const element = card.querySelector(selector)
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'card-overlay.js:findCardInjectionPoint:fallback',message:'Trying fallback selector',data:{selector,found:!!element},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
-    // #endregion
     if (element) return { element, insertAfter: false }
   }
   
-  // #region agent log
-  fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'card-overlay.js:findCardInjectionPoint:fallbackCard',message:'Using card itself as fallback',data:{cardTag:card?.tagName},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
-  // #endregion
   // Ultimate fallback - return the card itself
   return { element: card, insertAfter: false }
 }
@@ -535,10 +522,6 @@ function findCardInjectionPoint(card) {
  * Add overlay to a single video card
  */
 function addOverlayToCard(card, scoreData) {
-  // #region agent log
-  fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'card-overlay.js:addOverlayToCard:entry',message:'Adding overlay to card',data:{hasScoreData:!!scoreData,cardTag:card?.tagName},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H4'})}).catch(()=>{});
-  // #endregion
-  
   // Check if already processed
   if (card.hasAttribute(PROCESSED_ATTR)) {
     // Update existing overlay if score changed
@@ -552,9 +535,6 @@ function addOverlayToCard(card, scoreData) {
   // Extract video data
   const videoData = extractVideoData(card)
   if (!videoData) {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'card-overlay.js:addOverlayToCard:noVideoData',message:'No video data extracted',data:{},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H4'})}).catch(()=>{});
-    // #endregion
     return
   }
   
@@ -567,9 +547,6 @@ function addOverlayToCard(card, scoreData) {
   }
   
   if (!scoreData) {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'card-overlay.js:addOverlayToCard:noScoreData',message:'No score data available',data:{videoId:videoData.videoId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H5'})}).catch(()=>{});
-    // #endregion
     // NO MOCK DATA - only show overlays for videos with real computed scores
     // If no score data, don't inject overlay at all
     // The card will get processed when real scores arrive via setScores()
@@ -579,9 +556,6 @@ function addOverlayToCard(card, scoreData) {
   
   // Find injection point
   const injection = findCardInjectionPoint(card)
-  // #region agent log
-  fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'card-overlay.js:addOverlayToCard:injection',message:'Injection point result',data:{hasInjection:!!injection,insertAfter:injection?.insertAfter,elementTag:injection?.element?.tagName},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H2'})}).catch(()=>{});
-  // #endregion
   if (!injection) return
   
   // Create and inject overlay
@@ -589,18 +563,11 @@ function addOverlayToCard(card, scoreData) {
   
   if (injection.insertAfter) {
     // Insert right after the metadata line
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'card-overlay.js:addOverlayToCard:insertAfter',message:'Using insertAdjacentElement',data:{elementTag:injection.element?.tagName,hasParent:!!injection.element?.parentNode},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H3'})}).catch(()=>{});
-    // #endregion
     injection.element.insertAdjacentElement('afterend', overlay)
   } else {
     // Fallback: append to container
     injection.element.appendChild(overlay)
   }
-  
-  // #region agent log
-  fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'card-overlay.js:addOverlayToCard:success',message:'Overlay injected successfully',data:{videoId:videoData.videoId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H3'})}).catch(()=>{});
-  // #endregion
   
   // Animate in
   requestAnimationFrame(() => {
