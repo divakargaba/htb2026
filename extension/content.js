@@ -1639,7 +1639,17 @@ function formatDiversityMethod(method) {
   
   const methodLower = method.toLowerCase()
   
-  // Check for Gemini quality filtering
+  // Check for transcript-analyzed Gemini (best quality)
+  if (methodLower.includes('transcript_analyzed_gemini')) {
+    return '🎯 AI transcript analysis + exposure ranking'
+  }
+  
+  // Check for transcript-analyzed heuristic
+  if (methodLower.includes('transcript_analyzed_heuristic') || methodLower.includes('heuristic-transcript')) {
+    return '🎯 transcript verified + exposure ranking'
+  }
+  
+  // Check for Gemini quality filtering (no transcript)
   if (methodLower.includes('quality_filtered_gemini') || methodLower.includes('gemini')) {
     return 'AI quality filter + exposure ranking'
   }
@@ -1679,6 +1689,7 @@ function renderImpactSnapshot(auditMetrics) {
     dominantShareTop10 = 0,
     redundancyFiltered = 0,
     qualityFiltered = 0,
+    transcriptAnalyzed = 0,
     diversityMethod = 'unknown'
   } = auditMetrics
 
@@ -1699,6 +1710,17 @@ function renderImpactSnapshot(auditMetrics) {
       </div>
     `
   }
+  
+  // Format transcript analysis display
+  let transcriptHtml = ''
+  if (transcriptAnalyzed > 0) {
+    transcriptHtml = `
+      <div class="impact-metric">
+        <span class="impact-metric-label">🎯 Transcript-verified videos</span>
+        <span class="impact-metric-value highlight">${transcriptAnalyzed}</span>
+        </div>
+    `
+  }
 
   // Format duplicates display
   let duplicatesHtml = ''
@@ -1707,15 +1729,15 @@ function renderImpactSnapshot(auditMetrics) {
       <div class="impact-metric">
         <span class="impact-metric-label">Near-duplicate removals</span>
         <span class="impact-metric-value muted">None detected</span>
-        </div>
+      </div>
     `
   } else {
     duplicatesHtml = `
       <div class="impact-metric">
         <span class="impact-metric-label">Near-duplicate videos removed</span>
         <span class="impact-metric-value highlight">${redundancyFiltered}</span>
-      </div>
-    `
+    </div>
+  `
   }
 
   // Format method display (Fix 3)
@@ -1743,6 +1765,7 @@ function renderImpactSnapshot(auditMetrics) {
         ` : ''}
         <div class="impact-divider"></div>
         ${qualityFilterHtml}
+        ${transcriptHtml}
         ${duplicatesHtml}
         <div class="impact-metric">
           <span class="impact-metric-label">Method</span>
@@ -2374,9 +2397,16 @@ function injectUnmutedVoices() {
     const surfaceMethod = video.surfaceMethod || 'engagement_ranking'
     const diversityNote = video.diversityNote || ''
     const methodDisplay = formatDiversityMethod(surfaceMethod)
+    
+    // Check if this video was transcript-verified
+    const isTranscriptVerified = surfaceMethod.includes('transcript')
+    const transcriptBadge = isTranscriptVerified 
+      ? '<span style="background: #065f46; color: #10b981; padding: 1px 4px; border-radius: 3px; font-size: 8px; margin-left: 4px;">VERIFIED</span>'
+      : ''
+    
     const auditInfoHtml = auditModeActive ? `
       <div style="padding: 6px 10px; border-top: 1px solid #262626; font-size: 10px; color: #6b7280; font-family: 'SF Mono', Monaco, monospace;">
-        Subs: ${fmt(video.subscriberCount)} · Surfaced via: ${methodDisplay}
+        Subs: ${fmt(video.subscriberCount)} · Surfaced via: ${methodDisplay}${transcriptBadge}
         ${diversityNote ? `<div style="font-size: 9px; color: #4b5563; margin-top: 2px;">${esc(diversityNote)}</div>` : ''}
       </div>
     ` : ''

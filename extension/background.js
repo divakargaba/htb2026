@@ -15,7 +15,7 @@ const BIAS_RECEIPT_CACHE_TTL = 21600000 // 6 hours in ms
 
 // Feature flags
 const ENABLE_ML_FEATURES = true // Set to true to enable Gemini-powered features
-const GEMINI_API_KEY = 'AIzaSyCr7sAWdtD4GYKmnFU6fG1nVNnZQbBm-og' // Add your Gemini API key here - REQUIRED for quality filtering
+const GEMINI_API_KEY = 'AIzaSyDs77REzwkLTcgrPp3B6pD0xwdsCfQo_k8' // Add your Gemini API key here - REQUIRED for quality filtering
 
 // Quality thresholds
 const MIN_VIDEO_QUALITY_SCORE = 0.25 // Minimum quality score (0-1) to surface a video (lowered to avoid filtering all)
@@ -597,7 +597,136 @@ function computeAuditMetrics(unmutedVideos, topicConcentration, qualityFilterSta
     dominantShareTop10: topicConcentration || 0,
     redundancyFiltered: qualityFilterStats.redundancyFiltered || 0,
     qualityFiltered: qualityFilterStats.qualityFiltered || 0,
+    transcriptAnalyzed: qualityFilterStats.transcriptAnalyzed || 0,
     diversityMethod
+  }
+}
+
+// ===============================================
+// VIDEO TRANSCRIPT FETCHING
+// ===============================================
+
+/**
+ * Fetch video transcript from YouTube using the innertube API
+ * @param {string} videoId - YouTube video ID
+ * @returns {Promise<string|null>} Transcript text or null if unavailable
+ */
+async function fetchVideoTranscript(videoId) {
+  try {
+    console.log(`[Silenced] Attempting to fetch transcript for ${videoId}...`)
+
+    // Step 1: Fetch the video page to get caption track URL
+    const videoPageUrl = `https://www.youtube.com/watch?v=${videoId}`
+    const pageResponse = await fetch(videoPageUrl)
+
+    if (!pageResponse.ok) {
+      console.log(`[Silenced] Failed to fetch video page for ${videoId}`)
+      return null
+    }
+
+    const pageHtml = await pageResponse.text()
+
+    // Step 2: Extract caption track URL from the page
+    // Look for the captionTracks in the ytInitialPlayerResponse
+    const captionMatch = pageHtml.match(/"captionTracks":\s*(\[.*?\])/)
+
+    if (!captionMatch) {
+      console.log(`[Silenced] No caption tracks found for ${videoId}`)
+      return null
+    }
+
+    let captionTracks
+    try {
+      // The JSON might be escaped, need to handle that
+      const captionJson = captionMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\')
+      captionTracks = JSON.parse(captionJson)
+    } catch (e) {
+      // Try alternate extraction
+      const altMatch = pageHtml.match(/\"captions\":\{\"playerCaptionsTracklistRenderer\":\{\"captionTracks\":(\[.*?\])/)
+      if (altMatch) {
+        try {
+          captionTracks = JSON.parse(altMatch[1])
+        } catch (e2) {
+          console.log(`[Silenced] Could not parse caption tracks for ${videoId}`)
+          return null
+        }
+      } else {
+        return null
+      }
+    }
+
+    if (!captionTracks || captionTracks.length === 0) {
+      console.log(`[Silenced] Empty caption tracks for ${videoId}`)
+      return null
+    }
+
+    // Step 3: Find English caption track (prefer manual over auto)
+    let captionUrl = null
+
+    // First try to find manual English captions
+    const manualEnglish = captionTracks.find(t =>
+      (t.languageCode === 'en' || t.languageCode?.startsWith('en')) &&
+      t.kind !== 'asr'
+    )
+
+    // Then try auto-generated English
+    const autoEnglish = captionTracks.find(t =>
+      (t.languageCode === 'en' || t.languageCode?.startsWith('en')) &&
+      t.kind === 'asr'
+    )
+
+    // Fallback to any available track
+    const anyTrack = captionTracks[0]
+
+    const selectedTrack = manualEnglish || autoEnglish || anyTrack
+
+    if (selectedTrack?.baseUrl) {
+      captionUrl = selectedTrack.baseUrl
+    }
+
+    if (!captionUrl) {
+      console.log(`[Silenced] No usable caption URL for ${videoId}`)
+      return null
+    }
+
+    // Step 4: Fetch the caption XML
+    const captionResponse = await fetch(captionUrl)
+    if (!captionResponse.ok) {
+      console.log(`[Silenced] Failed to fetch captions for ${videoId}`)
+      return null
+    }
+
+    const captionXml = await captionResponse.text()
+
+    // Step 5: Parse XML and extract text
+    const textMatches = captionXml.matchAll(/<text[^>]*>([^<]*)<\/text>/g)
+    const textParts = []
+
+    for (const match of textMatches) {
+      // Decode HTML entities
+      const text = match[1]
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/\n/g, ' ')
+      textParts.push(text)
+    }
+
+    const fullText = textParts.join(' ').replace(/\s+/g, ' ').trim()
+
+    if (fullText.length > 100) {
+      console.log(`[Silenced] Successfully fetched transcript for ${videoId}: ${fullText.length} chars`)
+      return fullText
+    }
+
+    console.log(`[Silenced] Transcript too short for ${videoId}: ${fullText.length} chars`)
+    return null
+
+  } catch (err) {
+    console.error(`[Silenced] Transcript fetch error for ${videoId}:`, err.message)
+    return null
   }
 }
 
@@ -611,20 +740,27 @@ function computeAuditMetrics(unmutedVideos, topicConcentration, qualityFilterSta
  * 
  * @param {Object} video - Video object with title, description, channelTitle
  * @param {string} searchQuery - The original search query/topic
+ * @param {boolean} useTranscript - Whether to fetch and analyze transcript (slower but more accurate)
  * @returns {Promise<Object>} Quality assessment
  */
-async function scoreVideoQuality(video, searchQuery) {
-  const cacheKey = `quality_${video.videoId}`
+async function scoreVideoQuality(video, searchQuery, useTranscript = false) {
+  const cacheKey = `quality_${video.videoId}_${useTranscript ? 'transcript' : 'basic'}`
 
   // Check cache first
   if (qualityScoreCache[cacheKey] && Date.now() - qualityScoreCache[cacheKey].timestamp < QUALITY_CACHE_TTL) {
     return qualityScoreCache[cacheKey].data
   }
 
+  // Fetch transcript if requested
+  let transcript = null
+  if (useTranscript) {
+    transcript = await fetchVideoTranscript(video.videoId)
+  }
+
   // Try Gemini if API key is available
   if (GEMINI_API_KEY && ENABLE_ML_FEATURES) {
     try {
-      const geminiResult = await scoreVideoQualityWithGemini(video, searchQuery)
+      const geminiResult = await scoreVideoQualityWithGemini(video, searchQuery, transcript)
       if (geminiResult) {
         qualityScoreCache[cacheKey] = { data: geminiResult, timestamp: Date.now() }
         return geminiResult
@@ -635,22 +771,38 @@ async function scoreVideoQuality(video, searchQuery) {
   }
 
   // Fallback to heuristic scoring
-  const heuristicResult = scoreVideoQualityHeuristic(video, searchQuery)
+  const heuristicResult = scoreVideoQualityHeuristic(video, searchQuery, transcript)
   qualityScoreCache[cacheKey] = { data: heuristicResult, timestamp: Date.now() }
   return heuristicResult
 }
 
 /**
  * Score video quality using Gemini AI
+ * @param {Object} video - Video metadata
+ * @param {string} searchQuery - Search topic
+ * @param {string|null} transcript - Optional video transcript for deeper analysis
  */
-async function scoreVideoQualityWithGemini(video, searchQuery) {
+async function scoreVideoQualityWithGemini(video, searchQuery, transcript = null) {
+  // Build the prompt based on whether we have transcript
+  const hasTranscript = transcript && transcript.length > 100
+  const transcriptSection = hasTranscript
+    ? `\nTranscript (first 2000 chars): "${transcript.substring(0, 2000)}"\n`
+    : ''
+
+  const transcriptInstruction = hasTranscript
+    ? `\n3. CONTENT DEPTH (from transcript): Does the actual spoken content provide value?
+   - 0.0 = Off-topic rambling, just music, or no real content
+   - 0.5 = Some relevant discussion but shallow
+   - 1.0 = In-depth, informative discussion of the topic`
+    : ''
+
   const prompt = `You are evaluating if a YouTube video is a HIGH-QUALITY alternative for someone interested in "${searchQuery}".
 
 Video Title: "${video.title}"
 Channel: "${video.channelTitle}"
-Description: "${(video.description || '').substring(0, 500)}"
+Description: "${(video.description || '').substring(0, 500)}"${transcriptSection}
 
-Score this video on TWO dimensions (0.0 to 1.0 each):
+Score this video on ${hasTranscript ? 'THREE' : 'TWO'} dimensions (0.0 to 1.0 each):
 
 1. RELEVANCE: Is this video actually about "${searchQuery}"? 
    - 0.0 = Completely unrelated, just keyword spam
@@ -661,12 +813,12 @@ Score this video on TWO dimensions (0.0 to 1.0 each):
    - Consider: descriptive title (not clickbait), informative description, legitimate channel name
    - 0.0 = Spam/low-effort/clickbait
    - 0.5 = Average quality
-   - 1.0 = Professional/educational/well-produced
+   - 1.0 = Professional/educational/well-produced${transcriptInstruction}
 
 Respond with ONLY valid JSON in this exact format:
-{"relevance": 0.X, "quality": 0.X, "reason": "brief 10-word reason"}
+{"relevance": 0.X, "quality": 0.X${hasTranscript ? ', "contentDepth": 0.X' : ''}, "reason": "brief 10-word reason"}
 
-Be strict - most random search results should score below 0.5.`
+Be strict - most random search results should score below 0.5.${hasTranscript ? ' Weight transcript content heavily - a good transcript can save a video with a clickbait title.' : ''}`
 
   try {
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
@@ -699,14 +851,29 @@ Be strict - most random search results should score below 0.5.`
     // Validate and normalize scores
     const relevance = Math.max(0, Math.min(1, parseFloat(parsed.relevance) || 0))
     const quality = Math.max(0, Math.min(1, parseFloat(parsed.quality) || 0))
-    const combinedScore = (relevance * 0.6) + (quality * 0.4) // Relevance weighted higher
+    const contentDepth = parsed.contentDepth !== undefined
+      ? Math.max(0, Math.min(1, parseFloat(parsed.contentDepth) || 0))
+      : null
+
+    // Weight scores - if we have transcript, content depth is most important
+    let combinedScore
+    if (contentDepth !== null) {
+      // With transcript: depth 50%, relevance 30%, quality signals 20%
+      combinedScore = (contentDepth * 0.5) + (relevance * 0.3) + (quality * 0.2)
+      console.log(`[Silenced] Gemini scored ${video.videoId}: relevance=${relevance}, quality=${quality}, contentDepth=${contentDepth} => ${combinedScore.toFixed(2)}`)
+    } else {
+      // Without transcript: relevance 60%, quality 40%
+      combinedScore = (relevance * 0.6) + (quality * 0.4)
+      console.log(`[Silenced] Gemini scored ${video.videoId}: relevance=${relevance}, quality=${quality} => ${combinedScore.toFixed(2)}`)
+    }
 
     return {
       score: combinedScore,
       relevance,
       quality,
+      contentDepth,
       reason: parsed.reason || 'Evaluated by AI',
-      method: 'gemini'
+      method: contentDepth !== null ? 'gemini-transcript' : 'gemini'
     }
   } catch (err) {
     console.error('[Silenced] Gemini quality scoring error:', err)
@@ -716,10 +883,14 @@ Be strict - most random search results should score below 0.5.`
 
 /**
  * Heuristic fallback for video quality scoring (no Gemini)
+ * @param {Object} video - Video metadata
+ * @param {string} searchQuery - Search topic  
+ * @param {string|null} transcript - Optional transcript for deeper analysis
  */
-function scoreVideoQualityHeuristic(video, searchQuery) {
+function scoreVideoQualityHeuristic(video, searchQuery, transcript = null) {
   let relevanceScore = 0
   let qualityScore = 0
+  let contentDepthScore = null
   const reasons = []
 
   const title = (video.title || '').toLowerCase()
@@ -795,28 +966,81 @@ function scoreVideoQualityHeuristic(video, searchQuery) {
     reasons.push('Quality content signals')
   }
 
+  // === TRANSCRIPT ANALYSIS (if available) ===
+  if (transcript && transcript.length > 100) {
+    contentDepthScore = 0.5 // Base score for having a transcript
+    const transcriptLower = transcript.toLowerCase()
+
+    // Check if transcript contains query terms (more important than title)
+    const transcriptMatches = queryTerms.filter(term => transcriptLower.includes(term))
+    const transcriptMatchRatio = transcriptMatches.length / Math.max(queryTerms.length, 1)
+    contentDepthScore += transcriptMatchRatio * 0.3
+
+    if (transcriptMatchRatio > 0.5) {
+      reasons.push('Topic discussed in transcript')
+    }
+
+    // Check for educational/informative speech patterns
+    const informativePatterns = [
+      /\b(let me explain|i'll show you|here's how|the reason is|for example|first|second|third|in conclusion)\b/i,
+      /\b(research shows|studies show|according to|data suggests|evidence)\b/i,
+      /\b(step by step|tutorial|let's go through|overview)\b/i
+    ]
+    const hasInformativeContent = informativePatterns.some(p => p.test(transcript))
+    if (hasInformativeContent) {
+      contentDepthScore += 0.2
+      reasons.push('Educational content detected')
+    }
+
+    // Check transcript length (longer = more in-depth, usually)
+    if (transcript.length > 5000) {
+      contentDepthScore += 0.1
+    }
+
+    // Penalize transcripts that are mostly music/lyrics or repetitive
+    const repetitionCheck = transcript.split(' ').slice(0, 100)
+    const uniqueWords = new Set(repetitionCheck.map(w => w.toLowerCase()))
+    if (uniqueWords.size < repetitionCheck.length * 0.3) {
+      contentDepthScore -= 0.3
+      reasons.push('Repetitive content')
+    }
+
+    contentDepthScore = Math.max(0, Math.min(1, contentDepthScore))
+  }
+
   // Normalize scores
   relevanceScore = Math.max(0, Math.min(1, relevanceScore))
   qualityScore = Math.max(0, Math.min(1, qualityScore))
 
-  const combinedScore = (relevanceScore * 0.6) + (qualityScore * 0.4)
+  // Calculate combined score
+  let combinedScore
+  if (contentDepthScore !== null) {
+    // With transcript: depth 50%, relevance 30%, quality 20%
+    combinedScore = (contentDepthScore * 0.5) + (relevanceScore * 0.3) + (qualityScore * 0.2)
+  } else {
+    combinedScore = (relevanceScore * 0.6) + (qualityScore * 0.4)
+  }
 
   return {
     score: combinedScore,
     relevance: relevanceScore,
     quality: qualityScore,
+    contentDepth: contentDepthScore,
     reason: reasons.length > 0 ? reasons.join(', ') : 'Heuristic evaluation',
-    method: 'heuristic'
+    method: contentDepthScore !== null ? 'heuristic-transcript' : 'heuristic'
   }
 }
 
 /**
  * Batch score multiple videos for quality
+ * @param {Array} videos - Videos to score
+ * @param {string} searchQuery - Search query
+ * @param {boolean} useTranscript - Whether to analyze transcripts (slower but more accurate)
  */
-async function batchScoreVideoQuality(videos, searchQuery) {
+async function batchScoreVideoQuality(videos, searchQuery, useTranscript = false) {
   const results = await Promise.all(
     videos.map(async (video) => {
-      const qualityResult = await scoreVideoQuality(video, searchQuery)
+      const qualityResult = await scoreVideoQuality(video, searchQuery, useTranscript)
       return {
         ...video,
         qualityScore: qualityResult.score,
@@ -825,6 +1049,62 @@ async function batchScoreVideoQuality(videos, searchQuery) {
     })
   )
   return results
+}
+
+/**
+ * Two-pass quality scoring: quick scan all, then deep analyze top candidates
+ * This saves API quota by only fetching transcripts for promising videos
+ */
+async function twoPassQualityScoring(videos, searchQuery, topCandidateCount = 10) {
+  console.log(`[Silenced] Two-pass scoring: ${videos.length} videos, will deep-analyze top ${topCandidateCount}`)
+
+  // PASS 1: Quick scoring without transcript for all videos
+  console.log(`[Silenced] Pass 1: Quick scoring ${videos.length} videos...`)
+  const quickScored = await batchScoreVideoQuality(videos, searchQuery, false)
+
+  // Sort by quick score
+  const sortedByQuickScore = [...quickScored].sort((a, b) => b.qualityScore - a.qualityScore)
+
+  // Get top candidates for deep analysis
+  const topCandidates = sortedByQuickScore.slice(0, topCandidateCount)
+  const restOfVideos = sortedByQuickScore.slice(topCandidateCount)
+
+  console.log(`[Silenced] Pass 1 complete. Top candidate scores: ${topCandidates.slice(0, 3).map(v => v.qualityScore.toFixed(2)).join(', ')}`)
+
+  // PASS 2: Deep scoring with transcript for top candidates (only if ML features enabled)
+  if (ENABLE_ML_FEATURES && GEMINI_API_KEY && topCandidates.length > 0) {
+    console.log(`[Silenced] Pass 2: Deep analyzing ${topCandidates.length} candidates with transcripts...`)
+
+    const deepScored = await Promise.all(
+      topCandidates.map(async (video) => {
+        try {
+          const deepResult = await scoreVideoQuality(video, searchQuery, true) // true = use transcript
+
+          // Only update if deep score is valid and different
+          if (deepResult && deepResult.contentDepth !== null) {
+            console.log(`[Silenced] Deep scored "${video.title}": ${video.qualityScore.toFixed(2)} -> ${deepResult.score.toFixed(2)} (depth: ${deepResult.contentDepth.toFixed(2)})`)
+            return {
+              ...video,
+              qualityScore: deepResult.score,
+              qualityDetails: deepResult
+            }
+          }
+        } catch (err) {
+          console.warn(`[Silenced] Deep scoring failed for ${video.videoId}:`, err.message)
+        }
+        return video // Keep original score if deep scoring fails
+      })
+    )
+
+    // Combine deep-scored and rest, re-sort
+    const allScored = [...deepScored, ...restOfVideos].sort((a, b) => b.qualityScore - a.qualityScore)
+    console.log(`[Silenced] Pass 2 complete. New top scores: ${allScored.slice(0, 3).map(v => v.qualityScore.toFixed(2)).join(', ')}`)
+
+    return allScored
+  }
+
+  // If ML not enabled, just return quick-scored results
+  return sortedByQuickScore
 }
 
 // ===============================================
@@ -894,7 +1174,7 @@ function analyzeGreenwashingRisk(transcript, video, channel) {
   const title = (video.snippet?.title || '').toLowerCase()
   const description = (video.snippet?.description || '').toLowerCase()
   const fullText = `${title} ${description} ${transcriptLower}`
-  
+
   const issues = []
   const positives = []
   let riskScore = 0
@@ -954,7 +1234,7 @@ function analyzeGreenwashingRisk(transcript, video, channel) {
   }
 
   riskScore = Math.min(100, Math.max(0, riskScore))
-  
+
   let level = 'LOW'
   if (riskScore >= 60) level = 'HIGH'
   else if (riskScore >= 30) level = 'MODERATE'
@@ -978,7 +1258,7 @@ function extractClaims(transcript) {
 
   const claims = []
   const sentences = transcript.split(/[.!?]+/).map(s => s.trim()).filter(s => s.length > 20)
-  
+
   const claimPatterns = [
     /(?:we|our|they|the company|we've|we're|we'll)\s+(?:are|will|have|commit|pledge|aim|target|achieve|reduce|eliminate|offset)/i,
     /\d+\s*(?:percent|%|tonnes?|kg|emissions?|carbon|reduction|renewable)/i,
@@ -1670,9 +1950,9 @@ async function runNoiseCancellation(query) {
       }
     })
 
-  // === QUALITY SCORING: Score and filter videos for quality/relevance ===
+  // === QUALITY SCORING: Two-pass scoring with transcript analysis for top candidates ===
   console.log(`[Silenced] Scoring ${unmutedVideosPreQuality.length} videos for quality...`)
-  const videosWithQuality = await batchScoreVideoQuality(unmutedVideosPreQuality, query)
+  const videosWithQuality = await twoPassQualityScoring(unmutedVideosPreQuality, query, 10) // Deep analyze top 10
 
   // Filter out low-quality videos
   let qualityFilteredVideos = videosWithQuality.filter(v => {
@@ -1706,7 +1986,9 @@ async function runNoiseCancellation(query) {
       if (v.engagementRatio > 1.5) {
         whySurfaced.push(`Strong engagement ratio (${v.engagementRatio.toFixed(1)}x views per subscriber)`)
       }
-      if (v.qualityScore >= 0.6) {
+      if (v.qualityDetails?.contentDepth !== null && v.qualityDetails?.contentDepth >= 0.5) {
+        whySurfaced.push(`Transcript verified: discusses topic in depth (${Math.round(v.qualityDetails.contentDepth * 100)}%)`)
+      } else if (v.qualityScore >= 0.6) {
         whySurfaced.push(`High relevance score (${Math.round(v.qualityScore * 100)}%)`)
       }
       if (v.subscriberCount < 50000) {
@@ -1720,9 +2002,14 @@ async function runNoiseCancellation(query) {
       }
 
       // Determine surface method based on quality scoring
-      const surfaceMethod = v.qualityDetails?.method === 'gemini'
-        ? 'quality_filtered_gemini'
-        : 'quality_filtered_heuristic'
+      let surfaceMethod = 'quality_filtered_heuristic'
+      if (v.qualityDetails?.method === 'gemini-transcript') {
+        surfaceMethod = 'transcript_analyzed_gemini'
+      } else if (v.qualityDetails?.method === 'heuristic-transcript') {
+        surfaceMethod = 'transcript_analyzed_heuristic'
+      } else if (v.qualityDetails?.method === 'gemini') {
+        surfaceMethod = 'quality_filtered_gemini'
+      }
 
       return {
         videoId: v.videoId,
@@ -1812,19 +2099,26 @@ async function runNoiseCancellation(query) {
   }))
 
   // Compute audit metrics from final unmuted videos list
+  const transcriptAnalyzed = qualityFilteredVideos.filter(v =>
+    v.qualityDetails?.method?.includes('transcript')
+  ).length
+
   const qualityFilterStats = {
     qualityFiltered: videosWithQuality.length - qualityFilteredVideos.length,
-    redundancyFiltered: 0 // Future: track duplicates removed
+    redundancyFiltered: 0, // Future: track duplicates removed
+    transcriptAnalyzed
   }
   const auditMetrics = computeAuditMetrics(unmutedVideos, topicConcentration, qualityFilterStats)
 
   // Add surfaceMethod to each video for audit display
+  // IMPORTANT: Preserve the surfaceMethod from quality scoring, don't overwrite it!
   const unmutedVideosWithMethod = unmutedVideos.map(video => ({
     ...video,
-    surfaceMethod: video.isRisingSignal ? 'rising_signal' : 'engagement_ranking',
-    diversityNote: video.isRisingSignal
+    // Keep existing surfaceMethod if set, otherwise use rising_signal/engagement_ranking
+    surfaceMethod: video.surfaceMethod || (video.isRisingSignal ? 'rising_signal' : 'engagement_ranking'),
+    diversityNote: video.diversityNote || (video.isRisingSignal
       ? 'Surfaced due to high engagement relative to channel size'
-      : 'Surfaced via under-representation filter and engagement ranking'
+      : 'Surfaced via under-representation filter and engagement ranking')
   }))
 
   const result = {
