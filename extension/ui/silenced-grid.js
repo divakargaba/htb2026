@@ -78,7 +78,7 @@ function createGridElement() {
 }
 
 /**
- * Create a video card element
+ * Create a video card element - YouTube native style with silenced badges
  * Handles both legacy format and new SilencedFinder format
  */
 function createVideoCard(video) {
@@ -100,6 +100,11 @@ function createVideoCard(video) {
   const publishedAt = stats.publishedAt || video.publishedAt || video.silencedVideo?.publishedAt || ''
   const subs = channel.subs || video.subs || 0
   
+  // Get noise video comparison data (from new pipeline)
+  const noiseVideoTitle = video.noiseVideoTitle || null
+  const noiseVideoChannel = video.noiseVideoChannel || null
+  const aiExplanation = video.aiExplanation || null
+  
   // Quality score
   const qualityScore = video.qualityScore || 0
   
@@ -111,36 +116,40 @@ function createVideoCard(video) {
   // Why silenced data
   const whySilenced = video.whySilenced || {}
   
-  // Generate "why good" and "why buried" from data
-  const whyGood = []
-  const whyBuried = []
+  // Get "why good" and "why buried" from video data or generate from metrics
+  let whyGood = video.whyGood || []
+  let whyBuried = video.whyBuried || []
   
-  // Generate reasons from metrics
-  if (whySilenced.likeRate && whySilenced.likeRate > 3) {
-    whyGood.push(`${whySilenced.likeRate}% like rate`)
-  } else if (stats.likes && views > 0) {
-    const likeRate = Math.round((stats.likes / views) * 1000) / 10
-    if (likeRate > 3) whyGood.push(`${likeRate}% like rate`)
+  // If not provided, generate reasons from metrics
+  if (whyGood.length === 0) {
+    if (whySilenced.likeRate && whySilenced.likeRate > 3) {
+      whyGood.push(`${whySilenced.likeRate}% like rate`)
+    } else if (stats.likes && views > 0) {
+      const likeRate = Math.round((stats.likes / views) * 1000) / 10
+      if (likeRate > 3) whyGood.push(`${likeRate}% like rate`)
+    }
+    
+    if (subs > 0 && subs < 50000) {
+      whyGood.push('Small creator')
+    } else if (subs > 0 && subs < 100000) {
+      whyGood.push('Growing channel')
+    }
+    
+    if (durationSec > 600) {
+      whyGood.push('In-depth content')
+    }
   }
   
-  if (subs > 0 && subs < 50000) {
-    whyGood.push('Small creator')
-  } else if (subs > 0 && subs < 100000) {
-    whyGood.push('Growing channel')
-  }
-  
-  if (durationSec > 600) {
-    whyGood.push('In-depth content')
-  }
-  
-  // Why buried
-  if (subs < 100000) {
-    whyBuried.push(`Only ${formatViews(subs)} subscribers`)
-  }
-  if (views < 100000 && qualityScore > 50) {
-    whyBuried.push('High quality, low reach')
-  } else {
-    whyBuried.push('Lower algorithmic advantage')
+  // If not provided, generate why buried reasons
+  if (whyBuried.length === 0) {
+    if (subs > 0 && subs < 100000) {
+      whyBuried.push(`Only ${formatViews(subs)} subscribers`)
+    }
+    if (views > 0 && views < 100000 && qualityScore > 50) {
+      whyBuried.push('High quality, low reach')
+    } else if (views > 0) {
+      whyBuried.push('Lower algorithmic advantage')
+    }
   }
   
   card.dataset.videoId = videoId
@@ -156,41 +165,64 @@ function createVideoCard(video) {
   const whyLimited = (video.whyBuried || [])[0] || 'Lower platform-favored signals'
   const whyGoodList = (video.whyGood || []).slice(0, 2)
 
+  // Build AI explanation section if available
+  const aiSection = aiExplanation ? `
+    <div class="ai-explanation">
+      <span class="ai-icon">✨</span>
+      <span class="ai-text">${escapeHtml(aiExplanation)}</span>
+    </div>
+  ` : ''
+  
+  // Build comparison section if we have noise video data
+  const comparisonSection = noiseVideoTitle ? `
+    <div class="comparison-hint" data-noise-title="${escapeHtml(noiseVideoTitle)}" data-noise-channel="${escapeHtml(noiseVideoChannel || '')}">
+      <span class="comparison-label">Alternative to:</span>
+      <span class="comparison-video">${escapeHtml(noiseVideoTitle.slice(0, 40))}${noiseVideoTitle.length > 40 ? '...' : ''}</span>
+    </div>
+  ` : ''
+
   card.innerHTML = `
     <a href="https://www.youtube.com/watch?v=${videoId}" class="card-link" target="_blank">
       <div class="card-thumbnail">
         <img src="${thumbnail}" alt="" loading="lazy" onerror="this.src='https://i.ytimg.com/vi/${videoId}/mqdefault.jpg'">
-        <span class="card-duration">${formatDuration(durationSec)}</span>
+        <span class="card-duration">${durationSec > 0 ? formatDuration(durationSec) : ''}</span>
+        <div class="silenced-badge">
+          <span class="badge-icon">🔇</span>
+          <span class="badge-text">Limited Reach</span>
+        </div>
       </div>
       <div class="card-details">
         <div class="card-title">${escapeHtml(title)}</div>
         <div class="card-channel">${escapeHtml(channelName)}</div>
         <div class="card-meta">
-          ${formatViews(views)} views · ${formatAge(publishedAt)} · ${formatViews(subs)} subs
+          ${views > 0 ? formatViews(views) + ' views' : ''}${views > 0 && publishedAt ? ' · ' : ''}${publishedAt ? formatAge(publishedAt) : ''}
         </div>
       </div>
     </a>
     <div class="card-summary">
       <div class="summary-badges">
-        <span class="badge-strength">Quality ${qualityScore || '--'}</span>
-        <span class="badge-gap ${gap >= 0 ? 'positive' : ''}">+${gap || 0} reach gap</span>
-        <span class="subs-pill">${formatViews(subs)} subs</span>
+        ${qualityScore > 0 ? `<span class="badge-strength" title="Quality score based on engagement">Q: ${qualityScore}</span>` : ''}
+        ${subs > 0 ? `<span class="subs-pill" title="Channel subscribers">${formatViews(subs)} subs</span>` : ''}
+        ${gap > 0 ? `<span class="badge-gap positive" title="Quality vs visibility gap">+${gap} gap</span>` : ''}
       </div>
-      <div class="summary-line">${summaryLine || (whyGood[0] || 'High quality, low exposure')}</div>
+      ${aiSection}
+      ${comparisonSection}
     </div>
     <div class="card-expand-toggle collapsed" data-expand>
-      <span class="expand-label">Why it surfaced</span>
+      <span class="expand-label">Why it's underexposed</span>
       <span class="expand-chevron">▸</span>
     </div>
     <div class="card-details-expanded" style="display: none;">
-      <div class="detail-section">
-        <div class="detail-title">Why limited</div>
-        <div class="detail-bullet">• ${escapeHtml(whyLimited || whyBuried[0] || 'Lower algorithmic advantage signals')}</div>
-      </div>
-      ${(whyGoodList || whyGood || []).length > 0 ? `
+      ${whyBuried.length > 0 ? `
         <div class="detail-section">
-          <div class="detail-title">Why it matters</div>
-          ${(whyGoodList || whyGood).slice(0, 3).map(r => `<div class="detail-bullet">• ${escapeHtml(r)}</div>`).join('')}
+          <div class="detail-title">Why limited reach</div>
+          ${whyBuried.slice(0, 2).map(r => `<div class="detail-bullet">• ${escapeHtml(r)}</div>`).join('')}
+        </div>
+      ` : ''}
+      ${whyGood.length > 0 ? `
+        <div class="detail-section">
+          <div class="detail-title">Why it deserves visibility</div>
+          ${whyGood.slice(0, 3).map(r => `<div class="detail-bullet">• ${escapeHtml(r)}</div>`).join('')}
         </div>
       ` : ''}
     </div>
@@ -384,19 +416,32 @@ function getGridStyles() {
       max-width: 360px;
     }
     
-    /* Video Grid */
+    /* Video Grid - YouTube native style */
     .silenced-videos {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-      gap: 20px;
+      grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+      gap: 16px 16px;
     }
     
-    /* Video Card */
+    @media (min-width: 1200px) {
+      .silenced-videos {
+        grid-template-columns: repeat(4, 1fr);
+      }
+    }
+    
+    @media (min-width: 1600px) {
+      .silenced-videos {
+        grid-template-columns: repeat(5, 1fr);
+      }
+    }
+    
+    /* Video Card - YouTube native style */
     .silenced-card {
-      background: #141414;
+      background: transparent;
       border: none;
-      border-radius: 8px;
+      border-radius: 12px;
       overflow: hidden;
+      transition: transform 0.1s ease;
       transition: opacity 0.12s ease-out, transform 0.12s ease-out;
     }
 
@@ -438,6 +483,26 @@ function getGridStyles() {
       font-size: 11px;
       font-weight: 500;
       color: #fff;
+    }
+    
+    /* Silenced Badge on thumbnail */
+    .silenced-badge {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
+      background: rgba(16, 185, 129, 0.9);
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      color: #fff;
+    }
+    
+    .silenced-badge .badge-icon {
+      font-size: 11px;
     }
     
     .card-details {
@@ -509,6 +574,67 @@ function getGridStyles() {
       font-size: 13px;
       color: #999;
       line-height: 1.4;
+    }
+    
+    /* AI Explanation */
+    .ai-explanation {
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+      padding: 8px 10px;
+      background: rgba(139, 92, 246, 0.1);
+      border-radius: 6px;
+      margin-top: 8px;
+    }
+    
+    .ai-explanation .ai-icon {
+      font-size: 12px;
+      flex-shrink: 0;
+    }
+    
+    .ai-explanation .ai-text {
+      font-size: 12px;
+      color: #c4b5fd;
+      line-height: 1.4;
+    }
+    
+    /* Comparison Hint */
+    .comparison-hint {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 8px;
+      padding: 6px 0;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    
+    .comparison-hint .comparison-label {
+      font-size: 10px;
+      color: #666;
+      flex-shrink: 0;
+    }
+    
+    .comparison-hint .comparison-video {
+      font-size: 11px;
+      color: #888;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    
+    /* Badge Gap */
+    .badge-gap {
+      font-size: 11px;
+      font-weight: 500;
+      padding: 3px 8px;
+      border-radius: 3px;
+      background: rgba(249, 115, 22, 0.1);
+      color: #f97316;
+    }
+    
+    .badge-gap.positive {
+      background: rgba(34, 197, 94, 0.1);
+      color: #22c55e;
     }
 
     /* Expand Toggle */

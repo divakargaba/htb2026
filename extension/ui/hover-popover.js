@@ -102,6 +102,20 @@
           <div class="contributions-list"></div>
         </div>
       </div>
+      
+      <div class="popover-section popover-comparison" style="display: none;">
+        <div class="comparison-header">
+          <span class="comparison-icon">🔄</span>
+          <span class="comparison-title">Alternative to</span>
+        </div>
+        <div class="comparison-content">
+          <div class="comparison-noise-video">
+            <span class="noise-title">--</span>
+            <span class="noise-channel">--</span>
+          </div>
+          <div class="comparison-explanation"></div>
+        </div>
+      </div>
     </div>
   `
 
@@ -508,6 +522,71 @@
       color: #555;
       padding: 8px 0;
     }
+    
+    /* Comparison Section - For Silenced Videos */
+    .popover-comparison {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(139, 92, 246, 0.2);
+      background: rgba(139, 92, 246, 0.05);
+      border-radius: 6px;
+      padding: 10px;
+    }
+    
+    .comparison-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+    
+    .comparison-icon {
+      font-size: 12px;
+    }
+    
+    .comparison-title {
+      font-size: 11px;
+      font-weight: 500;
+      color: #a78bfa;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    
+    .comparison-content {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    
+    .comparison-noise-video {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    
+    .noise-title {
+      font-size: 12px;
+      color: #e8e8e8;
+      line-height: 1.3;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    
+    .noise-channel {
+      font-size: 11px;
+      color: #888;
+    }
+    
+    .comparison-explanation {
+      font-size: 12px;
+      color: #c4b5fd;
+      line-height: 1.4;
+      padding: 8px;
+      background: rgba(139, 92, 246, 0.1);
+      border-radius: 4px;
+    }
 
     /* Footer */
     .popover-footer {
@@ -668,6 +747,9 @@
 
     // Update explanations
     updateExplanations(scoreData.explanations || [])
+    
+    // Update comparison section (for silenced videos)
+    updateComparison(scoreData.comparison || null)
   }
 
   /**
@@ -715,6 +797,7 @@
 
   /**
    * Update metrics grid
+   * Only shows metrics that have valid data (not 0 or undefined)
    */
   function updateMetrics(metrics) {
     const container = popoverElement.querySelector('.metrics-grid')
@@ -723,25 +806,44 @@
     container.innerHTML = ''
 
     const metricItems = [
-      { key: 'views', label: 'Views', format: formatNumber },
-      { key: 'subs', label: 'Subs', format: formatNumber },
-      { key: 'age', label: 'Age', format: v => v || '--' },
-      { key: 'velocity', label: 'Velocity', format: v => v || '--' },
-      { key: 'thumbAbuse', label: 'Thumb', format: v => v || '--' },
-      { key: 'titleBait', label: 'Title', format: v => v || '--' }
+      { key: 'views', label: 'Views', format: formatNumber, showIfZero: false },
+      { key: 'subs', label: 'Subs', format: formatNumber, showIfZero: false },
+      { key: 'age', label: 'Age', format: v => v || null, showIfZero: false },
+      { key: 'velocity', label: 'Velocity', format: v => v || null, showIfZero: false },
+      { key: 'thumbAbuse', label: 'Thumb', format: v => v || null, showIfZero: false },
+      { key: 'titleBait', label: 'Title', format: v => v || null, showIfZero: false }
     ]
 
-    for (const { key, label, format } of metricItems) {
+    let shownCount = 0
+    for (const { key, label, format, showIfZero } of metricItems) {
       const value = metrics[key]
+      
+      // Skip metrics that can't be fetched (0, null, undefined, or empty string)
+      if (!showIfZero && (value === 0 || value === null || value === undefined || value === '')) {
+        console.log(`[BiasPopover] Skipping metric '${key}' - no valid data`)
+        continue
+      }
+      
+      const formattedValue = format(value)
+      if (formattedValue === null || formattedValue === '--') {
+        console.log(`[BiasPopover] Skipping metric '${key}' - formatted to null/--`)
+        continue
+      }
 
       const item = document.createElement('div')
       item.className = 'metric-item'
       item.innerHTML = `
-      <span class="metric-value">${format(value)}</span>
+      <span class="metric-value">${formattedValue}</span>
       <span class="metric-label">${label}</span>
     `
 
       container.appendChild(item)
+      shownCount++
+    }
+    
+    // If no metrics to show, hide the container
+    if (shownCount === 0) {
+      container.innerHTML = '<div class="no-data">Metrics unavailable</div>'
     }
   }
 
@@ -750,6 +852,45 @@
    */
   function updateExplanations(explanations) {
     updateContextBullets(explanations || [])
+  }
+
+  /**
+   * Update comparison section for silenced videos
+   * Shows which noise video this was found as an alternative to
+   */
+  function updateComparison(comparisonData) {
+    const comparisonSection = popoverElement.querySelector('.popover-comparison')
+    if (!comparisonSection) return
+    
+    if (!comparisonData || !comparisonData.noiseVideoTitle) {
+      comparisonSection.style.display = 'none'
+      return
+    }
+    
+    comparisonSection.style.display = 'block'
+    
+    const noiseTitle = comparisonSection.querySelector('.noise-title')
+    const noiseChannel = comparisonSection.querySelector('.noise-channel')
+    const explanation = comparisonSection.querySelector('.comparison-explanation')
+    
+    if (noiseTitle) {
+      noiseTitle.textContent = comparisonData.noiseVideoTitle
+    }
+    
+    if (noiseChannel) {
+      noiseChannel.textContent = comparisonData.noiseVideoChannel 
+        ? `by ${comparisonData.noiseVideoChannel}`
+        : ''
+    }
+    
+    if (explanation) {
+      if (comparisonData.aiExplanation) {
+        explanation.textContent = comparisonData.aiExplanation
+        explanation.style.display = 'block'
+      } else {
+        explanation.style.display = 'none'
+      }
+    }
   }
 
   /**

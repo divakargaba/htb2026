@@ -288,12 +288,13 @@
 
   /**
    * Get bias level label based on score
+   * Updated ranges: 80-100 = High, 50-70 = Moderate, 10-40 = Low, <10 = Minimal
    */
   function getBiasLevel(score) {
-    if (score >= 75) return 'High';
-    if (score >= 50) return 'Moderate';
-    if (score >= 25) return 'Low';
-    return 'Minimal';
+    if (score >= 80) return 'High';      // 80-100: Strong algorithmic advantage
+    if (score >= 50) return 'Moderate';  // 50-79: Moderate algorithmic signals
+    if (score >= 10) return 'Low';       // 10-49: Low algorithmic advantage
+    return 'Minimal';                    // 0-9: Minimal algorithmic signals
   }
 
   /**

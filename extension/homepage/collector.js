@@ -1,8 +1,11 @@
 /**
- * HomepageCollector - Extract exactly 20 homepage videos from window.ytInitialData
+ * HomepageCollector - Extract first 20 homepage video cards from window.ytInitialData
  * 
  * Strategy: Inject a script into page context to access ytInitialData,
  * extract videos, and post back via CustomEvent.
+ * 
+ * Ignores: ads, shelves, shorts sections
+ * Sends extracted array to background via chrome.runtime.sendMessage
  */
 
 (function() {
@@ -14,18 +17,21 @@
   const DEBOUNCE_MS = 500;
 
   /**
-   * HomepageSeed schema:
+   * HomepageSeed schema (first 20 video cards):
    * {
-   *   videoId: string,
-   *   title: string,
-   *   channelId: string,
-   *   channelName: string,
+   *   videoId: string,            // YouTube video ID
+   *   title: string,              // Video title
+   *   channelName: string,        // Channel display name
+   *   channelUrl: string,         // Channel URL (e.g., "/@handle" or "/channel/UC...")
+   *   thumbnailUrl: string,       // Highest quality thumbnail URL
+   *   durationText: string,       // Duration text (e.g., "12:34")
+   *   positionIndex: number,      // 0-based position in feed
+   *   // Additional fields for enrichment:
+   *   channelId: string,          // Channel ID (for API calls)
    *   viewCountText: string,      // "1.2M views"
    *   publishedTimeText: string,  // "2 days ago"
-   *   durationText: string,       // "12:34"
-   *   thumbnailUrl: string,
-   *   href: string,
-   *   rank: number                // 1..20
+   *   href: string,               // "/watch?v=..."
+   *   rank: number                // 1-based rank (positionIndex + 1)
    * }
    */
 

@@ -164,18 +164,25 @@ function getPanelStyles() {
   return `
     .bias-panel {
       position: fixed;
-      top: 70px;
+      top: 120px;
       right: 20px;
-      width: 280px;
+      width: 260px;
       background: #1a1a1a;
       border: 1px solid rgba(255, 255, 255, 0.1);
       border-radius: 12px;
       box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
       font-family: "YouTube Sans", "Roboto", sans-serif;
-      z-index: 9998;
+      z-index: 100;
       overflow: hidden;
       transition: all 0.3s ease;
       display: none;
+      opacity: 0.95;
+      pointer-events: auto;
+    }
+    
+    /* Don't show on watch pages */
+    body[data-page="watch"] .bias-panel {
+      display: none !important;
     }
     
     .bias-panel.visible {
@@ -183,11 +190,22 @@ function getPanelStyles() {
     }
     
     .bias-panel.collapsed {
-      width: 200px;
+      width: 180px;
+      opacity: 0.8;
+    }
+    
+    .bias-panel.collapsed:hover {
+      opacity: 1;
     }
     
     .bias-panel.expanded {
-      width: 320px;
+      width: 300px;
+      opacity: 1;
+    }
+    
+    /* Hide panel when any YouTube dialog/menu is open */
+    body:has(ytd-popup-container[opened]) .bias-panel {
+      display: none;
     }
     
     /* Header */

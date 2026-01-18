@@ -3,6 +3,17 @@
  * 
  * This script runs in YouTube's page context (MAIN world) to access ytInitialData.
  * It's loaded via script.src to bypass CSP restrictions on inline scripts.
+ * 
+ * Extracts first 20 homepage video cards with:
+ * - videoId: string
+ * - title: string
+ * - channelName: string
+ * - channelUrl: string (e.g., "/channel/UC..." or "/@handle")
+ * - thumbnailUrl: string
+ * - durationText: string (e.g., "12:34")
+ * - positionIndex: number (0-based index)
+ * 
+ * Ignores: shelves, ads, shorts sections
  */
 
 (function() {
@@ -29,6 +40,54 @@
     }
     
     return null;
+  }
+
+  /**
+   * Check if an item is an ad, shelf, or other non-video content
+   */
+  function isAdOrShelf(item) {
+    // Check for ad indicators
+    if (item?.richItemRenderer?.content?.adSlotRenderer) return true;
+    if (item?.richItemRenderer?.content?.promotedSparklesTextSearchRenderer) return true;
+    if (item?.richItemRenderer?.content?.promotedVideoRenderer) return true;
+    
+    // Check for shelf/section renderers (e.g., "Shorts", "Breaking News")
+    if (item?.richSectionRenderer) return true;
+    if (item?.continuationItemRenderer) return true;
+    
+    // Check for shorts
+    const content = item?.richItemRenderer?.content;
+    if (content?.reelItemRenderer) return true;
+    if (content?.shortsLockupViewModel) return true;
+    
+    return false;
+  }
+
+  /**
+   * Extract channel URL from various navigation endpoints
+   */
+  function extractChannelUrl(endpoint) {
+    if (!endpoint) return '';
+    
+    // browseEndpoint for channel pages
+    const browseEndpoint = endpoint.browseEndpoint;
+    if (browseEndpoint) {
+      // Prefer canonical URL if available
+      const canonicalUrl = browseEndpoint.canonicalBaseUrl;
+      if (canonicalUrl) return canonicalUrl;
+      
+      // Fall back to browseId
+      const browseId = browseEndpoint.browseId;
+      if (browseId) return '/channel/' + browseId;
+    }
+    
+    // Command metadata web URL
+    const webUrl = endpoint.commandMetadata?.webCommandMetadata?.url;
+    if (webUrl && (webUrl.startsWith('/@') || webUrl.startsWith('/channel/'))) {
+      return webUrl;
+    }
+    
+    return '';
   }
 
   function extractAndDispatch() {
@@ -98,10 +157,17 @@
       }
 
       const seeds = [];
-      let rank = 1;
+      let positionIndex = 0;
 
       for (const item of contents) {
-        if (rank > 20) break;
+        // Stop at 20 videos
+        if (seeds.length >= 20) break;
+
+        // Skip ads, shelves, shorts sections
+        if (isAdOrShelf(item)) {
+          console.log('[YtDataExtractor] Skipped ad/shelf/shorts');
+          continue;
+        }
 
         // Extract richItemRenderer
         const richItemRenderer = item?.richItemRenderer;
@@ -114,15 +180,20 @@
         const videoRenderer = content.videoRenderer;
         const lockupViewModel = content.lockupViewModel;
         
-        let videoId, title, channelName, channelId, viewCountText, publishedTimeText, durationText, thumbnailUrl;
+        let videoId, title, channelName, channelId, channelUrl, viewCountText, publishedTimeText, durationText, thumbnailUrl;
         
         if (videoRenderer) {
           // OLD STRUCTURE: videoRenderer
           videoId = videoRenderer.videoId;
           title = videoRenderer.title?.runs?.[0]?.text || videoRenderer.title?.simpleText || '';
           channelName = videoRenderer.ownerText?.runs?.[0]?.text || videoRenderer.shortBylineText?.runs?.[0]?.text || '';
-          channelId = videoRenderer.ownerText?.runs?.[0]?.navigationEndpoint?.browseEndpoint?.browseId ||
-                     videoRenderer.shortBylineText?.runs?.[0]?.navigationEndpoint?.browseEndpoint?.browseId || '';
+          
+          // Extract channel URL from navigation endpoint
+          const ownerEndpoint = videoRenderer.ownerText?.runs?.[0]?.navigationEndpoint ||
+                               videoRenderer.shortBylineText?.runs?.[0]?.navigationEndpoint;
+          channelUrl = extractChannelUrl(ownerEndpoint);
+          channelId = ownerEndpoint?.browseEndpoint?.browseId || '';
+          
           viewCountText = videoRenderer.viewCountText?.simpleText || videoRenderer.viewCountText?.runs?.[0]?.text || '';
           publishedTimeText = videoRenderer.publishedTimeText?.simpleText || '';
           durationText = videoRenderer.lengthText?.simpleText ||
@@ -142,10 +213,14 @@
           const metadata = lockupViewModel.metadata?.lockupMetadataViewModel;
           title = metadata?.title?.content || '';
           
-          // Extract channel info
+          // Extract channel info from byline
           const byline = metadata?.metadata?.contentMetadataViewModel?.metadataRows?.[0]?.metadataParts?.[0];
           channelName = byline?.text?.content || '';
-          channelId = ''; // Channel ID harder to get in new format - will be fetched via API
+          
+          // Try to get channel URL from byline's onTap
+          const bylineEndpoint = byline?.text?.commandRuns?.[0]?.onTap?.innertubeCommand;
+          channelUrl = extractChannelUrl(bylineEndpoint) || '';
+          channelId = bylineEndpoint?.browseEndpoint?.browseId || '';
           
           // Extract view count and time
           const metaRow = metadata?.metadata?.contentMetadataViewModel?.metadataRows?.[1]?.metadataParts;
@@ -168,23 +243,38 @@
           continue;
         }
 
-        // Skip if no videoId
+        // Skip if no videoId (invalid video)
         if (!videoId) continue;
+        
+        // Skip if it looks like a Short (very short duration)
+        if (durationText && durationText.length <= 4 && !durationText.includes(':')) {
+          // Might be seconds only like "59" - skip shorts
+          const seconds = parseInt(durationText, 10);
+          if (!isNaN(seconds) && seconds < 60) {
+            console.log('[YtDataExtractor] Skipped short video:', title?.slice(0, 30));
+            continue;
+          }
+        }
 
         const href = '/watch?v=' + videoId;
 
         seeds.push({
           videoId,
           title,
-          channelId,
           channelName,
+          channelUrl: channelUrl || (channelId ? '/channel/' + channelId : ''),
+          channelId, // Keep for backwards compatibility
+          thumbnailUrl,
+          durationText,
+          positionIndex: positionIndex,
+          // Additional fields for backwards compatibility
           viewCountText,
           publishedTimeText,
-          durationText,
-          thumbnailUrl,
           href,
-          rank: rank++
+          rank: positionIndex + 1 // 1-based rank for backwards compatibility
         });
+        
+        positionIndex++;
       }
 
       console.log(`[YtDataExtractor] Extracted ${seeds.length} videos via ${structurePath}`);

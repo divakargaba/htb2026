@@ -39,6 +39,11 @@ let silencedVideosData = null
 let isAnalyzing = false
 let topicProfile = null
 
+// CRITICAL: Flag to prevent re-analysis after initial analysis completes
+// This is the definitive guard against noise tab shuffling
+let homepageAnalysisComplete = false
+let currentPageUrl = '' // Track URL to detect actual page navigation
+
 // ============================================
 // HELPERS
 // ============================================
@@ -370,9 +375,25 @@ function showSilencedView() {
     window.SilencedGrid.show()
     
     // Use silencedPairs from the new pipeline OR silencedVideosData from legacy
-    const silencedToShow = silencedPairs?.length > 0 
-      ? silencedPairs.map(p => p.silencedVideo).filter(Boolean)
-      : silencedVideosData;
+    // Include the full pair data (noise video reference, AI explanation, etc.)
+    let silencedToShow = null
+    if (silencedPairs?.length > 0) {
+      silencedToShow = silencedPairs
+        .filter(p => p.silencedVideo)
+        .map(p => ({
+          ...p.silencedVideo,
+          noiseVideoId: p.noiseVideoId,
+          noiseVideoTitle: p.noiseVideoTitle,
+          noiseVideoChannel: p.noiseVideoChannel,
+          aiExplanation: p.aiExplanation,
+          whyGood: p.whyGood,
+          whyBuried: p.whyBuried,
+          qualityScore: p.qualityScore,
+          engagementScore: p.engagementScore
+        }))
+    } else {
+      silencedToShow = silencedVideosData
+    }
     
     if (silencedToShow && silencedToShow.length > 0) {
       console.log(`[BiasLens] Showing ${silencedToShow.length} cached silenced videos`)
@@ -409,19 +430,28 @@ let thumbnailFeatures = {}
  * 5. Find silenced counterparts (parallel)
  */
 async function analyzeHomepageFeed() {
+  // CRITICAL: If analysis has already completed for this page, never re-analyze
+  // This prevents noise tab shuffling when switching between tabs
+  if (homepageAnalysisComplete) {
+    console.log('[BiasLens] Analysis already completed for this page, using cached data')
+    if (feedAnalysisData) {
+      updateBiasLensUIWithAnalysis(feedAnalysisData)
+    }
+    return
+  }
+  
   if (isAnalyzing) {
     console.log('[BiasLens] Analysis already in progress')
     return
   }
   
-  // If we already have good data, don't re-analyze (prevents clobbering)
-  // Check both stats.views (from enrichment) and metrics.views (from scoring)
+  // Secondary check: If we have valid data, don't re-analyze
   const hasValidData = scoredVideos && scoredVideos.length > 0 && 
     ((scoredVideos[0]?.stats?.views > 0) || (scoredVideos[0]?.metrics?.views > 0))
   
   if (hasValidData) {
     console.log('[BiasLens] Already have valid analysis data, skipping re-analysis')
-    // Just update the UI with existing data
+    homepageAnalysisComplete = true // Mark as complete
     if (feedAnalysisData) {
       updateBiasLensUIWithAnalysis(feedAnalysisData)
     }
@@ -535,13 +565,30 @@ async function analyzeHomepageFeed() {
       silencedPairs = silencedResponse.pairs
       console.log(`[BiasLens] Found ${silencedPairs.length} silenced pairs in ${Date.now() - startTime}ms`)
       
-      // Update silenced grid
+      // Update silenced grid with full pair data (includes noise video reference)
       if (window.SilencedGrid) {
-        window.SilencedGrid.updateVideos(silencedPairs.map(p => p.silencedVideo).filter(Boolean))
+        const silencedWithContext = silencedPairs
+          .filter(p => p.silencedVideo)
+          .map(p => ({
+            ...p.silencedVideo,
+            noiseVideoId: p.noiseVideoId,
+            noiseVideoTitle: p.noiseVideoTitle,
+            noiseVideoChannel: p.noiseVideoChannel,
+            aiExplanation: p.aiExplanation,
+            whyGood: p.whyGood,
+            whyBuried: p.whyBuried,
+            qualityScore: p.qualityScore,
+            engagementScore: p.engagementScore
+          }))
+        window.SilencedGrid.updateVideos(silencedWithContext)
       }
     }
 
     console.log(`[BiasLens] ✅ Full analysis complete in ${Date.now() - startTime}ms`)
+    
+    // Mark analysis as complete to prevent reshuffling
+    homepageAnalysisComplete = true
+    currentPageUrl = window.location.href
     
     if (window.BiasTabBar) {
       window.BiasTabBar.updateHint('')
@@ -654,9 +701,12 @@ function extractHomepageVideoTitles() {
 }
 
 /**
- * Trigger a fresh analysis (for refresh button)
+ * Trigger a fresh analysis (for refresh button only)
  */
 async function refreshHomepageAnalysis() {
+  // Reset the completion flag to allow re-analysis
+  homepageAnalysisComplete = false
+  
   // Clear cached data
   homepageSeeds = []
   enrichedVideos = []
@@ -664,6 +714,7 @@ async function refreshHomepageAnalysis() {
   silencedPairs = []
   thumbnailFeatures = {}
   feedAnalysisData = null
+  silencedVideosData = null
   
   // Re-analyze
   await analyzeHomepageFeed()
@@ -2923,6 +2974,34 @@ window.addEventListener('yt-navigate-finish', () => {
   panelInjected = false
   processedVideoCards.clear()
   processedThumbnails.clear()
+  
+  // Reset homepage analysis state when navigating to a different page
+  const newUrl = window.location.href
+  const navigatedAway = currentPageUrl && newUrl !== currentPageUrl
+  
+  if (navigatedAway || !isHomepage()) {
+    // Hide all bias lens components when leaving homepage
+    if (window.BiasPanel) window.BiasPanel.hide()
+    if (window.BiasTabBar) window.BiasTabBar.hide()
+    if (window.SilencedGrid) window.SilencedGrid.hide()
+    if (window.BiasCardOverlay) {
+      window.BiasCardOverlay.disable()
+      window.BiasCardOverlay.removeAll()
+    }
+    
+    // Only reset analysis data if we're navigating to a completely different page
+    if (!isHomepage()) {
+      homepageAnalysisComplete = false
+      homepageSeeds = []
+      enrichedVideos = []
+      scoredVideos = []
+      silencedPairs = []
+      thumbnailFeatures = {}
+      feedAnalysisData = null
+      silencedVideosData = null
+      currentPageUrl = ''
+    }
+  }
 
   if (isWatchPage()) {
     setTimeout(runWatchPage, 1500)

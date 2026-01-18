@@ -7,7 +7,7 @@
 const SCHEMA_VERSION = '4.0.0'
 const ENGINE_VERSION = 'v4.0'
 
-const YOUTUBE_API_KEY = 'AIzaSyBDwfJr87Q366hIzsmUe1lJ7JDevxcApsA'
+const YOUTUBE_API_KEY = 'AIzaSyC05-_CD7VnZ8w8DFQMu-lWByJzcXccty0'
 const MAX_SUBSCRIBER_THRESHOLD = 100000 // Noise cancellation threshold
 const MONOPOLY_THRESHOLD = 1000000 // 1M subs = deafening noise
 const CACHE_TTL = 86400000 // 24 hours in ms
@@ -848,6 +848,283 @@ Return JSON with this EXACT structure:
   } catch (err) {
     console.error('[Silenced] Gemini API error:', err)
     return null
+  }
+}
+
+// ===============================================
+// COMPREHENSIVE AI EXPLANATION FOR SILENCED VIDEOS
+// Full 4-section format with detailed analysis
+// ===============================================
+
+/**
+ * Get comprehensive AI explanation for why a silenced video is high quality
+ * and why it's being buried by the algorithm - FULL 4-SECTION FORMAT
+ * 
+ * @param {Object} silencedVideo - The silenced video data
+ * @param {Object} noiseVideo - The noise video it was compared to
+ * @returns {Object} { fullExplanation, whySilenced, whoAffected, whyMatters, counterfactual, method }
+ */
+async function getQuickAIExplanation(silencedVideo, noiseVideo) {
+  if (!DEEPSEEK_API_KEY || !silencedVideo) {
+    return generateHeuristicExplanation(silencedVideo, noiseVideo)
+  }
+
+  const silencedTitle = silencedVideo.title || 'Unknown'
+  const silencedChannel = silencedVideo.channelName || 'Unknown'
+  const silencedSubs = silencedVideo.channel?.subs || 0
+  const silencedViews = silencedVideo.stats?.views || 0
+  const silencedLikes = silencedVideo.stats?.likes || 0
+  const silencedComments = silencedVideo.stats?.comments || 0
+  const silencedDuration = silencedVideo.stats?.durationSec || 0
+  const silencedDescription = silencedVideo.description || silencedVideo.stats?.description || ''
+  
+  const noiseTitle = noiseVideo?.title || 'a trending video'
+  const noiseChannel = noiseVideo?.channelName || 'a large channel'
+  const noiseSubs = noiseVideo?.channel?.subs || noiseVideo?.stats?.subs || 0
+  const noiseViews = noiseVideo?.stats?.views || noiseVideo?.metrics?.views || 0
+  
+  // Calculate engagement metrics
+  const likeRate = silencedLikes && silencedViews > 0 
+    ? ((silencedLikes / silencedViews) * 100).toFixed(1) 
+    : null
+  const commentRate = silencedComments && silencedViews > 0
+    ? ((silencedComments / silencedViews) * 100).toFixed(2)
+    : null
+  const commentsPerKViews = silencedViews > 0 
+    ? ((silencedComments / silencedViews) * 1000).toFixed(1)
+    : null
+  const durationMin = Math.round(silencedDuration / 60)
+  const viewsPerDay = silencedVideo.stats?.publishedAt 
+    ? Math.round(silencedViews / Math.max(1, (Date.now() - new Date(silencedVideo.stats.publishedAt).getTime()) / 86400000))
+    : null
+
+  // Build content context
+  const hasDescription = silencedDescription && silencedDescription.length > 50
+  const contentSource = hasDescription 
+    ? `DESCRIPTION (first 500 chars):\n"${silencedDescription.slice(0, 500)}"`
+    : ''
+
+  const prompt = `You are an algorithmic bias auditor analyzing YouTube recommendations.
+
+Your task:
+Explain WHY THIS SPECIFIC VIDEO is under-exposed by the platform, and WHY it deserves visibility anyway.
+Compare it to the NOISE VIDEO it's being overshadowed by.
+
+BE SPECIFIC TO THIS VIDEO. Reference actual topics, arguments, or content discussed. Do NOT use generic language.
+
+SILENCED VIDEO (the hidden gem):
+- Title: "${silencedTitle}"
+- Channel: ${silencedChannel}
+- Subscribers: ${formatNumber(silencedSubs)}
+- Views: ${formatNumber(silencedViews)}
+- Duration: ${durationMin} minutes
+${likeRate ? `- Like rate: ${likeRate}%` : ''}
+${commentRate ? `- Comment rate: ${commentRate}%` : ''}
+${commentsPerKViews ? `- Comments per 1k views: ${commentsPerKViews}` : ''}
+${viewsPerDay ? `- Views per day: ${formatNumber(viewsPerDay)}` : ''}
+${contentSource}
+
+NOISE VIDEO (what YouTube is pushing instead):
+- Title: "${noiseTitle}"
+- Channel: ${noiseChannel}
+- Subscribers: ${formatNumber(noiseSubs)}
+- Views: ${formatNumber(noiseViews)}
+
+Your output MUST follow this structure exactly:
+
+1) WHY THIS CONTENT IS SILENCED
+Explain the systemic or algorithmic factors that reduce THIS VIDEO'S visibility.
+Reference specific characteristics of this video (its topic, format, creator size, etc.).
+Focus on platform incentives (scale, recency, virality, volume).
+Do NOT blame the creator.
+
+2) WHO IS AFFECTED
+Briefly identify the type of creator or perspective THIS VIDEO represents that is disadvantaged.
+Be specific - what kind of content is this? What viewpoint or format?
+
+3) WHY THIS CONTENT STILL MATTERS
+Explain what the algorithm undervalues about THIS SPECIFIC VIDEO.
+Reference actual topics, arguments, or insights from the video content.
+Use engagement quality, depth, originality, or audience response specific to this video.
+
+4) COUNTERFACTUAL INSIGHT
+One sentence explaining what would likely happen if THIS VIDEO were surfaced equally.
+
+Rules:
+- Be concise (max 2 short bullet points per section)
+- Be SPECIFIC to this video - reference actual content, topics, or arguments
+- Be confident, not speculative
+- Avoid technical jargon
+- Avoid moralizing language
+- Do NOT mention "AI", "model", or "analysis process"
+- Write for a non-technical audience
+- If you have description, USE IT - be concrete about what this video discusses
+
+Tone:
+Clear, calm, factual, human.
+
+Format your response as plain text with 4 clear sections, using bullets where appropriate.`
+
+  try {
+    const text = await callDeepSeekAPI(prompt, { temperature: 0.3, maxTokens: 600 })
+    
+    if (!text) {
+      return generateHeuristicExplanation(silencedVideo, noiseVideo)
+    }
+
+    // Parse the 4-section response
+    const sections = parseAIExplanationSections(text)
+    
+    return {
+      fullExplanation: text,
+      whySilenced: sections.whySilenced,
+      whoAffected: sections.whoAffected,
+      whyMatters: sections.whyMatters,
+      counterfactual: sections.counterfactual,
+      // Legacy fields for backward compatibility
+      explanation: sections.whyMatters || text.slice(0, 200),
+      whyGood: sections.whyMatters,
+      whyBuried: sections.whySilenced,
+      method: 'deepseek'
+    }
+  } catch (err) {
+    console.warn('[Silenced] Comprehensive AI explanation failed:', err.message)
+    return generateHeuristicExplanation(silencedVideo, noiseVideo)
+  }
+}
+
+/**
+ * Parse the 4-section AI explanation response into structured data
+ */
+function parseAIExplanationSections(text) {
+  const result = {
+    whySilenced: '',
+    whoAffected: '',
+    whyMatters: '',
+    counterfactual: ''
+  }
+  
+  if (!text) return result
+  
+  // Try to extract sections by looking for headers
+  const silencedMatch = text.match(/1\)\s*WHY[^\n]*SILENCED[^\n]*\n([\s\S]*?)(?=2\)|$)/i)
+  const affectedMatch = text.match(/2\)\s*WHO[^\n]*AFFECTED[^\n]*\n([\s\S]*?)(?=3\)|$)/i)
+  const mattersMatch = text.match(/3\)\s*WHY[^\n]*MATTERS[^\n]*\n([\s\S]*?)(?=4\)|$)/i)
+  const counterfactualMatch = text.match(/4\)\s*COUNTERFACTUAL[^\n]*\n([\s\S]*?)$/i)
+  
+  if (silencedMatch) result.whySilenced = silencedMatch[1].trim()
+  if (affectedMatch) result.whoAffected = affectedMatch[1].trim()
+  if (mattersMatch) result.whyMatters = mattersMatch[1].trim()
+  if (counterfactualMatch) result.counterfactual = counterfactualMatch[1].trim()
+  
+  return result
+}
+
+/**
+ * Generate heuristic explanation when AI is unavailable
+ * Returns the same 4-section format as the AI version
+ */
+function generateHeuristicExplanation(silencedVideo, noiseVideo) {
+  if (!silencedVideo) {
+    return { 
+      fullExplanation: null, 
+      whySilenced: null, 
+      whoAffected: null, 
+      whyMatters: null, 
+      counterfactual: null,
+      explanation: null, 
+      whyGood: null, 
+      whyBuried: null, 
+      method: 'heuristic' 
+    }
+  }
+
+  const subs = silencedVideo.channel?.subs || 0
+  const views = silencedVideo.stats?.views || 0
+  const likes = silencedVideo.stats?.likes || 0
+  const comments = silencedVideo.stats?.comments || 0
+  const likeRate = likes && views > 0 ? (likes / views) * 100 : 0
+  const commentRate = comments && views > 0 ? (comments / views) * 100 : 0
+  const durationMin = Math.round((silencedVideo.stats?.durationSec || 0) / 60)
+  const channelName = silencedVideo.channelName || 'this creator'
+  const title = silencedVideo.title || 'this video'
+  
+  // Noise video stats for comparison
+  const noiseSubs = noiseVideo?.channel?.subs || noiseVideo?.stats?.subs || 0
+  const noiseChannel = noiseVideo?.channelName || 'larger channels'
+
+  // Build 4-section explanation
+  
+  // 1) WHY THIS CONTENT IS SILENCED
+  let whySilenced = ''
+  if (subs < 10000) {
+    whySilenced = `• Channel size (${formatNumber(subs)} subscribers) is far below the algorithmic threshold for broad distribution\n• Platform prioritizes established creators with proven engagement at scale`
+  } else if (subs < 50000) {
+    whySilenced = `• With ${formatNumber(subs)} subscribers, this channel lacks the scale signals that trigger algorithmic amplification\n• YouTube's recommendation system favors channels with consistent high-volume performance`
+  } else if (subs < 100000) {
+    whySilenced = `• At ${formatNumber(subs)} subscribers, this channel is in the "growth gap" - too big to be novel, too small for mass recommendations\n• Platform incentives favor either viral newcomers or established mega-channels`
+  } else {
+    whySilenced = `• Despite reasonable size, this content may not match the high-velocity engagement patterns the algorithm rewards\n• Platform optimization for watch time favors different content formats`
+  }
+
+  // 2) WHO IS AFFECTED
+  let whoAffected = ''
+  if (durationMin > 15) {
+    whoAffected = `• Long-form content creators who prioritize depth over quick engagement\n• Educational or analytical content that requires viewer investment`
+  } else if (subs < 50000) {
+    whoAffected = `• Independent creators building audiences organically\n• Voices outside mainstream media and established YouTube networks`
+  } else {
+    whoAffected = `• Mid-tier creators competing against algorithmically-favored content\n• Perspectives that don't fit trending topic clusters`
+  }
+
+  // 3) WHY THIS CONTENT STILL MATTERS
+  let whyMatters = ''
+  if (likeRate > 5) {
+    whyMatters = `• Exceptional ${likeRate.toFixed(1)}% like rate indicates viewers who find it value it highly\n• Strong audience satisfaction despite limited discovery`
+  } else if (likeRate > 3) {
+    whyMatters = `• Solid ${likeRate.toFixed(1)}% like rate shows genuine audience appreciation\n• Engagement quality suggests content resonates with its viewers`
+  } else if (commentRate > 0.5) {
+    whyMatters = `• Active comment section (${commentRate.toFixed(2)}% rate) indicates engaged community discussion\n• Viewers are motivated to participate, not just passively watch`
+  } else if (durationMin > 10) {
+    whyMatters = `• ${durationMin}-minute runtime suggests substantive, in-depth coverage\n• Content depth that quick-hit algorithm-optimized videos often lack`
+  } else {
+    whyMatters = `• Quality engagement metrics relative to channel size\n• Organic reach without algorithmic amplification`
+  }
+
+  // 4) COUNTERFACTUAL INSIGHT
+  let counterfactual = ''
+  if (likeRate > 4) {
+    counterfactual = `If surfaced equally, this content would likely maintain its ${likeRate.toFixed(1)}% like rate with a much larger audience, suggesting the algorithm is suppressing content that viewers genuinely appreciate.`
+  } else if (subs < 50000 && views > 5000) {
+    counterfactual = `Equal visibility would give this smaller creator a fair chance to compete on content quality rather than existing subscriber counts, potentially revealing audiences underserved by mainstream recommendations.`
+  } else {
+    counterfactual = `If recommended as often as ${noiseChannel}, this video would reach viewers who may prefer its approach but never discover it through algorithmic feeds.`
+  }
+
+  // Build full explanation text
+  const fullExplanation = `1) WHY THIS CONTENT IS SILENCED
+${whySilenced}
+
+2) WHO IS AFFECTED
+${whoAffected}
+
+3) WHY THIS CONTENT STILL MATTERS
+${whyMatters}
+
+4) COUNTERFACTUAL INSIGHT
+${counterfactual}`
+
+  return {
+    fullExplanation,
+    whySilenced,
+    whoAffected,
+    whyMatters,
+    counterfactual,
+    // Legacy fields for backward compatibility
+    explanation: whyMatters.split('\n')[0].replace('• ', ''),
+    whyGood: whyMatters,
+    whyBuried: whySilenced,
+    method: 'heuristic'
   }
 }
 
@@ -2919,61 +3196,46 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
         console.warn(`  - No channel: ${filterStats.noChannel}`)
       }
 
-      // Score and select top candidates
-      for (const candidate of candidates) {
-        if (gems.length >= 2) break
+      // OPTIMIZED: Pre-score candidates WITHOUT transcript first (fast)
+      // Then only fetch transcripts for top 5 candidates
+      const prescoredCandidates = candidates
+        .filter(c => !seenChannels.has(c.channel.id))
+        .map(candidate => {
+          // Quick quality score without transcript
+          const quality = computeQualityScore(candidate.video, candidate.channel, null)
+          return { ...candidate, quality, preScore: quality.total }
+        })
+        .sort((a, b) => b.preScore - a.preScore)
+        .slice(0, 10) // Only consider top 10 pre-scored candidates
+
+      console.log(`[Silenced] Pre-scored ${prescoredCandidates.length} candidates, top scores: ${prescoredCandidates.slice(0, 3).map(c => c.preScore).join(', ')}`)
+
+      // Get original video's format themes for filtering
+      const originalFormats = context.detectedThemes.filter(t =>
+        ['comedy', 'educational', 'review', 'documentary', 'gaming', 'vlog', 'interview', 'storytelling'].includes(t)
+      )
+
+      // Process top candidates (with optional transcript for top 5)
+      for (let i = 0; i < prescoredCandidates.length && gems.length < 2; i++) {
+        const candidate = prescoredCandidates[i]
         if (seenChannels.has(candidate.channel.id)) continue
 
-        // Fetch transcript for quality scoring
-        const transcript = await fetchTranscriptForScoring(candidate.video.id)
-
-        // Compute quality score
-        const quality = computeQualityScore(candidate.video, candidate.channel, transcript)
-
-        // Progressive threshold: start at 12, lower if we're not finding enough gems
-        const currentThreshold = gems.length === 0 ? qualityThreshold : Math.max(8, qualityThreshold - 2)
-
-        if (quality.total < currentThreshold) {
-          console.log(`[Silenced] Skipping ${candidate.video.id} - quality score: ${quality.total} (threshold: ${currentThreshold})`, {
-            breakdown: {
-              like: quality.breakdown.likeScore,
-              comment: quality.breakdown.commentScore,
-              duration: quality.breakdown.durationScore,
-              base: 10, // baseContentScore
-              penalties: quality.breakdown.clickbaitPenalty + quality.breakdown.spamPenalty,
-              bonus: quality.breakdown.underexposureBonus
-            }
-          })
-          continue
-        }
-
-        // Check format relevance - filter out videos that don't match the format
+        // Check format relevance first (fast check)
         const candidateTitle = candidate.video.snippet?.title || ''
         const candidateDesc = candidate.video.snippet?.description || ''
         const candidateText = `${candidateTitle} ${candidateDesc}`.toLowerCase()
 
-        // Get original video's format themes
-        const originalFormats = context.detectedThemes.filter(t =>
-          ['comedy', 'educational', 'review', 'documentary', 'gaming', 'vlog', 'interview', 'storytelling'].includes(t)
-        )
-
-        // If original video has a specific format, check if candidate matches
         if (originalFormats.length > 0) {
-          const formatMatched = originalFormats.some(format => {
-            const formatPatterns = {
-              'comedy': /\b(comedy|skit|sketch|funny|humor|hilarious|parody|joke)\b/i,
-              'educational': /\b(tutorial|how to|guide|learn|explained|education|teach)\b/i,
-              'review': /\b(review|unboxing|first impressions|honest)\b/i,
-              'documentary': /\b(documentary|investigation|deep dive|analysis|explore)\b/i,
-              'gaming': /\b(gaming|gameplay|playthrough|let's play)\b/i,
-              'vlog': /\b(vlog|day in|daily|routine)\b/i,
-              'interview': /\b(interview|podcast|conversation|talk)\b/i,
-              'storytelling': /\b(story|storytime|experience|tale)\b/i
-            }
-            return formatPatterns[format]?.test(candidateText)
-          })
-
-          // Check if candidate is a DIFFERENT format (which we want to filter out)
+          const formatPatterns = {
+            'comedy': /\b(comedy|skit|sketch|funny|humor|hilarious|parody|joke)\b/i,
+            'educational': /\b(tutorial|how to|guide|learn|explained|education|teach)\b/i,
+            'review': /\b(review|unboxing|first impressions|honest)\b/i,
+            'documentary': /\b(documentary|investigation|deep dive|analysis|explore)\b/i,
+            'gaming': /\b(gaming|gameplay|playthrough|let's play)\b/i,
+            'vlog': /\b(vlog|day in|daily|routine)\b/i,
+            'interview': /\b(interview|podcast|conversation|talk)\b/i,
+            'storytelling': /\b(story|storytime|experience|tale)\b/i
+          }
           const conflictingFormats = {
             'comedy': /\b(tutorial|how to|guide|learn|explained|become|get|achieve)\b/i,
             'educational': /\b(comedy|skit|funny|joke|parody)\b/i,
@@ -2981,33 +3243,52 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
             'documentary': /\b(comedy|skit|tutorial|how to)\b/i
           }
 
-          const hasConflictingFormat = originalFormats.some(format => {
-            const conflictPattern = conflictingFormats[format]
-            return conflictPattern && conflictPattern.test(candidateText)
-          })
+          const formatMatched = originalFormats.some(format => formatPatterns[format]?.test(candidateText))
+          const hasConflictingFormat = originalFormats.some(format => conflictingFormats[format]?.test(candidateText))
 
           if (hasConflictingFormat && !formatMatched) {
-            console.log(`[Silenced] Skipping ${candidate.video.id} - format mismatch: "${candidateTitle}" doesn't match ${originalFormats.join('/')} format`)
+            console.log(`[Silenced] Skipping ${candidate.video.id} - format mismatch`)
             continue
           }
         }
 
-        // Get AI explanation with video-specific details
+        // Only fetch transcript for top 5 candidates (optimization)
+        let transcript = null
+        let quality = candidate.quality
+        if (i < 5) {
+          transcript = await fetchTranscriptForScoring(candidate.video.id)
+          if (transcript) {
+            // Re-score with transcript for better accuracy
+            quality = computeQualityScore(candidate.video, candidate.channel, transcript)
+          }
+        }
+
+        // Progressive threshold
+        const currentThreshold = gems.length === 0 ? qualityThreshold : Math.max(8, qualityThreshold - 2)
+
+        if (quality.total < currentThreshold) {
+          console.log(`[Silenced] Skipping ${candidate.video.id} - quality score: ${quality.total} (threshold: ${currentThreshold})`)
+          continue
+        }
+
+        // Get AI explanation (parallel with adding to gems)
         const transcriptText = transcript && typeof transcript === 'string' ? transcript : null
         const videoDescription = candidate.video.snippet?.description || ''
         const channelTitle = candidate.video.snippet?.channelTitle || ''
-        const explanation = await getAIExplanation(
+        
+        // Don't await AI explanation - add gem immediately, update explanation async
+        const explanationPromise = getAIExplanation(
           quality.metrics,
           candidate.video.snippet.title,
           transcriptText,
           videoDescription,
           channelTitle,
           candidate.subs
-        )
+        ).catch(() => null)
 
         seenChannels.add(candidate.channel.id)
 
-        gems.push({
+        const gem = {
           videoId: candidate.video.id,
           title: candidate.video.snippet.title,
           channelTitle: candidate.video.snippet.channelTitle,
@@ -3021,11 +3302,17 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
           underexposureScore: quality.underexposureScore,
           breakdown: quality.breakdown,
           metrics: quality.metrics,
-          explanation,
+          explanation: null, // Will be filled async
           hasTranscript: !!transcript
-        })
+        }
 
+        gems.push(gem)
         console.log(`[Silenced] 💎 Found gem: "${candidate.video.snippet.title}" (Q:${quality.total}, U:${quality.underexposureScore})`)
+
+        // Update explanation async (don't block)
+        explanationPromise.then(explanation => {
+          gem.explanation = explanation
+        })
       }
 
       // If we still need more, try broadening
@@ -4833,6 +5120,7 @@ async function enrichHomepageSeeds(seeds) {
 
 /**
  * Find silenced videos for scored homepage videos
+ * Improved: Better constraints, language matching, quality scoring
  */
 async function findSilencedForHomepage(scoredVideos) {
   if (!scoredVideos || scoredVideos.length === 0) return []
@@ -4840,13 +5128,15 @@ async function findSilencedForHomepage(scoredVideos) {
   console.log(`[SilencedFinder] Finding silenced for ${Math.min(10, scoredVideos.length)} videos...`)
   const startTime = Date.now()
 
-  // Constraints
+  // IMPROVED CONSTRAINTS: Higher quality bar
   const CONSTRAINTS = {
     subsMin: 1000,
     subsMax: 100000,
-    viewsMin: 5000,
-    viewsMax: 300000,
-    durationMin: 120
+    viewsMin: 10000,      // Increased from 5000
+    viewsMax: 500000,     // Increased from 300000
+    durationMin: 240,     // 4 minutes minimum (increased from 120)
+    minLikeRate: 0.03,    // 3% like rate minimum
+    minQualityScore: 40   // Minimum quality score
   }
 
   // Get top 10 by bias score
@@ -4858,108 +5148,309 @@ async function findSilencedForHomepage(scoredVideos) {
   // Exclude channels already in feed
   const excludeChannelIds = scoredVideos.map(v => v.channelId).filter(Boolean)
 
-  // Process in parallel
+  // Process in parallel with improved function
   const results = await Promise.all(
     top10.map(video => findSilencedForSingleVideo(video, CONSTRAINTS, excludeChannelIds))
   )
 
   console.log(`[SilencedFinder] Complete in ${Date.now() - startTime}ms`)
 
-  // Filter out failures
-  return results.filter(r => r && r.silencedVideo)
+  // Filter out failures and low quality results
+  return results.filter(r => r && r.silencedVideo && r.qualityScore >= CONSTRAINTS.minQualityScore)
 }
 
 /**
  * Find silenced counterpart for a single noise video
+ * IMPROVED: Better query building, language matching, quality filters, progressive broadening
  */
 async function findSilencedForSingleVideo(noiseVideo, constraints, excludeChannelIds) {
   const query = extractQueryKeywordsBg(noiseVideo.title)
   if (!query) {
-    return { noiseVideoId: noiseVideo.videoId, silencedVideo: null, error: 'No query' }
+    return { noiseVideoId: noiseVideo.videoId, noiseVideoTitle: noiseVideo.title, silencedVideo: null, error: 'No query' }
   }
 
-  // Search for candidates
-  const url = new URL('https://www.googleapis.com/youtube/v3/search')
-  url.searchParams.set('part', 'snippet')
-  url.searchParams.set('type', 'video')
-  url.searchParams.set('q', query)
-  url.searchParams.set('maxResults', '25')
-  url.searchParams.set('order', 'relevance')
-  url.searchParams.set('key', YOUTUBE_API_KEY)
+  // Get noise video language for matching
+  const noiseLanguage = noiseVideo.stats?.defaultLanguage || 
+                        noiseVideo.stats?.defaultAudioLanguage || 
+                        detectLanguageFromTitle(noiseVideo.title)
 
+  // Progressive broadening: try multiple search strategies
+  const searchStrategies = [
+    { maxResults: 50, order: 'relevance' },
+    { maxResults: 100, order: 'viewCount' },
+    { maxResults: 150, order: 'date' }
+  ]
+
+  let allCandidates = []
+  
+  for (const strategy of searchStrategies) {
+    if (allCandidates.length >= 10) break // Have enough good candidates
+    
+    try {
+      const url = new URL('https://www.googleapis.com/youtube/v3/search')
+      url.searchParams.set('part', 'snippet')
+      url.searchParams.set('type', 'video')
+      url.searchParams.set('q', query)
+      url.searchParams.set('maxResults', String(strategy.maxResults))
+      url.searchParams.set('order', strategy.order)
+      url.searchParams.set('key', YOUTUBE_API_KEY)
+      
+      // Try to match language if detected
+      if (noiseLanguage && noiseLanguage.length === 2) {
+        url.searchParams.set('relevanceLanguage', noiseLanguage)
+      }
+
+      const response = await fetch(url.toString())
+      if (!response.ok) continue
+
+      const data = await response.json()
+      const newCandidates = (data.items || []).map(item => ({
+        videoId: item.id?.videoId,
+        title: item.snippet?.title || '',
+        channelId: item.snippet?.channelId || '',
+        channelName: item.snippet?.channelTitle || '',
+        thumbnailUrl: item.snippet?.thumbnails?.medium?.url || '',
+        publishedAt: item.snippet?.publishedAt || '',
+        description: item.snippet?.description || ''
+      })).filter(v => v.videoId && !allCandidates.some(c => c.videoId === v.videoId))
+
+      allCandidates = [...allCandidates, ...newCandidates]
+      
+    } catch (err) {
+      console.warn('[SilencedFinder] Search strategy failed:', err.message)
+    }
+  }
+
+  if (allCandidates.length === 0) {
+    return { noiseVideoId: noiseVideo.videoId, noiseVideoTitle: noiseVideo.title, silencedVideo: null, error: 'No candidates' }
+  }
+
+  // Enrich candidates
+  const videoIds = allCandidates.map(c => c.videoId)
+  const channelIds = [...new Set(allCandidates.map(c => c.channelId).filter(Boolean))]
+
+  const [videosData, channelsData] = await Promise.all([
+    fetchVideosDataBatch(videoIds),
+    fetchChannelsDataBatch(channelIds)
+  ])
+
+  const enriched = allCandidates.map(c => ({
+    ...c,
+    stats: videosData[c.videoId] || null,
+    channel: channelsData[c.channelId] || null
+  }))
+
+  // IMPROVED FILTERING: More strict quality checks
+  const filtered = enriched.filter(c => {
+    if (!c.stats || !c.channel) return false
+    if (excludeChannelIds.includes(c.channelId)) return false
+    if (c.channel.subs < constraints.subsMin || c.channel.subs > constraints.subsMax) return false
+    if (c.stats.views < constraints.viewsMin || c.stats.views > constraints.viewsMax) return false
+    if (c.stats.durationSec < constraints.durationMin) return false
+    
+    // Filter out shorts
+    if (c.title.toLowerCase().includes('#shorts')) return false
+    if (c.stats.durationSec < 60) return false
+    
+    // Filter out reaction videos
+    if (isReactionVideo(c.title, c.description)) return false
+    
+    // Filter out low-effort content patterns
+    if (isLowEffortContent(c.title, c.description)) return false
+    
+    // Check minimum like rate if we have the data
+    if (c.stats.likes !== null && c.stats.views > 0) {
+      const likeRate = c.stats.likes / c.stats.views
+      if (likeRate < (constraints.minLikeRate || 0.02)) return false
+    }
+    
+    // Language matching: skip if clearly different language
+    if (noiseLanguage) {
+      const candidateLang = c.stats.defaultLanguage || c.stats.defaultAudioLanguage || detectLanguageFromTitle(c.title)
+      if (candidateLang && candidateLang !== noiseLanguage && candidateLang.slice(0, 2) !== noiseLanguage.slice(0, 2)) {
+        return false
+      }
+    }
+    
+    return true
+  })
+
+  if (filtered.length === 0) {
+    return { noiseVideoId: noiseVideo.videoId, noiseVideoTitle: noiseVideo.title, silencedVideo: null, error: 'All filtered' }
+  }
+
+  // IMPROVED SCORING: Better quality score with engagement focus
+  const scored = filtered.map(c => ({
+    ...c,
+    qualityScore: computeQualityScoreBg(c),
+    engagementScore: computeEngagementScore(c)
+  })).sort((a, b) => {
+    // Sort by combined quality + engagement
+    const scoreA = a.qualityScore * 0.6 + a.engagementScore * 0.4
+    const scoreB = b.qualityScore * 0.6 + b.engagementScore * 0.4
+    return scoreB - scoreA
+  })
+
+  const best = scored[0]
+
+  // Calculate why this video is silenced
+  const likeRate = best.stats?.likes && best.stats?.views 
+    ? Math.round((best.stats.likes / best.stats.views) * 10000) / 100 
+    : null
+  
+  const whyGood = []
+  const whyBuried = []
+  
+  // Generate "why good" reasons
+  if (likeRate && likeRate > 4) whyGood.push(`${likeRate}% like rate (excellent)`)
+  else if (likeRate && likeRate > 3) whyGood.push(`${likeRate}% like rate (strong)`)
+  
+  if (best.channel?.subs < 50000) whyGood.push('Small creator with dedicated audience')
+  else if (best.channel?.subs < 100000) whyGood.push('Growing channel')
+  
+  if (best.stats?.durationSec > 600) whyGood.push('In-depth content')
+  
+  const viewsPerSub = best.channel?.subs > 0 ? best.stats?.views / best.channel.subs : 0
+  if (viewsPerSub > 1) whyGood.push('High views-to-subscriber ratio')
+  
+  // Generate "why buried" reasons
+  if (best.channel?.subs < 100000) whyBuried.push(`Only ${formatNumber(best.channel.subs)} subscribers`)
+  if (best.stats?.views < 100000) whyBuried.push('Lower view count than trending content')
+  whyBuried.push('Not optimized for algorithmic signals')
+
+  // Get AI explanation (async but we'll await it)
+  let aiExplanation = null
   try {
-    const response = await fetch(url.toString())
-    if (!response.ok) return { noiseVideoId: noiseVideo.videoId, silencedVideo: null, error: 'Search failed' }
-
-    const data = await response.json()
-    const candidates = (data.items || []).map(item => ({
-      videoId: item.id?.videoId,
-      title: item.snippet?.title || '',
-      channelId: item.snippet?.channelId || '',
-      channelName: item.snippet?.channelTitle || '',
-      thumbnailUrl: item.snippet?.thumbnails?.medium?.url || '',
-      publishedAt: item.snippet?.publishedAt || ''
-    })).filter(v => v.videoId)
-
-    if (candidates.length === 0) {
-      return { noiseVideoId: noiseVideo.videoId, silencedVideo: null, error: 'No candidates' }
-    }
-
-    // Enrich candidates
-    const videoIds = candidates.map(c => c.videoId)
-    const channelIds = [...new Set(candidates.map(c => c.channelId).filter(Boolean))]
-
-    const [videosData, channelsData] = await Promise.all([
-      fetchVideosDataBatch(videoIds),
-      fetchChannelsDataBatch(channelIds)
-    ])
-
-    const enriched = candidates.map(c => ({
-      ...c,
-      stats: videosData[c.videoId] || null,
-      channel: channelsData[c.channelId] || null
-    }))
-
-    // Filter by constraints
-    const filtered = enriched.filter(c => {
-      if (!c.stats || !c.channel) return false
-      if (excludeChannelIds.includes(c.channelId)) return false
-      if (c.channel.subs < constraints.subsMin || c.channel.subs > constraints.subsMax) return false
-      if (c.stats.views < constraints.viewsMin || c.stats.views > constraints.viewsMax) return false
-      if (c.stats.durationSec < constraints.durationMin) return false
-      if (c.title.toLowerCase().includes('#shorts')) return false
-      return true
-    })
-
-    if (filtered.length === 0) {
-      return { noiseVideoId: noiseVideo.videoId, silencedVideo: null, error: 'All filtered' }
-    }
-
-    // Score and pick best
-    const scored = filtered.map(c => ({
-      ...c,
-      qualityScore: computeQualityScoreBg(c)
-    })).sort((a, b) => b.qualityScore - a.qualityScore)
-
-    const best = scored[0]
-
-    return {
-      noiseVideoId: noiseVideo.videoId,
-      silencedVideo: best,
-      whySilenced: {
-        subs: best.channel?.subs,
-        views: best.stats?.views,
-        likeRate: best.stats?.likes && best.stats?.views 
-          ? Math.round((best.stats.likes / best.stats.views) * 10000) / 100 
-          : null
-      },
-      qualityScore: best.qualityScore,
-      query
-    }
+    aiExplanation = await getQuickAIExplanation(best, noiseVideo)
   } catch (err) {
-    console.error('[SilencedFinder] Error:', err)
-    return { noiseVideoId: noiseVideo.videoId, silencedVideo: null, error: err.message }
+    console.warn('[SilencedFinder] AI explanation failed:', err.message)
   }
+
+  return {
+    noiseVideoId: noiseVideo.videoId,
+    noiseVideoTitle: noiseVideo.title,
+    noiseVideoChannel: noiseVideo.channelName,
+    silencedVideo: best,
+    whySilenced: {
+      subs: best.channel?.subs,
+      views: best.stats?.views,
+      likeRate
+    },
+    whyGood: aiExplanation?.whyGood ? [aiExplanation.whyGood, ...whyGood] : whyGood,
+    whyBuried: aiExplanation?.whyBuried ? [aiExplanation.whyBuried, ...whyBuried] : whyBuried,
+    aiExplanation: aiExplanation?.explanation || null,
+    qualityScore: best.qualityScore,
+    engagementScore: best.engagementScore,
+    query
+  }
+}
+
+/**
+ * Detect language from title using simple heuristics
+ */
+function detectLanguageFromTitle(title) {
+  if (!title) return null
+  
+  // Check for non-Latin scripts
+  if (/[\u3040-\u309F\u30A0-\u30FF]/.test(title)) return 'ja' // Japanese
+  if (/[\uAC00-\uD7AF]/.test(title)) return 'ko' // Korean
+  if (/[\u4E00-\u9FFF]/.test(title)) return 'zh' // Chinese
+  if (/[\u0600-\u06FF]/.test(title)) return 'ar' // Arabic
+  if (/[\u0400-\u04FF]/.test(title)) return 'ru' // Russian/Cyrillic
+  if (/[\u0900-\u097F]/.test(title)) return 'hi' // Hindi
+  
+  // Default to English for Latin script
+  return 'en'
+}
+
+/**
+ * Check if video is a reaction video
+ */
+function isReactionVideo(title, description) {
+  const reactionPatterns = [
+    /\breact(s|ing|ion)?\b/i,
+    /\breacting\s+to\b/i,
+    /\bwatching\s+for\s+the\s+first\s+time\b/i,
+    /\bfirst\s+time\s+(watching|reacting|hearing)\b/i,
+    /\bmy\s+reaction\b/i,
+    /\breaction\s+video\b/i
+  ]
+  
+  const text = `${title} ${description}`.toLowerCase()
+  return reactionPatterns.some(p => p.test(text))
+}
+
+/**
+ * Check if video is low-effort content
+ */
+function isLowEffortContent(title, description) {
+  const lowEffortPatterns = [
+    /\bcompilation\b/i,
+    /\btiktok\s*(compilation|videos)\b/i,
+    /\bmeme\s*compilation\b/i,
+    /\bfunny\s*moments\b/i,
+    /\bbest\s*of\s*\d{4}\b/i,
+    /\btop\s*\d+\s*(moments|clips|fails)\b/i,
+    /\basmr\b/i,
+    /\b(free|giveaway|win)\b.*\b(iphone|ps5|xbox|money)\b/i,
+    /\bsub\s*4\s*sub\b/i,
+    /\bfollow\s*4\s*follow\b/i
+  ]
+  
+  const text = `${title} ${description}`.toLowerCase()
+  return lowEffortPatterns.some(p => p.test(text))
+}
+
+/**
+ * Compute engagement score (0-100) based on likes, comments, views ratio
+ */
+function computeEngagementScore(candidate) {
+  if (!candidate.stats || !candidate.channel) return 0
+  
+  const views = candidate.stats.views || 0
+  const likes = candidate.stats.likes
+  const comments = candidate.stats.comments
+  const subs = candidate.channel.subs || 1
+  
+  let score = 0
+  
+  // Like rate score (max 40 points)
+  if (likes !== null && views > 0) {
+    const likeRate = likes / views
+    score += Math.min(40, likeRate * 800) // 5% like rate = 40 points
+  }
+  
+  // Comment rate score (max 25 points)
+  if (comments !== null && views > 0) {
+    const commentRate = comments / views
+    score += Math.min(25, commentRate * 2500) // 1% comment rate = 25 points
+  }
+  
+  // Views per subscriber (max 25 points) - indicates content quality
+  const viewsPerSub = views / subs
+  score += Math.min(25, viewsPerSub * 12.5) // 2x views per sub = 25 points
+  
+  // Recency bonus (max 10 points)
+  if (candidate.publishedAt) {
+    const ageHours = (Date.now() - new Date(candidate.publishedAt).getTime()) / (1000 * 60 * 60)
+    if (ageHours < 24 * 30) { // Less than 30 days old
+      score += 10
+    } else if (ageHours < 24 * 90) { // Less than 90 days old
+      score += 5
+    }
+  }
+  
+  return Math.round(Math.min(100, score))
+}
+
+/**
+ * Format number for display
+ */
+function formatNumber(n) {
+  if (!n) return '0'
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'K'
+  return n.toString()
 }
 
 /**
