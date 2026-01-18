@@ -7,7 +7,7 @@
 const SCHEMA_VERSION = '4.0.0'
 const ENGINE_VERSION = 'v4.0'
 
-const YOUTUBE_API_KEY = 'AIzaSyAaGQRfXowsoNZe_5MV7wRwLaDqC8Ymias'
+const YOUTUBE_API_KEY = 'AIzaSyBDwfJr87Q366hIzsmUe1lJ7JDevxcApsA'
 const MAX_SUBSCRIBER_THRESHOLD = 100000 // Noise cancellation threshold
 const MONOPOLY_THRESHOLD = 1000000 // 1M subs = deafening noise
 const CACHE_TTL = 86400000 // 24 hours in ms
@@ -15,6 +15,7 @@ const BIAS_RECEIPT_CACHE_TTL = 21600000 // 6 hours in ms
 
 // Feature flags
 const ENABLE_ML_FEATURES = true // Set to true to enable AI-powered features
+const ENABLE_PERSPECTIVE_SEARCH = true // Set to true to enable perspective search on YouTube search pages
 const DEEPSEEK_API_KEY = 'sk-d22aeebcc8f041ffba2964413ef90c89' // DeepSeek API key for quality analysis
 
 // Python Backend URL (for transcript fetching + Gemini without CORS issues)
@@ -3149,6 +3150,45 @@ async function searchSilencedCreators(query) {
 }
 
 // ===============================================
+// FETCH VIDEO DURATIONS
+// ===============================================
+async function fetchVideoDurations(videoIds) {
+  if (!videoIds || videoIds.length === 0) return {}
+
+  try {
+    // Batch in groups of 50 (YouTube API limit)
+    const durationMap = {}
+    for (let i = 0; i < videoIds.length; i += 50) {
+      const batch = videoIds.slice(i, i + 50)
+
+      const url = new URL('https://www.googleapis.com/youtube/v3/videos')
+      url.searchParams.set('part', 'contentDetails')
+      url.searchParams.set('id', batch.join(','))
+      url.searchParams.set('key', YOUTUBE_API_KEY)
+
+      const res = await fetch(url.toString())
+      if (!res.ok) {
+        console.warn(`[Perspective] Failed to fetch durations for batch: ${res.status}`)
+        continue
+      }
+
+      const data = await res.json()
+      quotaUsed += 1 // Videos API costs 1 quota unit per call
+
+      for (const item of (data.items || [])) {
+        const duration = item.contentDetails?.duration || 'PT0S'
+        durationMap[item.id] = parseDurationToSeconds(duration)
+      }
+    }
+
+    return durationMap
+  } catch (err) {
+    console.error('[Perspective] Error fetching video durations:', err)
+    return {}
+  }
+}
+
+// ===============================================
 // FETCH FULL VIDEO DETAILS (for better AI analysis)
 // ===============================================
 async function fetchFullVideoDetails(videoIds) {
@@ -4290,6 +4330,330 @@ async function discoverSilencedVideos(topicMap, excludedChannels = [], filters =
 }
 
 // ===============================================
+// PERSPECTIVE SEARCH
+// Reuses existing scoring pipeline, adds perspective classification
+// ===============================================
+
+/**
+ * Classify a video into a perspective bucket using DeepSeek
+ */
+async function classifyPerspective(baseQuery, videoTitle, videoDescription, channelTitle) {
+  if (!DEEPSEEK_API_KEY) return null
+
+  const prompt = `You are a content classifier. Classify a YouTube video into ONE perspective bucket based on its framing and approach.
+
+Base Query: "${baseQuery}"
+Video Title: "${videoTitle}"
+Video Description: "${(videoDescription || '').slice(0, 500)}"
+Channel Title: "${channelTitle}"
+
+Perspective Buckets:
+1. "mainstream_practical" - Conventional, solution-focused, actionable, mainstream approach
+2. "critical_contextual" - Questioning assumptions, providing context, analyzing systems/causes
+3. "alternative_longterm" - Alternative viewpoints, long-term thinking, different paradigms
+
+Rules:
+- Classify based on FRAMING and APPROACH, not topic keywords
+- Do NOT infer sensitive attributes (political, demographic, etc.)
+- Do NOT make accusations about suppression/censorship
+- Only describe the content's framing perspective
+- Be deterministic - same input should produce same output
+
+Output STRICT JSON ONLY (no markdown, no extra text):
+{
+  "bucket": "mainstream_practical" | "critical_contextual" | "alternative_longterm",
+  "confidence": 0.0-1.0,
+  "oneSentenceRationale": "Brief explanation of why this fits the bucket (max 20 words)"
+}`
+
+  try {
+    const response = await callDeepSeekAPI(prompt, { temperature: 0.2, maxTokens: 150 })
+    if (!response) return null
+
+    // Extract JSON from response
+    let jsonText = response.trim()
+    if (jsonText.startsWith('```')) {
+      jsonText = jsonText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
+    }
+
+    const result = JSON.parse(jsonText)
+
+    // Validate bucket
+    const validBuckets = ['mainstream_practical', 'critical_contextual', 'alternative_longterm']
+    if (!validBuckets.includes(result.bucket)) {
+      console.warn(`[Perspective] Invalid bucket: ${result.bucket}, defaulting to mainstream_practical`)
+      result.bucket = 'mainstream_practical'
+    }
+
+    return {
+      bucket: result.bucket,
+      confidence: Math.max(0, Math.min(1, result.confidence || 0.5)),
+      oneSentenceRationale: result.oneSentenceRationale || 'Standard approach to the topic'
+    }
+  } catch (error) {
+    console.error('[Perspective] Classification error:', error)
+    return null
+  }
+}
+
+/**
+ * Perspective Search - Groups high-quality videos by perspective/framing
+ * Reuses existing scoring pipeline (runNoiseCancellation, quality scoring, etc.)
+ */
+async function runPerspectiveSearch(query, maxPerPerspective = 2) {
+  try {
+    if (!ENABLE_PERSPECTIVE_SEARCH) {
+      console.log('[Perspective] Feature disabled')
+      return {
+        perspectives: [],
+        debug: { error: 'Perspective search disabled' },
+        _schemaVersion: SCHEMA_VERSION
+      }
+    }
+
+    console.log(`[Perspective] Starting perspective search for: "${query}"`)
+
+    // Step 1: Use existing noise cancellation engine to get candidates
+    // This reuses ALL our existing scoring: quality, engagement, exposure advantage, etc.
+    console.log('[Perspective] Calling runNoiseCancellation...')
+    const noiseCancellationResult = await runNoiseCancellation(query)
+    console.log('[Perspective] runNoiseCancellation returned:', {
+      hasResult: !!noiseCancellationResult,
+      hasUnmutedVideos: !!noiseCancellationResult?.unmutedVideos,
+      unmutedVideosLength: noiseCancellationResult?.unmutedVideos?.length
+    })
+
+    if (!noiseCancellationResult || !noiseCancellationResult.unmutedVideos || noiseCancellationResult.unmutedVideos.length === 0) {
+      console.warn('[Perspective] No candidates found from noise cancellation')
+      return {
+        perspectives: [],
+        debug: { totalCandidates: 0, error: 'No candidates found' },
+        _schemaVersion: SCHEMA_VERSION
+      }
+    }
+
+    let candidates = noiseCancellationResult.unmutedVideos
+    console.log(`[Perspective] Got ${candidates.length} candidates from noise cancellation`)
+
+    // Fetch duration for all candidates (Search API doesn't return duration)
+    const candidateVideoIds = candidates.slice(0, 20).map(v => v.videoId)
+    console.log(`[Perspective] Fetching duration for ${candidateVideoIds.length} candidates...`)
+
+    const durationMap = await fetchVideoDurations(candidateVideoIds)
+    const durationsFetched = Object.keys(durationMap).length
+    console.log(`[Perspective] Got durations for ${durationsFetched} videos`)
+
+    // Add duration to candidates and filter out Shorts
+    let filteredCount = 0
+    candidates = candidates.filter(video => {
+      // Get duration from map or use 0 as fallback
+      const durationSec = durationMap[video.videoId] || video.duration || 0
+      video.duration = durationSec // Update video object with duration
+
+      // If we couldn't fetch duration, only filter by title (more lenient)
+      if (durationsFetched === 0) {
+        // Fallback: only filter by title if duration fetch failed
+        const title = (video.title || '').toLowerCase()
+        if (title.includes('#shorts') || title.includes('#short')) {
+          filteredCount++
+          return false
+        }
+        return true
+      }
+
+      // Filter out Shorts (videos shorter than 60 seconds)
+      if (durationSec > 0 && durationSec < 60) {
+        console.log(`[Perspective] Filtered out Short: "${video.title?.slice(0, 40)}..." (${durationSec}s)`)
+        filteredCount++
+        return false
+      }
+
+      // Filter out videos with #shorts in title
+      const title = (video.title || '').toLowerCase()
+      if (title.includes('#shorts') || title.includes('#short')) {
+        filteredCount++
+        return false
+      }
+
+      return true
+    })
+
+    console.log(`[Perspective] After filtering Shorts: ${candidates.length} candidates (filtered ${filteredCount})`)
+
+    // Re-sort by engagement score (likes + comments relative to views)
+    candidates.sort((a, b) => {
+      const engagementA = (a.engagementRatio || 0) * (a.qualityScore || 0)
+      const engagementB = (b.engagementRatio || 0) * (b.qualityScore || 0)
+      return engagementB - engagementA
+    })
+
+    console.log(`[Perspective] Top candidate engagement: ${(candidates[0]?.engagementRatio || 0).toFixed(3)}`)
+
+    // Step 2: Classify top candidates (hard cap at 12 for cost control)
+    const candidatesToClassify = candidates.slice(0, 12)
+    const classificationPromises = candidatesToClassify.map(async (video) => {
+      const classification = await classifyPerspective(
+        query,
+        video.title,
+        video.description || '',
+        video.channelTitle
+      )
+      return { video, classification }
+    })
+
+    const classifiedResults = await Promise.all(classificationPromises)
+    const classified = classifiedResults.filter(r => r.classification !== null)
+    const unclassified = classifiedResults.filter(r => r.classification === null).map(r => r.video)
+
+    console.log(`[Perspective] Classified ${classified.length}/${candidatesToClassify.length} candidates`)
+
+    // Step 3: Group into buckets
+    const buckets = {
+      mainstream_practical: [],
+      critical_contextual: [],
+      alternative_longterm: []
+    }
+
+    for (const { video, classification } of classified) {
+      if (classification && buckets[classification.bucket]) {
+        buckets[classification.bucket].push({
+          video,
+          classification
+        })
+      }
+    }
+
+    // Step 4: Sort each bucket by quality score (reuse existing scoring)
+    for (const bucketKey in buckets) {
+      buckets[bucketKey].sort((a, b) => {
+        const scoreA = a.video.qualityScore || 0
+        const scoreB = b.video.qualityScore || 0
+        return scoreB - scoreA
+      })
+    }
+
+    // Step 5: Build perspective buckets with labels
+    const perspectiveBuckets = [
+      {
+        label: 'Mainstream / Practical',
+        rationale: 'Standard approaches and practical solutions',
+        videos: buckets.mainstream_practical.slice(0, maxPerPerspective).map(item => ({
+          videoId: item.video.videoId,
+          title: item.video.title,
+          description: item.video.description,
+          thumbnail: item.video.thumbnail,
+          channelId: item.video.channelId,
+          channelTitle: item.video.channelTitle,
+          publishedAt: item.video.publishedAt,
+          subscriberCount: item.video.subscriberCount,
+          isRisingSignal: item.video.isRisingSignal || false,
+          whySurfaced: item.video.whySurfaced || [],
+          engagementRatio: item.video.engagementRatio,
+          qualityScore: item.video.qualityScore,
+          perspectiveRationale: item.classification.oneSentenceRationale,
+          biasReceipt: item.video.biasReceipt
+        }))
+      },
+      {
+        label: 'Critical / Contextual',
+        rationale: 'Questions assumptions and provides context',
+        videos: buckets.critical_contextual.slice(0, maxPerPerspective).map(item => ({
+          videoId: item.video.videoId,
+          title: item.video.title,
+          description: item.video.description,
+          thumbnail: item.video.thumbnail,
+          channelId: item.video.channelId,
+          channelTitle: item.video.channelTitle,
+          publishedAt: item.video.publishedAt,
+          subscriberCount: item.video.subscriberCount,
+          isRisingSignal: item.video.isRisingSignal || false,
+          whySurfaced: item.video.whySurfaced || [],
+          engagementRatio: item.video.engagementRatio,
+          qualityScore: item.video.qualityScore,
+          perspectiveRationale: item.classification.oneSentenceRationale,
+          biasReceipt: item.video.biasReceipt
+        }))
+      },
+      {
+        label: 'Alternative / Long-term',
+        rationale: 'Different viewpoints and long-term perspectives',
+        videos: buckets.alternative_longterm.slice(0, maxPerPerspective).map(item => ({
+          videoId: item.video.videoId,
+          title: item.video.title,
+          description: item.video.description,
+          thumbnail: item.video.thumbnail,
+          channelId: item.video.channelId,
+          channelTitle: item.video.channelTitle,
+          publishedAt: item.video.publishedAt,
+          subscriberCount: item.video.subscriberCount,
+          isRisingSignal: item.video.isRisingSignal || false,
+          whySurfaced: item.video.whySurfaced || [],
+          engagementRatio: item.video.engagementRatio,
+          qualityScore: item.video.qualityScore,
+          perspectiveRationale: item.classification.oneSentenceRationale,
+          biasReceipt: item.video.biasReceipt
+        }))
+      }
+    ]
+
+    // Step 6: Fallback - if a bucket is empty, fill from next best
+    for (let i = 0; i < perspectiveBuckets.length; i++) {
+      const bucket = perspectiveBuckets[i]
+      if (bucket.videos.length === 0 && unclassified.length > 0) {
+        // Take top unclassified videos sorted by quality
+        const fallbackVideos = [...unclassified]
+          .sort((a, b) => (b.qualityScore || 0) - (a.qualityScore || 0))
+          .slice(0, maxPerPerspective)
+          .map(video => ({
+            videoId: video.videoId,
+            title: video.title,
+            description: video.description,
+            thumbnail: video.thumbnail,
+            channelId: video.channelId,
+            channelTitle: video.channelTitle,
+            publishedAt: video.publishedAt,
+            subscriberCount: video.subscriberCount,
+            isRisingSignal: video.isRisingSignal || false,
+            whySurfaced: video.whySurfaced || [],
+            engagementRatio: video.engagementRatio,
+            qualityScore: video.qualityScore,
+            perspectiveRationale: 'Fallback (AI unavailable)',
+            biasReceipt: video.biasReceipt
+          }))
+        bucket.videos = fallbackVideos
+        bucket.rationale = 'Fallback (AI classification unavailable)'
+      }
+    }
+
+    // Filter out empty buckets
+    const finalBuckets = perspectiveBuckets.filter(b => b.videos.length > 0)
+
+    console.log(`[Perspective] Returning ${finalBuckets.length} perspective buckets with ${finalBuckets.reduce((sum, b) => sum + b.videos.length, 0)} total videos`)
+
+    return {
+      perspectives: finalBuckets,
+      debug: {
+        totalCandidates: candidates.length,
+        classifiedCount: classified.length,
+        fallbackUsed: unclassified.length > 0
+      },
+      _schemaVersion: SCHEMA_VERSION
+    }
+  } catch (error) {
+    console.error('[Perspective] Fatal error in runPerspectiveSearch:', error)
+    console.error('[Perspective] Error stack:', error.stack)
+    return {
+      perspectives: [],
+      debug: {
+        error: error.message || String(error),
+        stack: error.stack
+      },
+      _schemaVersion: SCHEMA_VERSION
+    }
+  }
+}
+
+// ===============================================
 // MESSAGE HANDLING
 // ===============================================
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -4383,6 +4747,29 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       .then(result => sendResponse({ success: true, data: result }))
       .catch(err => sendResponse({ success: false, error: err.message }))
     return true
+  }
+
+  // Perspective Search
+  if (request.action === 'perspectiveSearch') {
+    console.log(`[Perspective] Received perspective search request for: "${request.query}"`)
+    console.log(`[Perspective] Feature flag enabled: ${ENABLE_PERSPECTIVE_SEARCH}`)
+
+    runPerspectiveSearch(request.query, request.maxPerPerspective || 2)
+      .then(result => {
+        console.log(`[Perspective] Returning ${result.perspectives?.length || 0} perspective buckets`)
+        console.log(`[Perspective] Result structure:`, {
+          hasPerspectives: !!result.perspectives,
+          perspectivesLength: result.perspectives?.length,
+          debug: result.debug
+        })
+        sendResponse({ success: true, data: result })
+      })
+      .catch(err => {
+        console.error('[Perspective] Error in runPerspectiveSearch:', err)
+        console.error('[Perspective] Error stack:', err.stack)
+        sendResponse({ success: false, error: err.message || String(err) })
+      })
+    return true // Keep channel open for async response
   }
 
   if (request.action === 'getChannel') {

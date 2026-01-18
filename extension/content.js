@@ -150,11 +150,11 @@ async function saveBiasLensState() {
  */
 async function initHomepageBiasLens() {
   console.log('[BiasLens] Initializing homepage Bias Lens...')
-  
+
   await loadBiasLensState()
   initializeBiasLensComponents()
   setupBiasLensEventListeners()
-  
+
   console.log('[BiasLens] Homepage Bias Lens initialized')
 }
 
@@ -170,28 +170,28 @@ function initializeBiasLensComponents() {
         window.BiasLensToggle.setState(true)
       }
     }
-    
+
     if (window.BiasTabBar) {
       window.BiasTabBar.init()
       window.BiasTabBar.onTabChange(handleBiasLensTabChange)
     }
-    
+
     if (window.BiasCardOverlay) {
       window.BiasCardOverlay.init()
     }
-    
+
     if (window.BiasPopover) {
       window.BiasPopover.init()
     }
-    
+
     if (window.BiasPanel) {
       window.BiasPanel.init()
     }
-    
+
     if (window.SilencedGrid) {
       window.SilencedGrid.init()
     }
-    
+
     if (biasLensEnabled) {
       activateBiasLens()
     }
@@ -203,14 +203,14 @@ function initializeBiasLensComponents() {
  */
 function waitForBiasLensComponents(callback, maxAttempts = 10) {
   let attempts = 0
-  
+
   const check = () => {
     attempts++
-    
+
     const hasToggle = !!window.BiasLensToggle
     const hasTabBar = !!window.BiasTabBar
     const hasOverlay = !!window.BiasCardOverlay
-    
+
     if (hasToggle && hasTabBar && hasOverlay) {
       console.log('[BiasLens] All components loaded!')
       callback()
@@ -226,7 +226,7 @@ function waitForBiasLensComponents(callback, maxAttempts = 10) {
       callback()
     }
   }
-  
+
   check()
 }
 
@@ -238,7 +238,7 @@ function handleBiasLensToggle(enabled) {
   console.log('[BiasLens] Toggle changed:', enabled)
   biasLensEnabled = enabled
   saveBiasLensState()
-  
+
   if (enabled) {
     activateBiasLens()
   } else {
@@ -250,7 +250,7 @@ function handleBiasLensTabChange(tab) {
   console.log('[BiasLens] Tab changed:', tab)
   activeTab = tab
   saveBiasLensState()
-  
+
   if (tab === 'noise') {
     showNoiseView()
   } else if (tab === 'silenced') {
@@ -260,7 +260,7 @@ function handleBiasLensTabChange(tab) {
 
 function setupBiasLensEventListeners() {
   document.addEventListener('biasLensRefresh', handleBiasLensRefresh)
-  
+
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'toggleBiasLens') {
       if (window.BiasLensToggle) {
@@ -275,7 +275,7 @@ function setupBiasLensEventListeners() {
 
 function handleBiasLensRefresh(event) {
   console.log('[BiasLens] Refresh requested:', event.detail)
-  
+
   if (activeTab === 'noise') {
     analyzeHomepageFeed()
   } else {
@@ -289,45 +289,45 @@ function handleBiasLensRefresh(event) {
 
 function activateBiasLens() {
   console.log('[BiasLens] Activating...')
-  
+
   if (window.BiasTabBar) {
     window.BiasTabBar.show()
     window.BiasTabBar.setActiveTab(activeTab)
   }
-  
+
   if (window.BiasPanel) {
     window.BiasPanel.show()
   }
-  
+
   if (window.BiasCardOverlay) {
     window.BiasCardOverlay.enable()
   }
-  
+
   if (activeTab === 'noise') {
     showNoiseView()
   } else {
     showSilencedView()
   }
-  
+
   analyzeHomepageFeed()
 }
 
 function deactivateBiasLens() {
   console.log('[BiasLens] Deactivating...')
-  
+
   if (window.BiasTabBar) {
     window.BiasTabBar.hide()
   }
-  
+
   if (window.BiasPanel) {
     window.BiasPanel.hide()
   }
-  
+
   if (window.BiasCardOverlay) {
     window.BiasCardOverlay.disable()
     window.BiasCardOverlay.removeAll()
   }
-  
+
   if (window.SilencedGrid) {
     window.SilencedGrid.hide()
   }
@@ -339,16 +339,16 @@ function deactivateBiasLens() {
 
 function showNoiseView() {
   console.log('[BiasLens] Showing Noise view')
-  
+
   if (window.SilencedGrid) {
     window.SilencedGrid.hide()
   }
-  
+
   if (window.BiasCardOverlay) {
     window.BiasCardOverlay.enable()
     window.BiasCardOverlay.processAllCards()
   }
-  
+
   if (window.BiasTabBar) {
     window.BiasTabBar.updateHint('Showing YouTube\'s recommendations with bias analysis')
   }
@@ -356,14 +356,14 @@ function showNoiseView() {
 
 function showSilencedView() {
   console.log('[BiasLens] Showing Silenced view')
-  
+
   if (window.BiasCardOverlay) {
     window.BiasCardOverlay.disable()
   }
-  
+
   if (window.SilencedGrid) {
     window.SilencedGrid.show()
-    
+
     if (silencedVideosData) {
       window.SilencedGrid.updateVideos(silencedVideosData)
     } else {
@@ -371,7 +371,7 @@ function showSilencedView() {
       discoverSilencedVideos()
     }
   }
-  
+
   if (window.BiasTabBar) {
     window.BiasTabBar.updateHint('Showing high-quality videos the algorithm doesn\'t prioritize')
   }
@@ -386,31 +386,31 @@ async function analyzeHomepageFeed() {
     console.log('[BiasLens] Analysis already in progress')
     return
   }
-  
+
   isAnalyzing = true
   console.log('[BiasLens] Starting homepage analysis...')
-  
+
   if (window.BiasTabBar) {
     window.BiasTabBar.updateHint('Analyzing feed...')
   }
-  
+
   try {
     feedVideoIds = extractHomepageVideoIds()
     console.log(`[BiasLens] Found ${feedVideoIds.length} videos on page`)
-    
+
     if (feedVideoIds.length === 0) {
       console.warn('[BiasLens] No videos found on page')
       isAnalyzing = false
       return
     }
-    
+
     const videoTitles = extractHomepageVideoTitles()
     if (window.TopicAnalyzer) {
       topicProfile = window.TopicAnalyzer.buildTopicProfile(
         videoTitles.map((title, i) => ({ title, videoId: feedVideoIds[i] }))
       )
     }
-    
+
     const response = await safeSendMessage({
       action: 'analyzeHomepage',
       videoIds: feedVideoIds,
@@ -418,7 +418,7 @@ async function analyzeHomepageFeed() {
         topics: topicProfile?.topics || []
       }
     })
-    
+
     if (response && response.success) {
       feedAnalysisData = response.data
       updateBiasLensUIWithAnalysis(response.data)
@@ -428,53 +428,53 @@ async function analyzeHomepageFeed() {
     } else {
       console.warn('[BiasLens] No response from background - extension may need reload')
     }
-    
+
   } catch (error) {
     console.error('[BiasLens] Analysis error:', error)
   }
-  
+
   isAnalyzing = false
 }
 
 function extractHomepageVideoIds() {
   const videoIds = []
   const seen = new Set()
-  
+
   const selectors = [
     'a#thumbnail[href*="watch?v="]',
     'a.ytd-thumbnail[href*="watch?v="]',
     'ytd-rich-item-renderer a[href*="watch?v="]'
   ]
-  
+
   for (const selector of selectors) {
     const links = document.querySelectorAll(selector)
-    
+
     for (const link of links) {
       const href = link.href || ''
       const match = href.match(/[?&]v=([^&]+)/)
-      
+
       if (match && !seen.has(match[1])) {
         seen.add(match[1])
         videoIds.push(match[1])
       }
     }
   }
-  
+
   return videoIds
 }
 
 function extractHomepageVideoTitles() {
   const titles = []
-  
+
   const titleElements = document.querySelectorAll('#video-title, .ytd-rich-grid-media #video-title')
-  
+
   for (const el of titleElements) {
     const title = el.textContent?.trim()
     if (title) {
       titles.push(title)
     }
   }
-  
+
   return titles
 }
 
@@ -493,16 +493,16 @@ function updateBiasLensUIWithAnalysis(data) {
     }
     window.BiasCardOverlay.setScores(scores)
   }
-  
+
   if (window.BiasPanel && data.feedAnalysis) {
     const recommendations = generateBiasLensRecommendations(data.feedAnalysis)
-    
+
     window.BiasPanel.updateAnalysis({
       ...data.feedAnalysis,
       recommendations
     })
   }
-  
+
   if (window.BiasTabBar) {
     const highBiasCount = data.videos?.filter(v => v.biasScore >= 70).length || 0
     window.BiasTabBar.updateCounts(data.videos?.length || 0, '?')
@@ -512,7 +512,7 @@ function updateBiasLensUIWithAnalysis(data) {
 
 function generateBiasLensRecommendations(analysis) {
   const recommendations = []
-  
+
   if (analysis.distribution?.high > 60) {
     recommendations.push({
       type: 'high_bias',
@@ -520,7 +520,7 @@ function generateBiasLensRecommendations(analysis) {
       severity: 'high'
     })
   }
-  
+
   if (analysis.channelConcentration?.top5Share > 50) {
     recommendations.push({
       type: 'channel_concentration',
@@ -528,7 +528,7 @@ function generateBiasLensRecommendations(analysis) {
       severity: 'medium'
     })
   }
-  
+
   if (analysis.avgBias > 60) {
     recommendations.push({
       type: 'avg_bias',
@@ -536,7 +536,7 @@ function generateBiasLensRecommendations(analysis) {
       severity: 'medium'
     })
   }
-  
+
   return recommendations
 }
 
@@ -546,17 +546,17 @@ function generateBiasLensRecommendations(analysis) {
 
 async function discoverSilencedVideos() {
   console.log('[BiasLens] Discovering silenced videos...')
-  
+
   if (window.SilencedGrid) {
     window.SilencedGrid.showLoading()
   }
-  
+
   try {
     const excludedChannels = feedAnalysisData?.videos?.map(v => v.channelId) || []
-    
+
     // Get video titles from feed for fallback query building
     const feedTitles = extractHomepageVideoTitles()
-    
+
     // Check if we have enough signal to discover videos
     if (feedTitles.length < 3 && (!topicProfile?.topics || topicProfile.topics.length === 0)) {
       console.log('[BiasLens] Not enough signal from homepage to discover silenced videos')
@@ -565,7 +565,7 @@ async function discoverSilencedVideos() {
       }
       return
     }
-    
+
     const response = await safeSendMessage({
       action: 'discoverSilenced',
       topicMap: topicProfile?.topics || [],
@@ -579,7 +579,7 @@ async function discoverSilencedVideos() {
         requireTranscript: false
       }
     })
-    
+
     // Handle null response (extension context invalidated)
     if (!response) {
       console.warn('[BiasLens] No response from background - extension may need reload')
@@ -588,10 +588,10 @@ async function discoverSilencedVideos() {
       }
       return
     }
-    
+
     if (response.success) {
       silencedVideosData = response.data.videos
-      
+
       // Check for AI offline indicator in response
       if (response.data.aiOffline) {
         console.log('[BiasLens] Quality scoring is offline')
@@ -600,7 +600,7 @@ async function discoverSilencedVideos() {
         }
         return
       }
-      
+
       // Check if no videos were found
       if (!silencedVideosData || silencedVideosData.length === 0) {
         console.log('[BiasLens] No silenced videos found')
@@ -609,19 +609,19 @@ async function discoverSilencedVideos() {
         }
         return
       }
-      
+
       if (window.SilencedGrid) {
         window.SilencedGrid.updateVideos(silencedVideosData)
       }
-      
+
       if (window.BiasTabBar) {
         window.BiasTabBar.updateCounts(undefined, silencedVideosData.length)
       }
-      
+
       console.log(`[BiasLens] Found ${silencedVideosData.length} silenced videos`)
     } else {
       console.error('[BiasLens] Discovery failed:', response.error)
-      
+
       // Handle specific error types
       if (response.error?.includes('AI') || response.error?.includes('Gemini') || response.error?.includes('backend')) {
         if (window.SilencedGrid) {
@@ -638,14 +638,14 @@ async function discoverSilencedVideos() {
         }
       }
     }
-    
+
   } catch (error) {
     console.error('[BiasLens] Discovery error:', error)
-    
+
     // Check if it's a connection error (backend offline)
-    if (error.message?.includes('Extension context invalidated') || 
-        error.message?.includes('Could not establish connection') ||
-        error.message?.includes('fetch')) {
+    if (error.message?.includes('Extension context invalidated') ||
+      error.message?.includes('Could not establish connection') ||
+      error.message?.includes('fetch')) {
       if (window.SilencedGrid) {
         window.SilencedGrid.showAIOffline('Cannot connect to the backend. Please refresh the page.')
       }
@@ -1434,11 +1434,6 @@ function getShadowStyles() {
       color: #22c55e;
     }
 
-    .gem-badges .badge.reach {
-      background: #1a1a1a;
-      color: #22c55e;
-    }
-
     .gem-summary-line {
       font-size: 13px;
       color: #999;
@@ -2029,8 +2024,8 @@ function injectUnmutedVoices() {
       // Confidence dots
       const confidenceDots = ['low', 'medium', 'high'].map((level, i) => {
         const filled = (confidence === 'low' && i === 0) ||
-                       (confidence === 'medium' && i <= 1) ||
-                       (confidence === 'high')
+          (confidence === 'medium' && i <= 1) ||
+          (confidence === 'high')
         return `<span class="silenced-confidence-dot ${filled ? `filled ${confidence}` : ''}"></span>`
       }).join('')
 
@@ -2265,14 +2260,14 @@ async function runWatchPage() {
 
   // Get current video title for query building
   const videoTitle = extractCurrentQuery()
-  
+
   // Fetch current video's channel ID (we need it to exclude from gems)
   const analyzeResponse = await safeSendMessage({
     action: 'analyze',
     videoId,
     transcript: ''
   })
-  
+
   const currentChannelId = analyzeResponse?.data?.video?.channelId || ''
 
   // Discover hidden gems
@@ -2310,11 +2305,11 @@ async function runWatchPage() {
  */
 function injectHiddenGemsPanel(shadow, container, gemsData, analysisData) {
   const { gems, message } = gemsData
-  
-  const gemsHtml = gems.length > 0 
+
+  const gemsHtml = gems.length > 0
     ? gems.map((gem, idx) => createGemCard(gem, idx)).join('')
     : `<div class="no-gems-message">${message || 'No hidden gems found for this topic'}</div>`
-  
+
   container.innerHTML = `
     <div class="silenced-panel">
       <div class="panel-header">
@@ -2339,7 +2334,7 @@ function injectHiddenGemsPanel(shadow, container, gemsData, analysisData) {
       </div>
     </div>
   `
-  
+
   // Add event listeners for expandable sections
   gems.forEach((gem, idx) => {
     const card = shadow.querySelector(`#gem-card-${idx}`)
@@ -2359,7 +2354,7 @@ function injectHiddenGemsPanel(shadow, container, gemsData, analysisData) {
       })
     }
   })
-  
+
   // Refresh button
   const refreshBtn = shadow.querySelector('#refresh-gems')
   if (refreshBtn) {
@@ -2379,7 +2374,7 @@ function createGemCard(gem, index) {
   const viewsStr = fmt(gem.views)
   const subsStr = fmt(gem.subscriberCount)
   const ageStr = formatAge(gem.publishedAt)
-  
+
   // Build metrics table rows
   // Generate summary based on scores
   const gap = gem.qualityScore - (100 - gem.underexposureScore)
@@ -2408,7 +2403,6 @@ function createGemCard(gem, index) {
       <div class="gem-summary">
         <div class="gem-badges">
           <span class="badge strength">Strength ${gem.qualityScore}</span>
-          <span class="badge reach">+${gem.underexposureScore} reach gap</span>
         </div>
         <div class="gem-summary-line">${summaryLine}</div>
       </div>
@@ -2442,7 +2436,6 @@ function createGemCard(gem, index) {
           <div class="breakdown-bullets">
             ${gem.breakdown?.likeScore > 0 ? `<div class="bullet-item">Like engagement: +${gem.breakdown.likeScore}</div>` : ''}
             ${gem.breakdown?.commentScore > 0 ? `<div class="bullet-item">Comment activity: +${gem.breakdown.commentScore}</div>` : ''}
-            ${gem.breakdown?.underexposureBonus > 0 ? `<div class="bullet-item">Reach gap bonus: +${gem.breakdown.underexposureBonus}</div>` : ''}
           </div>
         </div>
         ${gem.explanation ? `
@@ -2545,7 +2538,7 @@ function formatAge(dateStr) {
   const now = new Date()
   const diffMs = now - date
   const diffDays = Math.floor(diffMs / 86400000)
-  
+
   if (diffDays < 1) return 'Today'
   if (diffDays === 1) return '1 day ago'
   if (diffDays < 7) return `${diffDays} days ago`
@@ -2560,12 +2553,12 @@ async function getTranscript(videoId) {
       const url = `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}&fmt=json3`
       const res = await fetch(url)
       if (!res.ok) continue
-      
+
       // IMPORTANT: Use text() first, then try to parse as JSON
       // The timedtext endpoint can return XML, empty, or malformed responses
       const rawText = await res.text()
       if (!rawText || rawText.length < 50) continue
-      
+
       // Try JSON first (json3 format)
       try {
         const data = JSON.parse(rawText)
@@ -2659,7 +2652,7 @@ window.addEventListener('yt-navigate-finish', () => {
   } else if (isHomepage()) {
     setTimeout(initHomepageBiasLens, 500)
   }
-  
+
   createFloatingToggle()
 
   if (noiseCancellationActive && !isWatchPage()) {
@@ -2686,7 +2679,7 @@ window.addEventListener('yt-navigate-finish', () => {
 
 async function init() {
   console.log('[Silenced] Initializing content script...')
-  
+
   // Load noise cancellation state
   await loadNoiseCancellationState()
 
@@ -2703,7 +2696,27 @@ async function init() {
     setTimeout(runWatchPage, 2000)
   } else if (isHomepage()) {
     setTimeout(initHomepageBiasLens, 500)
+  } else if (isSearchPage()) {
+    console.log('[Perspective] Search page detected, scheduling runSearchPage')
+    setTimeout(() => {
+      console.log('[Perspective] Executing runSearchPage after timeout')
+      runSearchPage()
+    }, 1000)
   }
+
+  // Listen for URL changes (YouTube uses pushState for navigation)
+  let lastUrl = window.location.href
+  setInterval(() => {
+    const currentUrl = window.location.href
+    if (currentUrl !== lastUrl) {
+      lastUrl = currentUrl
+      if (isSearchPage()) {
+        perspectiveSearchInjected = false
+        lastSearchQuery = ''
+        setTimeout(runSearchPage, 1000)
+      }
+    }
+  }, 500)
 
   // Label thumbnails on homepage/search if noise cancellation is active
   if (noiseCancellationActive && !isWatchPage()) {
@@ -2722,8 +2735,585 @@ async function init() {
       }
     }, 3000)
   }
-  
+
   console.log('[Silenced] Content script initialized')
+}
+
+// ============================================
+// SEARCH PAGE - Perspective Search
+// ============================================
+
+let perspectiveSearchData = null
+let perspectiveSearchInjected = false
+let lastSearchQuery = ''
+
+/**
+ * Run perspective search on search results page
+ */
+async function runSearchPage() {
+  console.log('[Perspective] ===== runSearchPage CALLED =====')
+  console.log('[Perspective] Current URL:', window.location.href)
+  console.log('[Perspective] isSearchPage():', isSearchPage())
+  console.log('[Perspective] Document ready state:', document.readyState)
+  
+  const query = extractCurrentQuery()
+  console.log('[Perspective] Extracted query:', query)
+  
+  if (!query || query.length < 2) {
+    console.log('[Perspective] No valid search query found (query:', query, ')')
+    return
+  }
+  
+  // Show loading state immediately
+  showPerspectiveSearchLoading()
+
+  // If same query, don't re-run
+  if (query === lastSearchQuery && perspectiveSearchInjected) {
+    const existing = document.querySelector('#perspective-search-container')
+    if (existing) {
+      console.log('[Perspective] Already injected for this query, skipping')
+      hidePerspectiveSearchLoading()
+      return
+    }
+  }
+
+  lastSearchQuery = query
+  perspectiveSearchInjected = false
+
+  console.log(`[Perspective] Running perspective search for: "${query}"`)
+
+  // Remove existing if present
+  const existing = document.querySelector('#perspective-search-container')
+  if (existing) existing.remove()
+
+  try {
+    console.log('[Perspective] Sending message to background script...')
+
+    // Add timeout wrapper
+    const responsePromise = safeSendMessage({
+      action: 'perspectiveSearch',
+      query: query,
+      maxPerPerspective: 2
+    })
+
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Timeout: No response after 60 seconds')), 60000)
+    )
+
+    const response = await Promise.race([responsePromise, timeoutPromise])
+
+    console.log('[Perspective] Response received:', response)
+    console.log('[Perspective] Response type:', typeof response)
+    console.log('[Perspective] Response keys:', response ? Object.keys(response) : 'null')
+
+    if (!response) {
+      console.warn('[Perspective] No response received (null or undefined)')
+      return
+    }
+
+    if (!response.success) {
+      console.warn('[Perspective] Request failed:', response?.error || 'Unknown error')
+      console.warn('[Perspective] Full response:', JSON.stringify(response, null, 2))
+      return
+    }
+
+    if (!response.data) {
+      console.warn('[Perspective] No data in response')
+      console.warn('[Perspective] Full response:', JSON.stringify(response, null, 2))
+      return
+    }
+
+    console.log('[Perspective] Data received:', response.data)
+    console.log('[Perspective] Data type:', typeof response.data)
+    console.log('[Perspective] Has perspectives:', !!response.data.perspectives)
+    console.log('[Perspective] Perspectives length:', response.data.perspectives?.length)
+
+    perspectiveSearchData = response.data
+
+    if (!response.data.perspectives || response.data.perspectives.length === 0) {
+      console.warn('[Perspective] No perspectives in response data')
+      console.warn('[Perspective] Response data:', JSON.stringify(response.data, null, 2))
+      return
+    }
+
+    console.log(`[Perspective] ✅ Injecting UI with ${response.data.perspectives.length} buckets`)
+    console.log(`[Perspective] First bucket:`, response.data.perspectives[0])
+    console.log(`[Perspective] First bucket videos:`, response.data.perspectives[0]?.videos?.length)
+    
+    // Hide loading and show results with fade-in
+    hidePerspectiveSearchLoading()
+    injectPerspectiveSearchUI(perspectiveSearchData)
+  } catch (error) {
+    console.error('[Perspective] Error running perspective search:', error)
+    console.error('[Perspective] Error stack:', error.stack)
+    hidePerspectiveSearchLoading()
+  }
+}
+
+/**
+ * Show loading state for perspective search
+ */
+function showPerspectiveSearchLoading() {
+  // Remove existing loading/container if present
+  document.getElementById('perspective-search-loading')?.remove()
+  document.getElementById('perspective-search-container')?.remove()
+  
+  // Find container
+  const resultsContainer = document.querySelector('ytd-two-column-search-results-renderer #contents') ||
+                           document.querySelector('ytd-search #contents') ||
+                           document.querySelector('#primary #contents') ||
+                           document.querySelector('ytd-two-column-search-renderer') ||
+                           document.querySelector('#primary') ||
+                           document.querySelector('#contents')
+  
+  if (!resultsContainer) {
+    console.warn('[Perspective] Could not find container for loading state')
+    return
+  }
+  
+  const loadingContainer = document.createElement('div')
+  loadingContainer.id = 'perspective-search-loading'
+  loadingContainer.style.cssText = `
+    margin: 20px 0 !important;
+    padding: 32px !important;
+    background: linear-gradient(135deg, rgba(15,15,15,0.98) 0%, rgba(10,10,10,0.98) 100%) !important;
+    border-radius: 16px !important;
+    z-index: 1000 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 16px !important;
+    min-height: 200px !important;
+    border: 1px solid rgba(255,255,255,0.1) !important;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3) !important;
+  `
+  
+  // Animated spinner
+  const spinner = document.createElement('div')
+  spinner.style.cssText = `
+    width: 48px !important;
+    height: 48px !important;
+    border: 4px solid rgba(102,126,234,0.2) !important;
+    border-top-color: #667eea !important;
+    border-radius: 50% !important;
+    animation: spin 1s linear infinite !important;
+  `
+  
+  // Add keyframes for spinner
+  if (!document.getElementById('perspective-spinner-styles')) {
+    const style = document.createElement('style')
+    style.id = 'perspective-spinner-styles'
+    style.textContent = `
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+      @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      #perspective-search-container {
+        animation: fadeIn 0.4s ease-out !important;
+      }
+    `
+    document.head.appendChild(style)
+  }
+  
+  const loadingText = document.createElement('div')
+  loadingText.style.cssText = `
+    font-size: 15px !important;
+    font-weight: 500 !important;
+    color: #aaa !important;
+    text-align: center !important;
+  `
+  loadingText.textContent = 'Finding diverse perspectives...'
+  
+  const loadingSubtext = document.createElement('div')
+  loadingSubtext.style.cssText = `
+    font-size: 13px !important;
+    color: #666 !important;
+    text-align: center !important;
+  `
+  loadingSubtext.textContent = 'Analyzing high-quality videos from different viewpoints'
+  
+  loadingContainer.appendChild(spinner)
+  loadingContainer.appendChild(loadingText)
+  loadingContainer.appendChild(loadingSubtext)
+  
+  // Insert at the top
+  const firstResult = resultsContainer.querySelector('ytd-video-renderer, ytd-playlist-renderer, ytd-item-section-renderer')
+  if (firstResult && firstResult.parentNode) {
+    firstResult.parentNode.insertBefore(loadingContainer, firstResult)
+  } else if (resultsContainer.firstChild) {
+    resultsContainer.insertBefore(loadingContainer, resultsContainer.firstChild)
+  } else {
+    resultsContainer.appendChild(loadingContainer)
+  }
+  
+  console.log('[Perspective] Loading state shown')
+}
+
+/**
+ * Hide loading state for perspective search
+ */
+function hidePerspectiveSearchLoading() {
+  const loading = document.getElementById('perspective-search-loading')
+  if (loading) {
+    // Fade out animation
+    loading.style.transition = 'opacity 0.3s ease-out'
+    loading.style.opacity = '0'
+    setTimeout(() => loading.remove(), 300)
+    console.log('[Perspective] Loading state hidden')
+  }
+}
+
+/**
+ * Inject Perspective Search UI into search results page
+ */
+function injectPerspectiveSearchUI(data) {
+  console.log('[Perspective] injectPerspectiveSearchUI called with data:', data)
+
+  // Remove existing if present
+  const existing = document.querySelector('#perspective-search-container')
+  if (existing) {
+    console.log('[Perspective] Removing existing container')
+    existing.remove()
+  }
+
+  if (!data.perspectives || data.perspectives.length === 0) {
+    console.log('[Perspective] No perspectives to display')
+    return
+  }
+
+  // Find insertion point (after search results header, before first result)
+  // Try multiple selectors for YouTube's search results container
+  // On search pages, the results are in ytd-two-column-search-results-renderer > #primary > #contents
+  const resultsContainer = document.querySelector('ytd-two-column-search-results-renderer #contents') ||
+                           document.querySelector('ytd-search #contents') ||
+                           document.querySelector('#primary #contents') ||
+                           document.querySelector('ytd-two-column-search-results-renderer') ||
+                           document.querySelector('#primary') ||
+                           document.querySelector('#contents')
+  
+  console.log('[Perspective] Results container found:', !!resultsContainer, resultsContainer?.tagName, resultsContainer?.id)
+  console.log('[Perspective] Container classes:', resultsContainer?.className)
+
+  if (!resultsContainer) {
+    console.warn('[Perspective] Could not find results container, trying alternative approach...')
+    console.log('[Perspective] Available containers:', {
+      contents: !!document.querySelector('#contents'),
+      ytdSearch: !!document.querySelector('ytd-search'),
+      primary: !!document.querySelector('#primary'),
+      twoColumn: !!document.querySelector('ytd-two-column-search-results-renderer'),
+      main: !!document.querySelector('main'),
+      body: !!document.body
+    })
+
+    // Try to find the main content area
+    const mainContent = document.querySelector('main') || document.querySelector('#primary') || document.body
+    if (mainContent) {
+      console.log('[Perspective] Using fallback container:', mainContent.tagName)
+      injectIntoContainer(mainContent, data)
+      return
+    }
+
+    // Wait a bit and try again
+    setTimeout(() => {
+      const retryContainer = document.querySelector('#contents') ||
+        document.querySelector('ytd-search') ||
+        document.querySelector('#primary') ||
+        document.querySelector('main')
+      if (retryContainer) {
+        console.log('[Perspective] Found container on retry:', retryContainer.tagName)
+        injectIntoContainer(retryContainer, data)
+      } else {
+        console.error('[Perspective] Still could not find container after retry')
+      }
+    }, 2000)
+    return
+  }
+
+  injectIntoContainer(resultsContainer, data)
+}
+
+/**
+ * Helper function to inject UI into a container
+ */
+function injectIntoContainer(resultsContainer, data) {
+  console.log('[Perspective] Injecting into container:', resultsContainer.tagName, resultsContainer.id || resultsContainer.className)
+
+  // Remove loading state if still present
+  hidePerspectiveSearchLoading()
+
+  const container = document.createElement('div')
+  container.id = 'perspective-search-container'
+  // Use !important to override YouTube's styles and ensure visibility
+  // Start with opacity 0 for fade-in animation
+  container.style.cssText = `
+    margin: 20px 0 !important;
+    padding: 24px !important;
+    background: linear-gradient(135deg, rgba(15,15,15,0.98) 0%, rgba(10,10,10,0.98) 100%) !important;
+    border-radius: 16px !important;
+    z-index: 1000 !important;
+    display: block !important;
+    visibility: visible !important;
+    opacity: 0 !important;
+    width: 100% !important;
+    min-height: 200px !important;
+    position: relative !important;
+    box-sizing: border-box !important;
+    border: 1px solid rgba(255,255,255,0.1) !important;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3) !important;
+    transition: opacity 0.4s ease-out !important;
+  `
+  
+  // Trigger fade-in after a brief delay
+  setTimeout(() => {
+    container.style.opacity = '1'
+  }, 50)
+
+  // Get personalized message based on query
+  const query = lastSearchQuery || ''
+  const personalizedMessage = getPersonalizedMessage(query)
+  
+  const header = document.createElement('div')
+  header.style.cssText = 'margin-bottom: 20px !important; display: block !important; padding-bottom: 16px !important; border-bottom: 1px solid rgba(255,255,255,0.1) !important;'
+  header.innerHTML = `
+    <div style="display: flex !important; align-items: center !important; gap: 12px !important; margin-bottom: 8px !important;">
+      <div style="flex: 1 !important;">
+        <h2 style="font-size: 20px !important; font-weight: 600 !important; color: #fff !important; margin: 0 0 4px 0 !important; display: block !important; letter-spacing: -0.3px !important;">Perspective Search</h2>
+        <p style="font-size: 14px !important; color: #aaa !important; margin: 0 !important; display: block !important; line-height: 1.4 !important;">${personalizedMessage}</p>
+      </div>
+    </div>
+  `
+
+  const bucketsContainer = document.createElement('div')
+  bucketsContainer.style.cssText = 'display: flex !important; flex-direction: column !important; gap: 16px !important; width: 100% !important;'
+
+  console.log(`[Perspective] Rendering ${data.perspectives.length} perspective buckets`)
+
+  data.perspectives.forEach((bucket, bucketIndex) => {
+    console.log(`[Perspective] Rendering bucket ${bucketIndex}: ${bucket.label} with ${bucket.videos.length} videos`)
+    const bucketEl = document.createElement('div')
+    bucketEl.style.cssText = 'background: linear-gradient(135deg, rgba(30,30,30,0.95) 0%, rgba(24,24,24,0.95) 100%) !important; border-radius: 12px !important; padding: 16px !important; display: block !important; width: 100% !important; border: 1px solid rgba(255,255,255,0.08) !important; transition: all 0.2s !important;'
+    bucketEl.onmouseenter = () => bucketEl.style.borderColor = 'rgba(255,255,255,0.15)'
+    bucketEl.onmouseleave = () => bucketEl.style.borderColor = 'rgba(255,255,255,0.08)'
+
+    const bucketHeader = document.createElement('div')
+    bucketHeader.style.cssText = 'margin-bottom: 16px !important; display: block !important;'
+    bucketHeader.innerHTML = `
+      <div style="margin-bottom: 6px !important;">
+        <div style="font-size: 15px !important; font-weight: 600 !important; color: #fff !important; display: block !important; letter-spacing: -0.2px !important;">${esc(bucket.label)}</div>
+      </div>
+      <div style="font-size: 13px !important; color: #aaa !important; display: block !important; line-height: 1.4 !important;">${esc(bucket.rationale)}</div>
+    `
+
+    const videosContainer = document.createElement('div')
+    videosContainer.style.cssText = 'display: grid !important; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)) !important; gap: 16px !important; width: 100% !important;'
+
+    bucket.videos.forEach((video) => {
+      const videoCard = createPerspectiveVideoCard(video)
+      videosContainer.appendChild(videoCard)
+    })
+
+    bucketEl.appendChild(bucketHeader)
+    bucketEl.appendChild(videosContainer)
+    bucketsContainer.appendChild(bucketEl)
+  })
+
+  container.appendChild(header)
+  container.appendChild(bucketsContainer)
+
+  // Insert at the top of results - try multiple insertion strategies
+  let inserted = false
+  
+  // Strategy 1: Before first video result (most reliable for search pages)
+  const firstResult = resultsContainer.querySelector('ytd-video-renderer, ytd-playlist-renderer, ytd-item-section-renderer')
+  if (firstResult && firstResult.parentNode) {
+    console.log('[Perspective] Inserting before first result:', firstResult.tagName)
+    firstResult.parentNode.insertBefore(container, firstResult)
+    inserted = true
+  }
+  
+  // Strategy 2: Before first child
+  if (!inserted && resultsContainer.firstChild) {
+    console.log('[Perspective] Inserting as first child')
+    resultsContainer.insertBefore(container, resultsContainer.firstChild)
+    inserted = true
+  }
+  
+  // Strategy 3: Append to container
+  if (!inserted) {
+    console.log('[Perspective] Appending to container')
+    resultsContainer.appendChild(container)
+    inserted = true
+  }
+
+  if (inserted) {
+    perspectiveSearchInjected = true
+    console.log(`[Perspective] ✅✅✅ Successfully injected ${data.perspectives.length} perspective buckets`)
+    console.log('[Perspective] Container element:', container)
+    console.log('[Perspective] Container parent:', container.parentElement)
+    console.log('[Perspective] Container visible:', container.offsetHeight > 0)
+    console.log('[Perspective] Container computed style:', window.getComputedStyle(container).display)
+
+    // Remove debug border
+    container.style.border = 'none'
+    container.style.position = 'relative'
+  } else {
+    console.error('[Perspective] ❌ Failed to insert container into DOM')
+    // Try injecting directly into body as last resort
+    console.log('[Perspective] Attempting body injection as fallback...')
+    document.body.appendChild(container)
+    container.style.border = '3px solid yellow'
+    container.style.position = 'fixed'
+    container.style.top = '100px'
+    container.style.left = '50%'
+    container.style.transform = 'translateX(-50%)'
+    container.style.width = '80%'
+    container.style.maxWidth = '1200px'
+    container.style.zIndex = '999999'
+    console.log('[Perspective] Injected into body as fallback')
+  }
+}
+
+/**
+ * Create a video card for perspective search
+ */
+function getPersonalizedMessage(query) {
+  const lowerQuery = query.toLowerCase()
+  if (lowerQuery.includes('how to') || lowerQuery.includes('learn') || lowerQuery.includes('tutorial')) {
+    return 'Different approaches to this topic'
+  } else if (lowerQuery.includes('invest') || lowerQuery.includes('money') || lowerQuery.includes('finance')) {
+    return 'Different perspectives on this topic'
+  } else if (lowerQuery.includes('review') || lowerQuery.includes('best')) {
+    return 'Different viewpoints on this topic'
+  } else if (lowerQuery.includes('explain') || lowerQuery.includes('what is')) {
+    return 'Different explanations of this topic'
+  }
+  return 'Different perspectives on this topic'
+}
+
+function createPerspectiveVideoCard(video) {
+  const card = document.createElement('div')
+  card.style.cssText = 'background: rgba(33,33,33,0.8) !important; border-radius: 10px !important; padding: 0 !important; cursor: pointer !important; transition: all 0.2s ease !important; overflow: hidden !important; border: 1px solid rgba(255,255,255,0.05) !important;'
+  card.onmouseenter = () => {
+    card.style.background = 'rgba(42,42,42,0.95)'
+    card.style.transform = 'translateY(-2px)'
+    card.style.boxShadow = '0 4px 12px rgba(0,0,0,0.3)'
+    card.style.borderColor = 'rgba(255,255,255,0.1)'
+  }
+  card.onmouseleave = () => {
+    card.style.background = 'rgba(33,33,33,0.8)'
+    card.style.transform = 'translateY(0)'
+    card.style.boxShadow = 'none'
+    card.style.borderColor = 'rgba(255,255,255,0.05)'
+  }
+  card.onclick = () => window.location.href = `/watch?v=${video.videoId}`
+
+  // Thumbnail with overlay
+  const thumbnailWrapper = document.createElement('div')
+  thumbnailWrapper.style.cssText = 'position: relative !important; width: 100% !important; aspect-ratio: 16/9 !important; margin-bottom: 12px !important; border-radius: 8px !important; overflow: hidden !important;'
+  
+  const thumbnail = document.createElement('img')
+  thumbnail.src = video.thumbnail || `https://i.ytimg.com/vi/${video.videoId}/mqdefault.jpg`
+  thumbnail.style.cssText = 'width: 100% !important; height: 100% !important; object-fit: cover !important; display: block !important;'
+  thumbnail.onerror = () => thumbnail.src = `https://i.ytimg.com/vi/${video.videoId}/mqdefault.jpg`
+  
+  thumbnailWrapper.appendChild(thumbnail)
+
+  // Card content
+  const cardContent = document.createElement('div')
+  cardContent.style.cssText = 'padding: 12px !important;'
+
+  const title = document.createElement('div')
+  title.style.cssText = 'font-size: 15px !important; font-weight: 600 !important; color: #fff !important; margin-bottom: 8px !important; line-height: 1.4 !important; display: -webkit-box !important; -webkit-line-clamp: 2 !important; -webkit-box-orient: vertical !important; overflow: hidden !important; letter-spacing: -0.2px !important;'
+  title.textContent = video.title
+
+  const channel = document.createElement('div')
+  channel.style.cssText = 'font-size: 13px !important; color: #aaa !important; margin-bottom: 12px !important; display: flex !important; align-items: center !important; gap: 6px !important;'
+  channel.innerHTML = `
+    <span style="color: #fff !important; font-weight: 500 !important;">${esc(video.channelTitle)}</span>
+    <span style="color: #666 !important;">·</span>
+    <span>${fmt(video.subscriberCount)} subscribers</span>
+  `
+
+  // Engagement metrics
+  const metricsRow = document.createElement('div')
+  metricsRow.style.cssText = 'display: flex !important; gap: 8px !important; margin-bottom: 10px !important; flex-wrap: wrap !important;'
+  
+  const engagementScore = Math.round((video.engagementRatio || 0) * 100)
+  const qualityScore = Math.round(video.qualityScore || 0)
+  const underexposureScore = video.subscriberCount < 100000 ? 80 : video.subscriberCount < 500000 ? 50 : 20
+  
+  const qualityChip = document.createElement('span')
+  qualityChip.style.cssText = 'background: linear-gradient(135deg, #065f46 0%, #047857 100%) !important; color: #10b981 !important; padding: 4px 10px !important; border-radius: 6px !important; font-size: 11px !important; font-weight: 600 !important; display: inline-flex !important; align-items: center !important; gap: 4px !important;'
+  qualityChip.textContent = `Quality ${qualityScore}`
+
+  const engagementChip = document.createElement('span')
+  engagementChip.style.cssText = 'background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%) !important; color: #60a5fa !important; padding: 4px 10px !important; border-radius: 6px !important; font-size: 11px !important; font-weight: 600 !important; display: inline-flex !important; align-items: center !important; gap: 4px !important;'
+  engagementChip.textContent = `Engagement ${engagementScore}%`
+
+  const reachChip = document.createElement('span')
+  reachChip.style.cssText = 'background: linear-gradient(135deg, #7c2d12 0%, #9a3412 100%) !important; color: #f97316 !important; padding: 4px 10px !important; border-radius: 6px !important; font-size: 11px !important; font-weight: 600 !important; display: inline-flex !important; align-items: center !important; gap: 4px !important;'
+  reachChip.textContent = `Limited reach ${underexposureScore}`
+
+  metricsRow.appendChild(qualityChip)
+  metricsRow.appendChild(engagementChip)
+  metricsRow.appendChild(reachChip)
+
+  const perspectiveLabel = document.createElement('div')
+  perspectiveLabel.style.cssText = 'font-size: 12px !important; color: #888 !important; margin-bottom: 10px !important; line-height: 1.4 !important; padding: 8px !important; background: rgba(255,255,255,0.03) !important; border-radius: 6px !important; border-left: 3px solid rgba(102,126,234,0.5) !important;'
+  perspectiveLabel.textContent = video.perspectiveRationale || 'Standard approach'
+
+  // Bias Receipt (collapsible)
+  const receiptContainer = document.createElement('div')
+  receiptContainer.style.cssText = 'margin-top: 8px;'
+
+  if (video.biasReceipt) {
+    const receiptToggle = document.createElement('button')
+    receiptToggle.style.cssText = 'background: transparent; border: none; color: #60a5fa; font-size: 11px; cursor: pointer; padding: 0; text-decoration: underline;'
+    receiptToggle.textContent = 'Bias Receipt'
+
+    const receiptContent = document.createElement('div')
+    receiptContent.style.cssText = 'display: none; margin-top: 8px; padding: 8px; background: #181818; border-radius: 4px; font-size: 11px; color: #ccc; line-height: 1.4;'
+
+    if (video.biasReceipt.whySilenced && video.biasReceipt.whySilenced.length > 0) {
+      const whySilenced = document.createElement('div')
+      whySilenced.style.cssText = 'margin-bottom: 6px;'
+      whySilenced.innerHTML = `<strong style="color: #fff;">Why Silenced:</strong><ul style="margin: 4px 0 0 16px; padding: 0;"><li>${video.biasReceipt.whySilenced.map(r => esc(r)).join('</li><li>')}</li></ul>`
+      receiptContent.appendChild(whySilenced)
+    }
+
+    if (video.biasReceipt.whyMatters && video.biasReceipt.whyMatters.length > 0) {
+      const whyMatters = document.createElement('div')
+      whyMatters.innerHTML = `<strong style="color: #fff;">Why It Matters:</strong><ul style="margin: 4px 0 0 16px; padding: 0;"><li>${video.biasReceipt.whyMatters.map(r => esc(r)).join('</li><li>')}</li></ul>`
+      receiptContent.appendChild(whyMatters)
+    }
+
+    let receiptOpen = false
+    receiptToggle.onclick = (e) => {
+      e.stopPropagation()
+      receiptOpen = !receiptOpen
+      receiptContent.style.display = receiptOpen ? 'block' : 'none'
+      receiptToggle.textContent = receiptOpen ? 'Hide Bias Receipt' : 'Bias Receipt'
+    }
+
+    receiptContainer.appendChild(receiptToggle)
+    receiptContainer.appendChild(receiptContent)
+  }
+
+  card.appendChild(thumbnailWrapper)
+  cardContent.appendChild(title)
+  cardContent.appendChild(channel)
+  cardContent.appendChild(metricsRow)
+  cardContent.appendChild(perspectiveLabel)
+  if (video.biasReceipt) {
+    cardContent.appendChild(receiptContainer)
+  }
+  card.appendChild(cardContent)
+
+  return card
 }
 
 init()

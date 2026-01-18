@@ -8,7 +8,7 @@
  * - Frontend should use optional chaining (?.) for new fields
  */
 
-export const SCHEMA_VERSION = '3.1.0'
+export const SCHEMA_VERSION = '3.2.0' // Updated for perspective search
 
 // ============================================
 // EXPOSURE ADVANTAGE SCORE (replaces NoiseScore)
@@ -370,6 +370,32 @@ export interface HealthCheckResponse {
 /** Helper to make all nested properties optional for partial updates */
 export type DeepPartial<T> = {
   [P in keyof T]?: T[P] extends object ? DeepPartial<T[P]> : T[P]
+}
+
+// ============================================
+// PERSPECTIVE SEARCH (New in v3.2.0)
+// ============================================
+
+export interface PerspectiveBucket {
+  label: 'Mainstream / Practical' | 'Critical / Contextual' | 'Alternative / Long-term'
+  rationale: string
+  videos: UnmutedVideo[]
+}
+
+export interface PerspectiveSearchResponse {
+  perspectives: PerspectiveBucket[]
+  debug?: {
+    totalCandidates?: number
+    classifiedCount?: number
+    fallbackUsed?: boolean
+  }
+  _schemaVersion?: string
+}
+
+export interface PerspectiveSearchRequest {
+  query: string
+  mode: 'perspective_search'
+  maxPerPerspective?: number
 }
 
 /** Helper for migrating old field names to new ones */
