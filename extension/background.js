@@ -7,7 +7,7 @@
 const SCHEMA_VERSION = '4.0.0'
 const ENGINE_VERSION = 'v4.0'
 
-const YOUTUBE_API_KEY = 'AIzaSyCzfxeqDhbTOZ9uFdJsMrB0uV_BM-MAijY'
+const YOUTUBE_API_KEY = 'AIzaSyAaGQRfXowsoNZe_5MV7wRwLaDqC8Ymias'
 const MAX_SUBSCRIBER_THRESHOLD = 100000 // Noise cancellation threshold
 const MONOPOLY_THRESHOLD = 1000000 // 1M subs = deafening noise
 const CACHE_TTL = 86400000 // 24 hours in ms
@@ -2226,6 +2226,245 @@ function detectSpam(title) {
 }
 
 /**
+ * Detect if a video is a "reaction" video
+ * These tend to be low-effort content we want to filter out
+ */
+function isReactionVideo(title, description) {
+  const lowerTitle = (title || '').toLowerCase()
+  const lowerDesc = (description || '').toLowerCase().slice(0, 500)
+  
+  const reactionPatterns = [
+    /react(s|ing|ion)?\s*(to|video)/i,
+    /\breaction\b/i,
+    /first time (watching|reacting)/i,
+    /\bwatching\b.*for the first time/i,
+    /\breacts\b/i,
+    /\breact\b/i
+  ]
+  
+  return reactionPatterns.some(p => p.test(lowerTitle) || p.test(lowerDesc))
+}
+
+/**
+ * YouTube category ID to genre mapping
+ */
+const CATEGORY_TO_GENRE = {
+  '1': 'Film & Animation',
+  '2': 'Autos & Vehicles',
+  '10': 'Music',
+  '15': 'Pets & Animals',
+  '17': 'Sports',
+  '18': 'Short Movies',
+  '19': 'Travel & Events',
+  '20': 'Gaming',
+  '21': 'Videoblogging',
+  '22': 'People & Blogs',
+  '23': 'Comedy',
+  '24': 'Entertainment',
+  '25': 'News & Politics',
+  '26': 'Howto & Style',
+  '27': 'Education',
+  '28': 'Science & Technology',
+  '29': 'Nonprofits & Activism',
+  '30': 'Movies',
+  '31': 'Anime/Animation',
+  '32': 'Action/Adventure',
+  '33': 'Classics',
+  '34': 'Comedy',
+  '35': 'Documentary',
+  '36': 'Drama',
+  '37': 'Family',
+  '38': 'Foreign',
+  '39': 'Horror',
+  '40': 'Sci-Fi/Fantasy',
+  '41': 'Thriller',
+  '42': 'Shorts',
+  '43': 'Shows',
+  '44': 'Trailers'
+}
+
+/**
+ * Analyze current video's context for smart search query generation
+ * @param {string} videoId - Current video ID
+ * @param {string} title - Current video title
+ * @returns {Promise<Object>} Context object with genre, topics, transcript excerpt
+ */
+async function analyzeCurrentVideoContext(videoId, title) {
+  console.log(`[Silenced] Analyzing context for video: ${videoId}`)
+  
+  const context = {
+    videoId,
+    title,
+    genre: null,
+    categoryId: null,
+    tags: [],
+    description: '',
+    transcriptExcerpt: null,
+    detectedThemes: []
+  }
+  
+  try {
+    // Fetch full video metadata
+    const videoUrl = new URL('https://www.googleapis.com/youtube/v3/videos')
+    videoUrl.searchParams.set('part', 'snippet,contentDetails')
+    videoUrl.searchParams.set('id', videoId)
+    videoUrl.searchParams.set('key', YOUTUBE_API_KEY)
+    
+    const videoRes = await fetch(videoUrl.toString())
+    if (videoRes.ok) {
+      const videoData = await videoRes.json()
+      quotaUsed += 1
+      
+      const snippet = videoData.items?.[0]?.snippet
+      if (snippet) {
+        context.categoryId = snippet.categoryId
+        context.genre = CATEGORY_TO_GENRE[snippet.categoryId] || 'Unknown'
+        context.tags = snippet.tags || []
+        context.description = snippet.description || ''
+        console.log(`[Silenced] Video category: ${context.genre}, Tags: ${context.tags.slice(0, 5).join(', ')}`)
+      }
+    }
+    
+    // Try to fetch transcript
+    const transcript = await fetchTranscriptForScoring(videoId)
+    if (transcript && transcript.length > 100) {
+      context.transcriptExcerpt = transcript.slice(0, 800)
+      console.log(`[Silenced] Got transcript excerpt: ${context.transcriptExcerpt.length} chars`)
+    }
+    
+    // Detect themes from transcript or fallback to description
+    const textToAnalyze = context.transcriptExcerpt || context.description.slice(0, 500) || title
+    context.detectedThemes = detectThemes(textToAnalyze, title, context.tags)
+    console.log(`[Silenced] Detected themes: ${context.detectedThemes.join(', ')}`)
+    
+  } catch (err) {
+    console.warn('[Silenced] Context analysis error:', err.message)
+  }
+  
+  return context
+}
+
+/**
+ * Detect themes from text content
+ */
+function detectThemes(text, title, tags) {
+  const themes = new Set()
+  const combined = `${title} ${text} ${tags.join(' ')}`.toLowerCase()
+  
+  // Genre/format detection
+  if (/\b(skit|sketch|comedy|funny|humor|hilarious|parody)\b/i.test(combined)) themes.add('comedy')
+  if (/\b(tutorial|how to|guide|learn|explained|education)\b/i.test(combined)) themes.add('educational')
+  if (/\b(review|unboxing|first impressions)\b/i.test(combined)) themes.add('review')
+  if (/\b(vlog|day in|daily|routine)\b/i.test(combined)) themes.add('vlog')
+  if (/\b(interview|podcast|conversation|talk)\b/i.test(combined)) themes.add('interview')
+  if (/\b(documentary|investigation|deep dive|analysis)\b/i.test(combined)) themes.add('documentary')
+  if (/\b(gaming|gameplay|playthrough|let's play)\b/i.test(combined)) themes.add('gaming')
+  if (/\b(music|song|cover|remix|beat)\b/i.test(combined)) themes.add('music')
+  if (/\b(news|breaking|update|report)\b/i.test(combined)) themes.add('news')
+  if (/\b(story|storytime|experience)\b/i.test(combined)) themes.add('storytelling')
+  
+  // Sport detection
+  if (/\b(basketball|nba|hoop|dunk|court)\b/i.test(combined)) themes.add('basketball')
+  if (/\b(football|nfl|touchdown|quarterback)\b/i.test(combined)) themes.add('football')
+  if (/\b(soccer|football|goal|match)\b/i.test(combined)) themes.add('soccer')
+  if (/\b(baseball|mlb|home run)\b/i.test(combined)) themes.add('baseball')
+  
+  // Role/character detection
+  if (/\b(coach|coaching|assistant|trainer)\b/i.test(combined)) themes.add('coaching')
+  if (/\b(player|athlete|team)\b/i.test(combined)) themes.add('sports')
+  
+  return Array.from(themes)
+}
+
+/**
+ * Build a smart search query using DeepSeek AI or fallback heuristics
+ * @param {Object} context - Video context from analyzeCurrentVideoContext
+ * @returns {Promise<string>} Optimized search query
+ */
+async function buildSmartSearchQuery(context) {
+  console.log('[Silenced] Building smart search query...')
+  
+  // Try DeepSeek for intelligent query generation
+  if (DEEPSEEK_API_KEY) {
+    try {
+      const prompt = `You are a YouTube search expert. Generate a search query to find similar hidden gem videos.
+
+Video Context:
+- Title: "${context.title}"
+- Category: ${context.genre || 'Unknown'}
+- Tags: ${context.tags.slice(0, 5).join(', ') || 'None'}
+- Detected themes: ${context.detectedThemes.join(', ') || 'None'}
+${context.transcriptExcerpt ? `- Transcript excerpt: "${context.transcriptExcerpt.slice(0, 300)}..."` : ''}
+
+Generate a YouTube search query (3-5 words max) to find similar content from smaller creators.
+Focus on: content type/format + main topic. Do NOT include channel names or specific video titles.
+Output ONLY the search query, nothing else.`
+
+      const response = await callDeepSeekAPI(prompt, 50)
+      if (response && response.length > 2 && response.length < 50) {
+        const cleanQuery = response.trim().replace(/^["']|["']$/g, '').replace(/\n/g, ' ')
+        console.log(`[Silenced] DeepSeek generated query: "${cleanQuery}"`)
+        return cleanQuery
+      }
+    } catch (err) {
+      console.warn('[Silenced] DeepSeek query generation failed:', err.message)
+    }
+  }
+  
+  // Fallback: Build query from detected themes + title keywords
+  return buildFallbackSearchQuery(context)
+}
+
+/**
+ * Fallback search query builder when DeepSeek is unavailable
+ */
+function buildFallbackSearchQuery(context) {
+  const queryParts = []
+  
+  // Add genre/format keywords
+  const genreKeywords = {
+    'comedy': ['comedy', 'skit', 'funny'],
+    'educational': ['explained', 'tutorial', 'how to'],
+    'review': ['review', 'honest'],
+    'documentary': ['documentary', 'deep dive'],
+    'gaming': ['gameplay', 'gaming'],
+    'sports': ['highlights', 'sports'],
+    'basketball': ['basketball'],
+    'football': ['football'],
+    'coaching': ['coach', 'coaching']
+  }
+  
+  // Pick first matching genre keyword
+  for (const theme of context.detectedThemes) {
+    if (genreKeywords[theme]) {
+      queryParts.push(genreKeywords[theme][0])
+      break
+    }
+  }
+  
+  // Extract meaningful keywords from title
+  const stopwords = ['the', 'and', 'for', 'with', 'this', 'that', 'from', 'have', 'what', 'your', 'when', 'than', 'better', 'more']
+  const titleWords = context.title
+    .toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 3 && !stopwords.includes(w))
+  
+  // Add top 2 title keywords
+  queryParts.push(...titleWords.slice(0, 2))
+  
+  // Add a theme if we have room
+  if (queryParts.length < 4 && context.detectedThemes.length > 0) {
+    const themeWord = context.detectedThemes.find(t => !queryParts.includes(t))
+    if (themeWord) queryParts.push(themeWord)
+  }
+  
+  const query = [...new Set(queryParts)].slice(0, 4).join(' ')
+  console.log(`[Silenced] Fallback query: "${query}"`)
+  return query || 'entertaining video'
+}
+
+/**
  * Compute Quality Score (0-100) with detailed breakdown
  * Based on engagement, informational value, and authenticity
  */
@@ -2251,22 +2490,25 @@ function computeQualityScore(video, channel, transcript) {
   const commentScore = Math.min(15, Math.round(commentRate * 1500))
 
   // === Informational Value (35 pts) ===
-  // WPM: 120-170 is ideal for educational content
+  // Base content score - don't punish videos just for missing transcripts
+  let baseContentScore = 10  // Every video gets 10 pts baseline
+  
+  // WPM: 120-170 is ideal for educational content (bonus on top of base)
   let wpmScore = 0
   let wpm = 0
   if (transcript && durationSec > 0) {
     wpm = countWords(transcript) / (durationSec / 60)
     if (wpm >= 120 && wpm <= 170) {
-      wpmScore = 15
-    } else {
-      wpmScore = Math.max(0, Math.round(15 - Math.abs(wpm - 145) / 10))
+      wpmScore = 10  // Bonus for good pacing
+    } else if (wpm > 0) {
+      wpmScore = Math.max(0, Math.round(10 - Math.abs(wpm - 145) / 15))
     }
   }
-
-  // Citations: 2 points per citation, max 10
+  
+  // Citations: 2 points per citation, max 5 (bonus)
   const citations = countCitations(transcript)
-  const citationScore = Math.min(10, citations * 2)
-
+  const citationScore = Math.min(5, citations * 2)
+  
   // Duration: 6-20 minutes is ideal
   let durationScore = 0
   if (durationMin >= 6 && durationMin <= 20) {
@@ -2292,7 +2534,7 @@ function computeQualityScore(video, channel, transcript) {
 
   // Calculate total
   const total = Math.max(0, Math.min(100,
-    likeScore + commentScore + wpmScore + citationScore + durationScore +
+    likeScore + commentScore + baseContentScore + wpmScore + citationScore + durationScore +
     clickbaitPenalty + spamPenalty + underexposureBonus
   ))
 
@@ -2480,21 +2722,25 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
 
   const gems = []
   const seenChannels = new Set([currentChannelId])
-
-  // #region agent log H2
-  // Constraint ranges - RELAXED for better results
-  // Original was too strict: 1k-100k subs with 20k-80k views is extremely rare
-  let subsMin = 500, subsMax = 500000  // Expanded from 1k-100k to 500-500k
-  let viewsMin = 1000, viewsMax = 500000  // Expanded from 20k-80k to 1k-500k
-  let maxResults = 50  // Start with 50, not 25
-  let useRelated = false  // DISABLED: relatedToVideoId deprecated Aug 2023
-  // #endregion
-
-  // Broadening steps (already start with relaxed constraints)
+  
+  // Step 1: Analyze current video context deeply (transcript, tags, category)
+  const context = await analyzeCurrentVideoContext(currentVideoId, currentTitle)
+  
+  // Step 2: Generate smart search query using DeepSeek or fallback
+  const smartQuery = await buildSmartSearchQuery(context)
+  console.log(`[Silenced] Using smart search query: "${smartQuery}"`)
+  
+  // Constraint ranges - Max 150k subs for "silenced" creators
+  let subsMin = 100, subsMax = 150000
+  let viewsMin = 5000, viewsMax = 300000  // 5k-300k views = hidden gem territory
+  let maxResults = 50
+  let useNewerVideos = true  // Search for newer videos to find smaller creators
+  
+  // Broadening steps - gradually relax if needed
   const broadeningSteps = [
-    () => { subsMax = 1000000; console.log('[Silenced] Broadening: subs to 1M') },
-    () => { viewsMin = 500; console.log('[Silenced] Broadening: views min to 500') },
-    () => { subsMin = 100; console.log('[Silenced] Broadening: subs min to 100') }
+    () => { subsMax = 300000; console.log('[Silenced] Broadening: subs to 300k') },
+    () => { subsMax = 500000; console.log('[Silenced] Broadening: subs to 500k') },
+    () => { useNewerVideos = false; console.log('[Silenced] Broadening: searching all time') }
   ]
   let broadeningIndex = 0
 
@@ -2506,24 +2752,18 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
       searchUrl.searchParams.set('type', 'video')
       searchUrl.searchParams.set('maxResults', String(maxResults))
       searchUrl.searchParams.set('key', YOUTUBE_API_KEY)
-
-      // #region agent log H1
-      // IMPORTANT: relatedToVideoId was DEPRECATED by YouTube in August 2023!
-      // Always use query search instead
-      // #endregion
-      {
-        // Extract keywords from title for query
-        const keywords = currentTitle
-          .toLowerCase()
-          .replace(/[^\w\s]/g, ' ')
-          .split(/\s+/)
-          .filter(w => w.length > 3 && !['the', 'and', 'for', 'with', 'this', 'that', 'from', 'have', 'what', 'your'].includes(w))
-          .slice(0, 4)
-          .join(' ')
-        // #region agent log H3
-        fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'background.js:discoverHiddenGems:queryBuild', message: 'Query search params', data: { currentVideoId, currentTitle, keywords: keywords || 'educational' }, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'H3' }) }).catch(() => { });
-        // #endregion
-        searchUrl.searchParams.set('q', keywords || 'educational')
+      
+      // Use smart query generated from content analysis
+      searchUrl.searchParams.set('q', smartQuery)
+      
+      // Use date order to find newer videos from smaller creators
+      if (useNewerVideos) {
+        searchUrl.searchParams.set('order', 'date')
+        // Only videos from last 2 years
+        const twoYearsAgo = new Date()
+        twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2)
+        searchUrl.searchParams.set('publishedAfter', twoYearsAgo.toISOString())
+      } else {
         searchUrl.searchParams.set('order', 'relevance')
       }
 
@@ -2533,9 +2773,6 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
       if (!searchRes.ok) {
         const errorData = await searchRes.json().catch(() => ({}))
         console.error('[Silenced] Search API error:', searchRes.status, errorData)
-        // #region agent log H1
-        fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'background.js:discoverHiddenGems:searchError', message: 'Search API failed', data: { status: searchRes.status, errorData, searchUrl: searchUrl.toString().replace(YOUTUBE_API_KEY, 'REDACTED') }, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'H1' }) }).catch(() => { });
-        // #endregion
         throw new Error(`Search API error: ${searchRes.status}`)
       }
 
@@ -2593,33 +2830,23 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
 
       // Filter and score candidates
       const candidates = []
-
-      // #region agent log H2
-      const filterStats = { total: 0, noChannel: 0, seenChannel: 0, subsTooLow: 0, subsTooHigh: 0, viewsTooLow: 0, viewsTooHigh: 0, tooShort: 0, isShorts: 0, isSpam: 0, passed: 0 }
-      // #endregion
-
+      const filterStats = { total: 0, noChannel: 0, subsTooLow: 0, subsTooHigh: 0, viewsTooLow: 0, viewsTooHigh: 0, tooShort: 0, isShorts: 0, isSpam: 0, isReaction: 0, passed: 0 }
+      
       for (const video of (videosData.items || [])) {
-        // #region agent log H2
         filterStats.total++
-        // #endregion
         const channelId = video.snippet?.channelId
-        if (!channelId || seenChannels.has(channelId)) {
-          // #region agent log H2
-          if (!channelId) filterStats.noChannel++; else filterStats.seenChannel++
-          // #endregion
-          continue
-        }
-
+        if (!channelId || seenChannels.has(channelId)) { filterStats.noChannel++; continue }
+        
         const channel = channelMap.get(channelId)
-        if (!channel) continue
+        if (!channel) { filterStats.noChannel++; continue }
 
         const subs = parseInt(channel.statistics?.subscriberCount) || 0
         const views = parseInt(video.statistics?.viewCount) || 0
         const durationSec = parseDurationToSeconds(video.contentDetails?.duration)
         const title = video.snippet?.title || ''
-
-        // Apply constraints with logging
-        // #region agent log H2
+        const description = video.snippet?.description || ''
+        
+        // Apply constraints with tracking
         if (subs < subsMin) { filterStats.subsTooLow++; continue }
         if (subs > subsMax) { filterStats.subsTooHigh++; continue }
         if (views < viewsMin) { filterStats.viewsTooLow++; continue }
@@ -2627,16 +2854,13 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
         if (durationSec < 120) { filterStats.tooShort++; continue }
         if (title.toLowerCase().includes('#shorts')) { filterStats.isShorts++; continue }
         if (detectSpam(title)) { filterStats.isSpam++; continue }
+        if (isReactionVideo(title, description)) { filterStats.isReaction++; continue }
+        
         filterStats.passed++
-        // #endregion
-
         candidates.push({ video, channel, subs, views, durationSec })
       }
-
-      // #region agent log H2
-      fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'background.js:discoverHiddenGems:filterStats', message: 'Filter breakdown', data: { filterStats, subsMin, subsMax, viewsMin, viewsMax }, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'H2' }) }).catch(() => { });
-      // #endregion
-
+      
+      console.log(`[Silenced] Filter breakdown:`, filterStats)
       console.log(`[Silenced] ${candidates.length} candidates passed filters`)
 
       // Score and select top candidates
@@ -2649,9 +2873,9 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
 
         // Compute quality score
         const quality = computeQualityScore(candidate.video, candidate.channel, transcript)
-
-        // Skip if quality is too low
-        if (quality.total < 30) {
+        
+        // Skip if quality is too low (15 is reasonable for videos without transcripts)
+        if (quality.total < 15) {
           console.log(`[Silenced] Skipping ${candidate.video.id} - low quality score: ${quality.total}`)
           continue
         }
@@ -2712,11 +2936,7 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
   }
 
   console.log(`[Silenced] 💎 Discovered ${gems.length} hidden gems`)
-
-  // #region agent log H2
-  fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'background.js:discoverHiddenGems:result', message: 'Final result', data: { gemsCount: gems.length, gemTitles: gems.map(g => g.title) }, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'H2' }) }).catch(() => { });
-  // #endregion
-
+  
   return {
     gems,
     message: gems.length === 0
