@@ -44,6 +44,51 @@ function esc(t) {
   return d.innerHTML
 }
 
+/**
+ * Safely send a message to the background script, handling extension context invalidation
+ * @param {Object} message - The message to send
+ * @param {Function} callback - Optional callback function
+ * @returns {Promise} Promise that resolves with the response or null if context is invalid
+ */
+function safeSendMessage(message, callback) {
+  return new Promise((resolve) => {
+    try {
+      // Check if runtime is still available
+      if (!chrome.runtime || !chrome.runtime.id) {
+        console.warn('[Silenced] Extension context invalidated - runtime not available')
+        if (callback) callback(null)
+        resolve(null)
+        return
+      }
+
+      chrome.runtime.sendMessage(message, (response) => {
+        // Check for runtime errors
+        const lastError = chrome.runtime.lastError
+        if (lastError) {
+          if (lastError.message && lastError.message.includes('Extension context invalidated')) {
+            console.warn('[Silenced] Extension context invalidated - please reload the page')
+            if (callback) callback(null)
+            resolve(null)
+            return
+          }
+          console.warn('[Silenced] Runtime error:', lastError.message)
+        }
+        
+        if (callback) callback(response)
+        resolve(response)
+      })
+    } catch (error) {
+      if (error.message && error.message.includes('Extension context invalidated')) {
+        console.warn('[Silenced] Extension context invalidated - please reload the page')
+      } else {
+        console.error('[Silenced] Error sending message:', error)
+      }
+      if (callback) callback(null)
+      resolve(null)
+    }
+  })
+}
+
 // ===============================================
 // VIDEO THUMBNAIL LABELING - Show noise/silence on ALL videos
 // ===============================================
@@ -316,15 +361,13 @@ async function getChannelSubs(channelHandle) {
   }
   
   // Request from background script
-  return new Promise((resolve) => {
-    chrome.runtime.sendMessage({ 
-      action: 'getChannelByHandle', 
-      handle: channelHandle 
-    }, (response) => {
-      const subs = response?.subscriberCount || 0
-      channelSubCache.set(channelHandle, subs)
-      resolve(subs)
-    })
+  return safeSendMessage({ 
+    action: 'getChannelByHandle', 
+    handle: channelHandle 
+  }).then(response => {
+    const subs = response?.subscriberCount || 0
+    channelSubCache.set(channelHandle, subs)
+    return subs
   })
 }
 
@@ -409,20 +452,13 @@ function clearThumbnailLabels() {
 // PERSISTENCE - Load Noise Cancellation state
 // ===============================================
 async function loadNoiseCancellationState() {
-  return new Promise((resolve) => {
-    chrome.runtime.sendMessage({ action: 'getNoiseCancellation' }, (response) => {
-      noiseCancellationActive = response?.enabled || false
-      resolve(noiseCancellationActive)
-    })
-  })
+  const response = await safeSendMessage({ action: 'getNoiseCancellation' })
+  noiseCancellationActive = response?.enabled || false
+  return noiseCancellationActive
 }
 
 async function saveNoiseCancellationState(enabled) {
-  return new Promise((resolve) => {
-    chrome.runtime.sendMessage({ action: 'setNoiseCancellation', enabled }, () => {
-      resolve()
-    })
-  })
+  await safeSendMessage({ action: 'setNoiseCancellation', enabled })
 }
 
 async function updateStats(voicesUnmuted = 0, noiseMuted = 0) {
@@ -671,23 +707,46 @@ function getShadowStyles() {
 
     /* === SUSTAINABILITY AUDIT === */
     .sustainability-section {
-      padding: 12px 14px;
       border-bottom: 1px solid #262626;
+    }
+
+    .sustainability-header-toggle {
+      width: 100%;
+      padding: 12px 14px;
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      text-align: left;
+      transition: background 0.2s ease;
+    }
+
+    .sustainability-header-toggle:hover {
+      background: #1a1a1a;
     }
 
     .sustainability-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 8px;
+      margin-bottom: 0;
     }
 
     .sustainability-title {
-      font-size: 10px;
+      font-size: 12px;
       font-weight: 600;
-      color: #6b7280;
+      color: #059669;
       text-transform: uppercase;
       letter-spacing: 0.5px;
+    }
+
+    .sustainability-arrow {
+      font-size: 10px;
+      color: #6b7280;
+      transition: transform 0.3s ease;
+    }
+
+    .sustainability-header-toggle[aria-expanded="true"] .sustainability-arrow {
+      transform: rotate(180deg);
     }
 
     .transparency-score {
@@ -702,10 +761,18 @@ function getShadowStyles() {
     .transparency-score.caution { background: #ef444430; color: #ef4444; }
     .transparency-score.unverified { background: #6b728030; color: #9ca3af; }
 
+    .sustainability-content {
+      padding: 0 14px 14px;
+      border-top: 1px solid #262626;
+      margin-top: 8px;
+      padding-top: 14px;
+    }
+
     .audit-flags {
       display: flex;
       flex-wrap: wrap;
       gap: 6px;
+      margin-bottom: 16px;
     }
 
     .audit-flag {
@@ -719,6 +786,240 @@ function getShadowStyles() {
 
     .audit-flag.warning { background: #ef444420; color: #fca5a5; }
     .audit-flag.caution { background: #f59e0b20; color: #fcd34d; }
+    .audit-flag.info { background: #3b82f620; color: #93c5fd; }
+    .audit-flag.positive { background: #10b98120; color: #6ee7b7; }
+
+    /* Detailed Sustainability Cards */
+    .sustainability-detailed {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .sustainability-card {
+      background: #1a1a1a;
+      border-radius: 8px;
+      padding: 12px;
+      border: 1px solid #374151;
+    }
+
+    .sustainability-card-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+
+    .sustainability-card-header h4 {
+      margin: 0;
+      font-size: 12px;
+      font-weight: 600;
+      color: #F9FAFB;
+      flex: 1;
+    }
+
+    .card-icon {
+      font-size: 16px;
+    }
+
+    .risk-badge, .credibility-badge {
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    .sustainability-card-content {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .risk-score-circle {
+      text-align: center;
+      padding: 12px;
+    }
+
+    .risk-score-value {
+      font-size: 32px;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .risk-score-label {
+      font-size: 12px;
+      color: #9CA3AF;
+      margin-top: 4px;
+    }
+
+    .sustainability-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .sustainability-issue {
+      font-size: 11px;
+      color: #FCA5A5;
+      padding: 6px 8px;
+      background: #7F1D1D20;
+      border-radius: 4px;
+      border-left: 2px solid #EF4444;
+    }
+
+    .sustainability-list.positives .sustainability-positive {
+      font-size: 11px;
+      color: #6EE7B7;
+      padding: 6px 8px;
+      background: #064E3B20;
+      border-radius: 4px;
+      border-left: 2px solid #10B981;
+    }
+
+    .verification-bar {
+      height: 6px;
+      background: #374151;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .verification-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #10B981, #059669);
+      border-radius: 3px;
+      transition: width 0.6s ease;
+    }
+
+    .verification-percentage {
+      font-size: 12px;
+      font-weight: 600;
+      color: #10B981;
+      text-align: center;
+    }
+
+    .verification-stats {
+      font-size: 11px;
+      font-weight: 600;
+      color: #F9FAFB;
+    }
+
+    .claims-preview {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .claim-item {
+      display: flex;
+      gap: 8px;
+      padding: 8px;
+      background: #111827;
+      border-radius: 6px;
+      border-left: 3px solid;
+    }
+
+    .claim-item.verified {
+      border-left-color: #10B981;
+    }
+
+    .claim-item.unverified {
+      border-left-color: #EF4444;
+    }
+
+    .claim-icon {
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+
+    .claim-text {
+      font-size: 10px;
+      color: #E5E7EB;
+      font-style: italic;
+      line-height: 1.4;
+      flex: 1;
+    }
+
+    .claim-evidence {
+      font-size: 9px;
+      color: #10B981;
+      margin-top: 4px;
+      padding-left: 8px;
+      border-left: 2px solid #10B981;
+    }
+
+    .claim-issue {
+      font-size: 9px;
+      color: #EF4444;
+      margin-top: 4px;
+      padding-left: 8px;
+      border-left: 2px solid #EF4444;
+    }
+
+    .no-claims {
+      font-size: 11px;
+      color: #9CA3AF;
+      text-align: center;
+      padding: 12px;
+      margin: 0;
+    }
+
+    .source-type {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px;
+      background: #111827;
+      border-radius: 6px;
+      margin-bottom: 8px;
+    }
+
+    .source-icon {
+      font-size: 20px;
+    }
+
+    .source-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: #F9FAFB;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .recommendation {
+      font-size: 11px;
+      color: #D1D5DB;
+      line-height: 1.5;
+      margin: 8px 0;
+      padding: 8px;
+      background: #111827;
+      border-radius: 6px;
+    }
+
+    .conflicts-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .conflict-item {
+      font-size: 10px;
+      color: #FCA5A5;
+      padding: 6px 8px;
+      background: #7F1D1D20;
+      border-radius: 4px;
+      border-left: 2px solid #EF4444;
+    }
     .audit-flag.info { background: #3b82f620; color: #93c5fd; }
     .audit-flag.positive { background: #10b98120; color: #6ee7b7; }
 
@@ -1130,17 +1431,122 @@ function createDashboard(data) {
   let sustainabilityHtml = ''
   if (sustainability?.isSustainability && sustainability?.auditResult) {
     const audit = sustainability.auditResult
+    const detailed = sustainability?.detailedAnalysis
     const flagsHtml = (audit.flags || []).map(flag =>
       `<div class="audit-flag ${flag.type}"><span class="flag-dot ${flag.type}"></span>${esc(flag.text)}</div>`
     ).join('')
 
+    // Build detailed analysis HTML if available
+    let detailedHtml = ''
+    if (detailed) {
+      const { greenwashingRisk, claimVerification, sourceCredibility } = detailed
+      
+      // Greenwashing Risk Card
+      const riskColor = greenwashingRisk.level === 'HIGH' ? '#EF4444' : 
+                       greenwashingRisk.level === 'MODERATE' ? '#F59E0B' : '#10B981'
+      const riskIssuesHtml = greenwashingRisk.issues.map(issue => 
+        `<li class="sustainability-issue">${esc(issue)}</li>`
+      ).join('')
+      const riskPositivesHtml = greenwashingRisk.positives.map(pos => 
+        `<li class="sustainability-positive">${esc(pos)}</li>`
+      ).join('')
+      
+      // Claim Verification
+      const verificationRate = claimVerification.totalClaims > 0 
+        ? Math.round((claimVerification.verifiedClaims / claimVerification.totalClaims) * 100) 
+        : 0
+      const claimsHtml = claimVerification.claims.slice(0, 3).map(claim => `
+        <div class="claim-item ${claim.verified ? 'verified' : 'unverified'}">
+          <span class="claim-icon">${claim.verified ? '✅' : '❌'}</span>
+          <div class="claim-text">"${esc(claim.text)}"</div>
+          ${claim.evidence ? `<div class="claim-evidence">${esc(claim.evidence)}</div>` : ''}
+          ${claim.issue ? `<div class="claim-issue">${esc(claim.issue)}</div>` : ''}
+        </div>
+      `).join('')
+      
+      // Source Credibility
+      const sourceIcon = sourceCredibility.type === 'CORPORATE' ? '🏢' : 
+                        sourceCredibility.type === 'INDEPENDENT' ? '🔬' : 
+                        sourceCredibility.type === 'COMMUNITY' ? '🌍' : '❓'
+      const credibilityColor = sourceCredibility.credibilityLevel === 'HIGH' ? '#10B981' :
+                               sourceCredibility.credibilityLevel === 'MODERATE' ? '#F59E0B' : '#EF4444'
+      const conflictsHtml = sourceCredibility.conflicts.map(conflict => 
+        `<li class="conflict-item">${esc(conflict)}</li>`
+      ).join('')
+
+      detailedHtml = `
+        <div class="sustainability-detailed" id="sustainability-detailed">
+          <div class="sustainability-card">
+            <div class="sustainability-card-header">
+              <span class="card-icon">⚠️</span>
+              <h4>Greenwashing Risk</h4>
+              <span class="risk-badge risk-${greenwashingRisk.level.toLowerCase()}" style="background: ${riskColor}20; color: ${riskColor}">
+                ${greenwashingRisk.level}
+              </span>
+            </div>
+            <div class="sustainability-card-content">
+              <div class="risk-score-circle">
+                <div class="risk-score-value" style="color: ${riskColor}">${greenwashingRisk.score}</div>
+                <div class="risk-score-label">/100</div>
+              </div>
+              ${riskIssuesHtml ? `<ul class="sustainability-list">${riskIssuesHtml}</ul>` : ''}
+              ${riskPositivesHtml ? `<ul class="sustainability-list positives">${riskPositivesHtml}</ul>` : ''}
+            </div>
+          </div>
+
+          <div class="sustainability-card">
+            <div class="sustainability-card-header">
+              <span class="card-icon">🔍</span>
+              <h4>Claim Verification</h4>
+              <span class="verification-stats">${claimVerification.verifiedClaims}/${claimVerification.totalClaims}</span>
+            </div>
+            <div class="sustainability-card-content">
+              <div class="verification-bar">
+                <div class="verification-fill" style="width: ${verificationRate}%"></div>
+              </div>
+              <div class="verification-percentage">${verificationRate}% verified</div>
+              ${claimVerification.totalClaims > 0 ? `
+                <div class="claims-preview">
+                  ${claimsHtml}
+                </div>
+              ` : '<p class="no-claims">No specific sustainability claims detected.</p>'}
+            </div>
+          </div>
+
+          <div class="sustainability-card">
+            <div class="sustainability-card-header">
+              <span class="card-icon">📊</span>
+              <h4>Source Credibility</h4>
+              <span class="credibility-badge" style="background: ${credibilityColor}20; color: ${credibilityColor}">
+                ${sourceCredibility.credibilityLevel}
+              </span>
+            </div>
+            <div class="sustainability-card-content">
+              <div class="source-type">
+                <span class="source-icon">${sourceIcon}</span>
+                <span class="source-label">${sourceCredibility.type}</span>
+              </div>
+              <p class="recommendation">${esc(sourceCredibility.recommendation)}</p>
+              ${conflictsHtml ? `<ul class="conflicts-list">${conflictsHtml}</ul>` : ''}
+            </div>
+          </div>
+        </div>
+      `
+    }
+
     sustainabilityHtml = `
       <div class="sustainability-section">
-        <div class="sustainability-header">
-          <span class="sustainability-title">Sustainability Audit</span>
-          <span class="transparency-score ${audit.tier}">${audit.transparencyScore}/100</span>
+        <button class="sustainability-header-toggle" id="sustainability-toggle" aria-expanded="false">
+          <div class="sustainability-header">
+            <span class="sustainability-title">🌍 Sustainability Analysis</span>
+            <span class="transparency-score ${audit.tier}">${audit.transparencyScore}/100</span>
+          </div>
+          <span class="sustainability-arrow">▼</span>
+        </button>
+        <div class="sustainability-content" id="sustainability-content" style="display: none;">
+          ${flagsHtml ? `<div class="audit-flags">${flagsHtml}</div>` : ''}
+          ${detailedHtml}
         </div>
-        ${flagsHtml ? `<div class="audit-flags">${flagsHtml}</div>` : ''}
       </div>
     `
   }
@@ -1404,6 +1810,18 @@ function injectDashboard(data) {
   const refreshBtn = shadow.getElementById('refresh-btn')
   const auditToggle = shadow.getElementById('audit-mode-toggle')
   const impactContainer = shadow.getElementById('impact-snapshot-container')
+  const sustainabilityToggle = shadow.getElementById('sustainability-toggle')
+  const sustainabilityContent = shadow.getElementById('sustainability-content')
+  
+  // Sustainability Toggle
+  sustainabilityToggle?.addEventListener('click', () => {
+    const isExpanded = sustainabilityToggle.getAttribute('aria-expanded') === 'true'
+    const newState = !isExpanded
+    sustainabilityToggle.setAttribute('aria-expanded', newState)
+    if (sustainabilityContent) {
+      sustainabilityContent.style.display = newState ? 'block' : 'none'
+    }
+  })
   
   // Noise Cancellation Toggle
   noiseCancelToggle?.addEventListener('click', () => {
@@ -1632,18 +2050,15 @@ async function runNoiseCancellation(query) {
   
   console.log('[Silenced] 🎧 Activating noise cancellation for:', query)
   
-  return new Promise((resolve) => {
-    chrome.runtime.sendMessage({ action: 'cancelNoise', query }, (response) => {
-      if (response?.success) {
-        discoveryCache = response.data
-        console.log('[Silenced] ✓ Noise cancellation complete:', response.data)
-        resolve(response.data)
-      } else {
-        console.error('[Silenced] ✗ Noise cancellation failed:', response?.error)
-        resolve(null)
-      }
-    })
-  })
+  const response = await safeSendMessage({ action: 'cancelNoise', query })
+  if (response?.success) {
+    discoveryCache = response.data
+    console.log('[Silenced] ✓ Noise cancellation complete:', response.data)
+    return response.data
+  } else {
+    console.error('[Silenced] ✗ Noise cancellation failed:', response?.error)
+    return null
+  }
 }
 
 function extractCurrentQuery() {
@@ -2150,12 +2565,10 @@ async function run() {
   const transcript = await getTranscript(videoId)
   
   // Get analysis from background script
-  const response = await new Promise(resolve => {
-    chrome.runtime.sendMessage({ 
-      action: 'analyze', 
-      videoId, 
-      transcript: transcript?.substring(0, 8000) 
-    }, resolve)
+  const response = await safeSendMessage({ 
+    action: 'analyze', 
+    videoId, 
+    transcript: transcript?.substring(0, 8000) 
   })
   
   if (response?.success && response?.data) {

@@ -13,7 +13,7 @@ import { diversifySilencedVoices, type DiversityMetadata } from "../_shared/dive
 const SCHEMA_VERSION = '3.1.0'
 const FUNCTION_VERSION = 'v18'
 
-const YOUTUBE_API_KEY = Deno.env.get('YOUTUBE_API_KEY') || 'AIzaSyAV_xT7shJvRyip9yCSpvx7ogZhiPpi2LY'
+const YOUTUBE_API_KEY = Deno.env.get('YOUTUBE_API_KEY') || 'AIzaSyA_TCvrL72kC5xplism_FJDCtl8UshToHQ'
 const ENABLE_ML_FEATURES = Deno.env.get('ENABLE_ML_FEATURES') !== 'false' // Default enabled
 const DEMO_MODE = Deno.env.get('DEMO_MODE') === 'true'
 

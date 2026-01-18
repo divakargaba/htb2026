@@ -15,7 +15,7 @@ const BIAS_RECEIPT_CACHE_TTL = 21600000 // 6 hours in ms
 
 // Feature flags
 const ENABLE_ML_FEATURES = true // Set to true to enable Gemini-powered features
-const GEMINI_API_KEY = 'AIzaSyCSjWYu0o5oAKlkxlrTSlpoQAEzgDT3yrM' // Add your Gemini API key here - REQUIRED for quality filtering
+const GEMINI_API_KEY = 'AIzaSyCr7sAWdtD4GYKmnFU6fG1nVNnZQbBm-og' // Add your Gemini API key here - REQUIRED for quality filtering
 
 // Quality thresholds
 const MIN_VIDEO_QUALITY_SCORE = 0.25 // Minimum quality score (0-1) to surface a video (lowered to avoid filtering all)
@@ -513,7 +513,7 @@ RULES:
 - Be concise and specific`
 
   try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -669,7 +669,7 @@ Respond with ONLY valid JSON in this exact format:
 Be strict - most random search results should score below 0.5.`
 
   try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -873,7 +873,220 @@ const CORPORATE_SIGNALS = [
   'brand', 'campaign', 'initiative', 'commitment', 'pledge'
 ]
 
-function auditSustainability(video, transcript = '') {
+// Vague sustainability terms that need evidence
+const VAGUE_TERMS = [
+  'eco-friendly', 'green', 'sustainable', 'carbon neutral', 'carbon negative',
+  'net zero', 'climate positive', 'environmentally friendly', 'planet-friendly',
+  'earth-friendly', 'clean', 'natural', 'organic', 'renewable', 'zero waste', 'circular'
+]
+
+function analyzeGreenwashingRisk(transcript, video, channel) {
+  if (!transcript || transcript.length < 50) {
+    return {
+      score: 50,
+      level: 'MODERATE',
+      issues: ['Insufficient transcript data for analysis'],
+      positives: []
+    }
+  }
+
+  const transcriptLower = transcript.toLowerCase()
+  const title = (video.snippet?.title || '').toLowerCase()
+  const description = (video.snippet?.description || '').toLowerCase()
+  const fullText = `${title} ${description} ${transcriptLower}`
+  
+  const issues = []
+  const positives = []
+  let riskScore = 0
+
+  // Count vague terms
+  const vagueMatches = VAGUE_TERMS.filter(term => fullText.includes(term))
+  const vagueCount = vagueMatches.length
+
+  // Count evidence words
+  const evidenceFound = EVIDENCE_SIGNALS.filter(term => fullText.includes(term))
+  const evidenceCount = evidenceFound.length
+
+  // Check for corporate signals
+  const corporateFound = CORPORATE_SIGNALS.filter(term => fullText.includes(term))
+  const hasCorporateSignal = corporateFound.length > 0
+  const channelSize = parseInt(channel?.statistics?.subscriberCount || '0')
+
+  // Vague terms without evidence
+  if (vagueCount > 0 && evidenceCount === 0) {
+    riskScore += 40
+    issues.push(`Found ${vagueCount} vague sustainability term(s) without supporting evidence`)
+  } else if (vagueCount > evidenceCount * 2) {
+    riskScore += 30
+    issues.push(`More vague claims (${vagueCount}) than evidence indicators (${evidenceCount})`)
+  } else if (vagueCount > 0 && evidenceCount > 0) {
+    positives.push(`Found ${evidenceCount} evidence indicator(s) supporting claims`)
+  }
+
+  // Corporate channel making sustainability claims
+  if (channelSize > 1000000 && vagueCount > 0) {
+    riskScore += 25
+    issues.push('Large corporate channel making sustainability claims - verify independence')
+  }
+
+  // Sponsored content
+  if (hasCorporateSignal && vagueCount > 0) {
+    riskScore += 20
+    issues.push('Sponsored content with sustainability claims - potential bias')
+  }
+
+  // Missing specific metrics
+  const hasNumbers = /\d+/.test(transcript)
+  const hasPercentages = /%\s*reduction|\d+%\s*(carbon|emission|energy)/i.test(transcript)
+  if (vagueCount > 0 && !hasNumbers && !hasPercentages) {
+    riskScore += 15
+    issues.push('Vague claims without specific metrics or targets')
+  } else if (hasNumbers || hasPercentages) {
+    positives.push('Contains specific metrics and targets')
+  }
+
+  // Positive signals
+  if (evidenceCount >= 3) {
+    positives.push('Multiple evidence indicators found')
+  }
+  if (transcriptLower.includes('third-party') || transcriptLower.includes('audit')) {
+    positives.push('References third-party verification or audits')
+  }
+
+  riskScore = Math.min(100, Math.max(0, riskScore))
+  
+  let level = 'LOW'
+  if (riskScore >= 60) level = 'HIGH'
+  else if (riskScore >= 30) level = 'MODERATE'
+
+  if (issues.length === 0 && riskScore < 30) {
+    positives.push('No significant greenwashing indicators detected')
+  }
+
+  return {
+    score: Math.round(riskScore),
+    level,
+    issues: issues.length > 0 ? issues : ['No major issues detected'],
+    positives: positives.length > 0 ? positives : []
+  }
+}
+
+function extractClaims(transcript) {
+  if (!transcript || transcript.length < 100) {
+    return { totalClaims: 0, verifiedClaims: 0, claims: [] }
+  }
+
+  const claims = []
+  const sentences = transcript.split(/[.!?]+/).map(s => s.trim()).filter(s => s.length > 20)
+  
+  const claimPatterns = [
+    /(?:we|our|they|the company|we've|we're|we'll)\s+(?:are|will|have|commit|pledge|aim|target|achieve|reduce|eliminate|offset)/i,
+    /\d+\s*(?:percent|%|tonnes?|kg|emissions?|carbon|reduction|renewable)/i,
+    /(?:carbon neutral|net zero|zero waste|100%\s*(?:renewable|sustainable|green))/i
+  ]
+
+  for (const sentence of sentences) {
+    const isClaim = claimPatterns.some(pattern => pattern.test(sentence))
+    if (isClaim) {
+      const sentenceLower = sentence.toLowerCase()
+      const hasEvidence = EVIDENCE_SIGNALS.some(word => sentenceLower.includes(word))
+      const hasMetrics = /\d+/.test(sentence)
+      const hasVague = VAGUE_TERMS.some(term => sentenceLower.includes(term))
+
+      let verified = false
+      let issue = undefined
+      let evidence = undefined
+
+      if (hasEvidence) {
+        verified = true
+        evidence = 'Contains evidence indicators'
+      } else if (hasMetrics && !hasVague) {
+        verified = true
+        evidence = 'Contains specific metrics'
+      } else if (hasVague && !hasEvidence) {
+        verified = false
+        issue = 'Vague claim without supporting evidence'
+      } else {
+        verified = false
+        issue = 'Unverified claim - needs evidence'
+      }
+
+      claims.push({
+        text: sentence.slice(0, 150) + (sentence.length > 150 ? '...' : ''),
+        verified,
+        issue,
+        evidence
+      })
+    }
+  }
+
+  const verifiedClaims = claims.filter(c => c.verified).length
+  return {
+    totalClaims: claims.length,
+    verifiedClaims,
+    claims: claims.slice(0, 10)
+  }
+}
+
+function analyzeSourceCredibility(video, channel) {
+  const channelSize = parseInt(channel?.statistics?.subscriberCount || '0')
+  const description = (video.snippet?.description || '').toLowerCase()
+  const title = (video.snippet?.title || '').toLowerCase()
+  const fullText = `${title} ${description}`
+
+  let type = 'UNKNOWN'
+  let credibilityLevel = 'MODERATE'
+  const conflicts = []
+  let recommendation = ''
+
+  // Determine source type
+  if (channelSize > 1000000) {
+    if (CORPORATE_SIGNALS.some(term => fullText.includes(term))) {
+      type = 'CORPORATE'
+    } else if (EVIDENCE_SIGNALS.some(term => fullText.includes('research') || fullText.includes('study'))) {
+      type = 'INDEPENDENT'
+    } else {
+      type = 'CORPORATE'
+    }
+  } else if (channelSize > 100000) {
+    if (EVIDENCE_SIGNALS.some(term => fullText.includes(term))) {
+      type = 'INDEPENDENT'
+    } else {
+      type = 'UNKNOWN'
+    }
+  } else if (channelSize < 10000) {
+    type = 'COMMUNITY'
+  } else {
+    type = 'COMMUNITY'
+  }
+
+  // Assess credibility
+  if (type === 'CORPORATE') {
+    if (CORPORATE_SIGNALS.some(term => fullText.includes(term))) {
+      credibilityLevel = 'LOW'
+      conflicts.push('Corporate channel with sponsored content')
+    } else if (channelSize > 5000000) {
+      credibilityLevel = 'MODERATE'
+      conflicts.push('Very large corporate platform - verify claims independently')
+    } else {
+      credibilityLevel = 'MODERATE'
+    }
+    recommendation = 'Verify sustainability claims independently. Corporate channels may have financial incentives.'
+  } else if (type === 'INDEPENDENT') {
+    credibilityLevel = 'HIGH'
+    recommendation = 'Independent research-based source - high credibility'
+  } else if (type === 'COMMUNITY') {
+    credibilityLevel = 'MODERATE'
+    recommendation = 'Community voice - authentic perspective but verify technical claims'
+  } else {
+    credibilityLevel = 'LOW'
+    recommendation = 'Unknown source - verify all claims independently'
+  }
+
+  return { type, credibilityLevel, conflicts, recommendation }
+}
+
+function auditSustainability(video, transcript = '', channel = null) {
   const categoryId = video.snippet?.categoryId
   const title = (video.snippet?.title || '').toLowerCase()
   const description = (video.snippet?.description || '').toLowerCase()
@@ -885,7 +1098,7 @@ function auditSustainability(video, transcript = '') {
   const isSustainabilityTopic = matchedKeywords.length >= 2
 
   if (!isSustainabilityTopic) {
-    return { isSustainability: false, auditResult: null }
+    return { isSustainability: false, auditResult: null, detailedAnalysis: null }
   }
 
   // Detect signals
@@ -936,6 +1149,11 @@ function auditSustainability(video, transcript = '') {
     tierColor = '#ef4444'
   }
 
+  // Enhanced detailed analysis
+  const greenwashingRisk = analyzeGreenwashingRisk(transcript, video, channel)
+  const claimVerification = extractClaims(transcript)
+  const sourceCredibility = analyzeSourceCredibility(video, channel)
+
   return {
     isSustainability: true,
     auditResult: {
@@ -951,6 +1169,11 @@ function auditSustainability(video, transcript = '') {
       },
       matchedKeywords,
       category: SUSTAINABILITY_CATEGORIES[categoryId] || 'General'
+    },
+    detailedAnalysis: {
+      greenwashingRisk,
+      claimVerification,
+      sourceCredibility
     }
   }
 }
@@ -1310,8 +1533,8 @@ async function analyzeVideo(videoId, transcript = '') {
     duration: video.contentDetails?.duration
   }, activities)
 
-  // Run sustainability audit
-  const sustainabilityAudit = auditSustainability(video, transcript)
+  // Run sustainability audit (pass channel for detailed analysis)
+  const sustainabilityAudit = auditSustainability(video, transcript, channel)
 
   return {
     video: {

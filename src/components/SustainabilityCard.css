@@ -1,0 +1,469 @@
+/**
+ * Sustainability Card Styles
+ * Shared styles for all sustainability analysis cards
+ */
+
+.sustainability-card {
+  background: #1F2937;
+  border-radius: 12px;
+  padding: 20px;
+  border: 1px solid #374151;
+  transition: all 0.3s ease-in-out;
+  min-width: 0; /* Prevent overflow */
+}
+
+.sustainability-card:hover {
+  border-color: #4B5563;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.card-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+}
+
+.card-title h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #F9FAFB;
+  letter-spacing: -0.2px;
+}
+
+.card-icon {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.card-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Risk Badge */
+.risk-badge {
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.risk-badge.risk-high {
+  background: #EF444420;
+  color: #EF4444;
+}
+
+.risk-badge.risk-moderate {
+  background: #F59E0B20;
+  color: #F59E0B;
+}
+
+.risk-badge.risk-low {
+  background: #10B98120;
+  color: #10B981;
+}
+
+/* Score Circle */
+.score-circle-container {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin: 8px 0;
+}
+
+.score-circle {
+  transform: rotate(-90deg);
+}
+
+.score-progress {
+  transition: stroke-dashoffset 0.6s ease-in-out;
+}
+
+.score-text {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.score-value {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+  color: #F9FAFB;
+}
+
+.score-label {
+  font-size: 12px;
+  color: #9CA3AF;
+  margin-top: 2px;
+}
+
+/* Sections */
+.section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #D1D5DB;
+  margin: 0 0 8px 0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Issues List */
+.issues-section,
+.positives-section {
+  margin-top: 8px;
+}
+
+.issues-list,
+.positives-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.issue-item,
+.positive-item {
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: #111827;
+  color: #E5E7EB;
+}
+
+.positive-item {
+  background: #064E3B20;
+  color: #6EE7B7;
+}
+
+/* Verification Bar */
+.verification-bar-container {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.verification-bar {
+  flex: 1;
+  height: 8px;
+  background: #374151;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.verification-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #10B981, #059669);
+  border-radius: 4px;
+  transition: width 0.6s ease-in-out;
+}
+
+.verification-percentage {
+  font-size: 14px;
+  font-weight: 600;
+  color: #10B981;
+  min-width: 45px;
+  text-align: right;
+}
+
+.verification-stats {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.stat-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: #F9FAFB;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: #9CA3AF;
+}
+
+/* No Claims */
+.no-claims {
+  text-align: center;
+  padding: 24px 12px;
+  color: #9CA3AF;
+}
+
+.no-claims p {
+  margin: 8px 0;
+  font-size: 13px;
+}
+
+.hint {
+  font-size: 11px !important;
+  color: #6B7280 !important;
+  font-style: italic;
+}
+
+/* Verification Summary */
+.verification-summary {
+  padding: 12px;
+  border-radius: 8px;
+  background: #111827;
+}
+
+.summary-good {
+  margin: 0;
+  color: #10B981;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.summary-warning {
+  margin: 0;
+  color: #F59E0B;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.summary-danger {
+  margin: 0;
+  color: #EF4444;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* Expand Button */
+.expand-button {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  background: #111827;
+  border: 1px solid #374151;
+  border-radius: 6px;
+  color: #D1D5DB;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.expand-button:hover {
+  background: #1F2937;
+  border-color: #4B5563;
+}
+
+.expand-arrow {
+  transition: transform 0.3s ease;
+  font-size: 10px;
+}
+
+.expand-arrow.expanded {
+  transform: rotate(180deg);
+}
+
+/* Claims List */
+.claims-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.claim-item {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  background: #111827;
+  border-radius: 8px;
+  border-left: 3px solid;
+  transition: all 0.2s ease;
+}
+
+.claim-item.verified {
+  border-left-color: #10B981;
+}
+
+.claim-item.unverified {
+  border-left-color: #EF4444;
+}
+
+.claim-status {
+  flex-shrink: 0;
+}
+
+.status-icon {
+  font-size: 18px;
+  display: block;
+}
+
+.claim-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.claim-text {
+  margin: 0 0 6px 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #E5E7EB;
+  font-style: italic;
+}
+
+.claim-evidence {
+  margin: 0;
+  font-size: 11px;
+  color: #10B981;
+  padding-left: 8px;
+  border-left: 2px solid #10B981;
+  padding-left: 8px;
+}
+
+.claim-issue {
+  margin: 0;
+  font-size: 11px;
+  color: #EF4444;
+  padding-left: 8px;
+  border-left: 2px solid #EF4444;
+}
+
+/* Source Type */
+.source-type-section {
+  margin-bottom: 16px;
+}
+
+.source-type-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  background: #111827;
+  border-radius: 8px;
+}
+
+.source-type-icon {
+  font-size: 24px;
+}
+
+.source-type-label {
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Recommendation */
+.recommendation-section {
+  margin-bottom: 16px;
+}
+
+.recommendation-text {
+  margin: 0;
+  padding: 12px;
+  background: #111827;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #D1D5DB;
+}
+
+/* Conflicts */
+.conflicts-section {
+  margin-bottom: 16px;
+}
+
+.conflicts-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.conflict-item {
+  padding: 10px 12px;
+  background: #7F1D1D20;
+  border-left: 3px solid #EF4444;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #FCA5A5;
+  line-height: 1.5;
+}
+
+/* Credibility Badge */
+.credibility-badge {
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Credibility Indicator */
+.credibility-indicator {
+  margin-top: 8px;
+}
+
+.indicator-bar {
+  height: 6px;
+  background: #374151;
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.indicator-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.6s ease-in-out;
+}
+
+.indicator-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #6B7280;
+}
+
+.indicator-labels span {
+  font-weight: 500;
+}
+
+.indicator-labels span.active {
+  color: #D1D5DB;
+  font-weight: 600;
+}
+
+/* Responsive */
+@media (max-width: 480px) {
+  .sustainability-card {
+    padding: 16px;
+  }
+
+  .card-title h3 {
+    font-size: 14px;
+  }
+
+  .score-value {
+    font-size: 24px;
+  }
+}
+

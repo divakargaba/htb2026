@@ -1,0 +1,218 @@
+/**
+ * Sustainability Analysis Main Component Styles
+ */
+
+.sustainability-analysis {
+  margin-top: 16px;
+  background: #111827;
+  border-radius: 12px;
+  border: 1px solid #374151;
+  overflow: hidden;
+  transition: all 0.3s ease-in-out;
+}
+
+.sustainability-analysis:hover {
+  border-color: #4B5563;
+}
+
+/* Header */
+.sustainability-header {
+  width: 100%;
+  padding: 16px 20px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.2s ease;
+}
+
+.sustainability-header:hover {
+  background: #1F2937;
+}
+
+.sustainability-header:focus {
+  outline: 2px solid #059669;
+  outline-offset: -2px;
+}
+
+.header-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.header-icon {
+  font-size: 24px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.header-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #F9FAFB;
+  letter-spacing: -0.3px;
+}
+
+.header-subtitle {
+  margin: 4px 0 0 0;
+  font-size: 12px;
+  color: #9CA3AF;
+  line-height: 1.4;
+}
+
+.expand-icon {
+  font-size: 12px;
+  color: #6B7280;
+  transition: transform 0.3s ease;
+  flex-shrink: 0;
+}
+
+.expand-icon.expanded {
+  transform: rotate(180deg);
+}
+
+/* Content */
+.sustainability-content {
+  padding: 20px;
+  border-top: 1px solid #374151;
+  animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+}
+
+/* Loading State */
+.sustainability-analysis.loading {
+  padding: 40px 20px;
+  text-align: center;
+  background: #111827;
+  border-radius: 12px;
+  border: 1px solid #374151;
+}
+
+.loading-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid #374151;
+  border-top-color: #059669;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 0 auto 16px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.sustainability-analysis.loading p {
+  margin: 0;
+  color: #9CA3AF;
+  font-size: 13px;
+}
+
+/* Limited Data State */
+.sustainability-analysis.limited {
+  padding: 24px 20px;
+  background: #111827;
+  border-radius: 12px;
+  border: 1px solid #374151;
+}
+
+.limited-message {
+  text-align: center;
+  color: #9CA3AF;
+}
+
+.limited-icon {
+  font-size: 32px;
+  display: block;
+  margin-bottom: 12px;
+}
+
+.limited-message p {
+  margin: 8px 0;
+  font-size: 13px;
+}
+
+.limited-message .hint {
+  font-size: 11px;
+  color: #6B7280;
+  font-style: italic;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .cards-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .sustainability-content {
+    padding: 16px;
+  }
+
+  .header-title {
+    font-size: 16px;
+  }
+
+  .header-subtitle {
+    font-size: 11px;
+  }
+}
+
+@media (min-width: 769px) and (max-width: 1024px) {
+  .cards-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* Accessibility */
+.sustainability-header:focus-visible {
+  outline: 2px solid #059669;
+  outline-offset: -2px;
+}
+
+/* Print styles */
+@media print {
+  .sustainability-analysis {
+    break-inside: avoid;
+  }
+
+  .sustainability-header {
+    cursor: default;
+  }
+
+  .expand-icon {
+    display: none;
+  }
+
+  .sustainability-content {
+    display: block !important;
+  }
+}
+
