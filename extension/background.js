@@ -5338,7 +5338,17 @@ async function findSilencedForSingleVideo(noiseVideo, constraints, excludeChanne
     },
     whyGood: aiExplanation?.whyGood ? [aiExplanation.whyGood, ...whyGood] : whyGood,
     whyBuried: aiExplanation?.whyBuried ? [aiExplanation.whyBuried, ...whyBuried] : whyBuried,
-    aiExplanation: aiExplanation?.explanation || null,
+    // Pass full AI explanation object with 4 sections
+    aiExplanation: aiExplanation ? {
+      fullExplanation: aiExplanation.fullExplanation || null,
+      whySilenced: aiExplanation.whySilenced || null,
+      whoAffected: aiExplanation.whoAffected || null,
+      whyMatters: aiExplanation.whyMatters || null,
+      counterfactual: aiExplanation.counterfactual || null,
+      // Legacy field for backward compatibility
+      explanation: aiExplanation.explanation || aiExplanation.fullExplanation?.slice(0, 200) || null,
+      method: aiExplanation.method || 'unknown'
+    } : null,
     qualityScore: best.qualityScore,
     engagementScore: best.engagementScore,
     query

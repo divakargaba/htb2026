@@ -103,7 +103,16 @@ function createVideoCard(video) {
   // Get noise video comparison data (from new pipeline)
   const noiseVideoTitle = video.noiseVideoTitle || null
   const noiseVideoChannel = video.noiseVideoChannel || null
-  const aiExplanation = video.aiExplanation || null
+  const noiseVideoId = video.noiseVideoId || null
+  const noiseThumbnail = noiseVideoId ? `https://i.ytimg.com/vi/${noiseVideoId}/mqdefault.jpg` : null
+  
+  // Get 4-section AI explanation data
+  const aiExplanation = video.aiExplanation || null // Legacy single string
+  const fullExplanation = video.fullExplanation || null
+  const whySilencedAI = video.whySilencedAI || video.aiExplanation?.whySilenced || null
+  const whoAffectedAI = video.whoAffectedAI || video.aiExplanation?.whoAffected || null
+  const whyMattersAI = video.whyMattersAI || video.aiExplanation?.whyMatters || null
+  const counterfactualAI = video.counterfactualAI || video.aiExplanation?.counterfactual || null
   
   // Quality score
   const qualityScore = video.qualityScore || 0
@@ -165,19 +174,61 @@ function createVideoCard(video) {
   const whyLimited = (video.whyBuried || [])[0] || 'Lower platform-favored signals'
   const whyGoodList = (video.whyGood || []).slice(0, 2)
 
-  // Build AI explanation section if available
-  const aiSection = aiExplanation ? `
+  // Build comprehensive 4-section AI explanation
+  const hasAIExplanation = fullExplanation || whySilencedAI || whyMattersAI
+  
+  const aiSection = hasAIExplanation ? `
+    <div class="ai-analysis-container">
+      <div class="ai-analysis-header">
+        <span class="ai-icon">✨</span>
+        <span class="ai-header-text">AI Analysis</span>
+        <span class="ai-expand-btn" data-ai-expand>▸</span>
+      </div>
+      <div class="ai-analysis-content" style="display: none;">
+        ${whySilencedAI ? `
+          <div class="ai-section">
+            <div class="ai-section-title">🔇 Why This Content Is Silenced</div>
+            <div class="ai-section-text">${escapeHtml(whySilencedAI)}</div>
+          </div>
+        ` : ''}
+        ${whoAffectedAI ? `
+          <div class="ai-section">
+            <div class="ai-section-title">👤 Who Is Affected</div>
+            <div class="ai-section-text">${escapeHtml(whoAffectedAI)}</div>
+          </div>
+        ` : ''}
+        ${whyMattersAI ? `
+          <div class="ai-section">
+            <div class="ai-section-title">💡 Why This Content Still Matters</div>
+            <div class="ai-section-text">${escapeHtml(whyMattersAI)}</div>
+          </div>
+        ` : ''}
+        ${counterfactualAI ? `
+          <div class="ai-section counterfactual">
+            <div class="ai-section-title">🔮 If Surfaced Equally</div>
+            <div class="ai-section-text">${escapeHtml(counterfactualAI)}</div>
+          </div>
+        ` : ''}
+      </div>
+    </div>
+  ` : (aiExplanation && typeof aiExplanation === 'string' ? `
     <div class="ai-explanation">
       <span class="ai-icon">✨</span>
       <span class="ai-text">${escapeHtml(aiExplanation)}</span>
     </div>
-  ` : ''
+  ` : '')
   
-  // Build comparison section if we have noise video data
+  // Build comparison section with noise video thumbnail
   const comparisonSection = noiseVideoTitle ? `
-    <div class="comparison-hint" data-noise-title="${escapeHtml(noiseVideoTitle)}" data-noise-channel="${escapeHtml(noiseVideoChannel || '')}">
-      <span class="comparison-label">Alternative to:</span>
-      <span class="comparison-video">${escapeHtml(noiseVideoTitle.slice(0, 40))}${noiseVideoTitle.length > 40 ? '...' : ''}</span>
+    <div class="comparison-section" data-noise-title="${escapeHtml(noiseVideoTitle)}" data-noise-channel="${escapeHtml(noiseVideoChannel || '')}">
+      <div class="comparison-label">🔊 Compared to (Noise Video):</div>
+      <div class="comparison-content">
+        ${noiseThumbnail ? `<img class="noise-thumbnail" src="${noiseThumbnail}" alt="" loading="lazy">` : ''}
+        <div class="comparison-info">
+          <div class="comparison-title">${escapeHtml(noiseVideoTitle.slice(0, 50))}${noiseVideoTitle.length > 50 ? '...' : ''}</div>
+          ${noiseVideoChannel ? `<div class="comparison-channel">by ${escapeHtml(noiseVideoChannel)}</div>` : ''}
+        </div>
+      </div>
     </div>
   ` : ''
 
@@ -205,8 +256,8 @@ function createVideoCard(video) {
         ${subs > 0 ? `<span class="subs-pill" title="Channel subscribers">${formatViews(subs)} subs</span>` : ''}
         ${gap > 0 ? `<span class="badge-gap positive" title="Quality vs visibility gap">+${gap} gap</span>` : ''}
       </div>
-      ${aiSection}
       ${comparisonSection}
+      ${aiSection}
     </div>
     <div class="card-expand-toggle collapsed" data-expand>
       <span class="expand-label">Why it's underexposed</span>
@@ -228,7 +279,7 @@ function createVideoCard(video) {
     </div>
   `
 
-  // Add expand/collapse handler
+  // Add expand/collapse handler for "Why underexposed" section
   const toggleEl = card.querySelector('[data-expand]')
   const detailsEl = card.querySelector('.card-details-expanded')
   if (toggleEl && detailsEl) {
@@ -240,6 +291,32 @@ function createVideoCard(video) {
       toggleEl.querySelector('.expand-chevron').textContent = isCollapsed ? '▾' : '▸'
       detailsEl.style.display = isCollapsed ? 'block' : 'none'
     })
+  }
+
+  // Add expand/collapse handler for AI Analysis section
+  const aiExpandBtn = card.querySelector('[data-ai-expand]')
+  const aiContent = card.querySelector('.ai-analysis-content')
+  if (aiExpandBtn && aiContent) {
+    aiExpandBtn.addEventListener('click', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const isHidden = aiContent.style.display === 'none'
+      aiContent.style.display = isHidden ? 'block' : 'none'
+      aiExpandBtn.textContent = isHidden ? '▾' : '▸'
+    })
+    
+    // Also make the header clickable
+    const aiHeader = card.querySelector('.ai-analysis-header')
+    if (aiHeader) {
+      aiHeader.style.cursor = 'pointer'
+      aiHeader.addEventListener('click', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        const isHidden = aiContent.style.display === 'none'
+        aiContent.style.display = isHidden ? 'block' : 'none'
+        aiExpandBtn.textContent = isHidden ? '▾' : '▸'
+      })
+    }
   }
 
   return card
@@ -576,7 +653,7 @@ function getGridStyles() {
       line-height: 1.4;
     }
     
-    /* AI Explanation */
+    /* AI Explanation - Legacy single-line */
     .ai-explanation {
       display: flex;
       align-items: flex-start;
@@ -598,7 +675,148 @@ function getGridStyles() {
       line-height: 1.4;
     }
     
-    /* Comparison Hint */
+    /* 4-Section AI Analysis Container */
+    .ai-analysis-container {
+      margin-top: 10px;
+      background: rgba(139, 92, 246, 0.08);
+      border-radius: 8px;
+      border: 1px solid rgba(139, 92, 246, 0.2);
+      overflow: hidden;
+    }
+    
+    .ai-analysis-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      background: rgba(139, 92, 246, 0.15);
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+    
+    .ai-analysis-header:hover {
+      background: rgba(139, 92, 246, 0.2);
+    }
+    
+    .ai-analysis-header .ai-icon {
+      font-size: 14px;
+    }
+    
+    .ai-analysis-header .ai-header-text {
+      flex: 1;
+      font-size: 12px;
+      font-weight: 600;
+      color: #c4b5fd;
+    }
+    
+    .ai-analysis-header .ai-expand-btn {
+      font-size: 12px;
+      color: #a78bfa;
+      transition: transform 0.15s ease;
+    }
+    
+    .ai-analysis-content {
+      padding: 12px;
+    }
+    
+    .ai-section {
+      margin-bottom: 14px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid rgba(139, 92, 246, 0.1);
+    }
+    
+    .ai-section:last-child {
+      margin-bottom: 0;
+      padding-bottom: 0;
+      border-bottom: none;
+    }
+    
+    .ai-section-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: #a78bfa;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    
+    .ai-section-text {
+      font-size: 12px;
+      color: #d4d4d4;
+      line-height: 1.5;
+      white-space: pre-wrap;
+    }
+    
+    .ai-section.counterfactual {
+      background: rgba(34, 197, 94, 0.08);
+      padding: 10px;
+      border-radius: 6px;
+      border: none;
+      margin-top: 4px;
+    }
+    
+    .ai-section.counterfactual .ai-section-title {
+      color: #4ade80;
+    }
+    
+    .ai-section.counterfactual .ai-section-text {
+      color: #86efac;
+      font-style: italic;
+    }
+    
+    /* Comparison Section with Noise Video Thumbnail */
+    .comparison-section {
+      margin-top: 10px;
+      padding: 10px;
+      background: rgba(249, 115, 22, 0.08);
+      border-radius: 8px;
+      border: 1px solid rgba(249, 115, 22, 0.2);
+    }
+    
+    .comparison-section .comparison-label {
+      font-size: 10px;
+      font-weight: 600;
+      color: #fb923c;
+      margin-bottom: 8px;
+    }
+    
+    .comparison-section .comparison-content {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    
+    .comparison-section .noise-thumbnail {
+      width: 80px;
+      height: 45px;
+      border-radius: 4px;
+      object-fit: cover;
+      flex-shrink: 0;
+    }
+    
+    .comparison-section .comparison-info {
+      flex: 1;
+      min-width: 0;
+    }
+    
+    .comparison-section .comparison-title {
+      font-size: 12px;
+      color: #fdba74;
+      line-height: 1.3;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    
+    .comparison-section .comparison-channel {
+      font-size: 10px;
+      color: #888;
+      margin-top: 2px;
+    }
+    
+    /* Legacy comparison hint (deprecated) */
     .comparison-hint {
       display: flex;
       align-items: center;
