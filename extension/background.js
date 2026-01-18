@@ -2497,69 +2497,108 @@ async function analyzeHomepageVideos(videoIds, feedContext = {}) {
   const channels = await batchGetChannels([...channelIds])
   const channelMap = new Map(channels.map(c => [c.id, c]))
   
+  // Fetch activities for each channel (FIX: was missing before!)
+  const activitiesMap = new Map()
+  const channelIdList = [...channelIds]
+  
+  // Batch activities fetch - limit to 8 channels to save quota
+  const priorityChannels = channelIdList.slice(0, 8)
+  console.log(`[BiasLens] Fetching activities for ${priorityChannels.length} channels`)
+  
+  await Promise.all(priorityChannels.map(async (chId) => {
+    try {
+      const activities = await getChannelActivities(chId)
+      activitiesMap.set(chId, activities)
+    } catch (err) {
+      activitiesMap.set(chId, [])
+    }
+  }))
+  
   // Analyze each video
   for (const video of videos) {
     if (!video) continue
     
     const channel = channelMap.get(video.snippet?.channelId)
     const videoId = video.id
+    const channelId = video.snippet?.channelId
+    const activities = activitiesMap.get(channelId) || []
     
-    // Calculate bias score using existing infrastructure
+    // Calculate bias score using FULL data now (with activities!)
     const noiseAnalysis = calculateExposureAdvantageScore(channel, {
       viewCount: video.statistics?.viewCount,
       likeCount: video.statistics?.likeCount,
       commentCount: video.statistics?.commentCount,
       duration: video.contentDetails?.duration
-    }, [])
+    }, activities)
+    
+    // Get subscriber count for tier-based tags
+    const subs = parseInt(channel?.statistics?.subscriberCount || '0')
+    const views = parseInt(video.statistics?.viewCount || '0')
+    const videoAgeHours = getVideoAgeHours(video.snippet?.publishedAt)
+    const viewsPerHour = videoAgeHours > 0 ? views / videoAgeHours : views
     
     // Map to bias score format
     const biasScore = noiseAnalysis.totalScore
-    const confidence = 0.7 // Base confidence from API data
+    const confidence = activities.length > 0 ? 0.85 : 0.6 // Higher if we have activities
     
-    // Generate contributions/tags
+    // Generate contributions/tags - IMPROVED: Lower threshold + more factors
     const contributions = []
     
-    if (noiseAnalysis.breakdown.reach.score > 50) {
-      contributions.push({
-        factor: 'Authority Boost',
-        value: Math.round(noiseAnalysis.breakdown.reach.score * 0.35),
-        color: '#06b6d4'
-      })
+    // Channel size contribution (always show for transparency)
+    if (subs >= 10000000) {
+      contributions.push({ factor: 'Mega Channel', value: 35, color: '#dc2626', description: '10M+ subscribers dominates algorithm' })
+    } else if (subs >= 1000000) {
+      contributions.push({ factor: 'Authority Boost', value: 28, color: '#ef4444', description: '1M+ subs get algorithmic advantage' })
+    } else if (subs >= 500000) {
+      contributions.push({ factor: 'High Authority', value: 20, color: '#f97316', description: '500K+ subs compete for visibility' })
+    } else if (subs >= 100000) {
+      contributions.push({ factor: 'Established', value: 12, color: '#f59e0b', description: '100K+ subs has some advantage' })
+    } else if (subs < 50000 && subs > 0) {
+      contributions.push({ factor: 'Small Creator', value: -15, color: '#10b981', description: 'Under 50K - algorithm disadvantage' })
     }
     
-    if (noiseAnalysis.breakdown.velocity.score > 50) {
-      contributions.push({
-        factor: 'Trend Spike',
-        value: Math.round(noiseAnalysis.breakdown.velocity.score * 0.25),
-        color: '#f59e0b'
-      })
+    // Velocity contribution
+    if (viewsPerHour > 50000) {
+      contributions.push({ factor: 'Viral Velocity', value: 25, color: '#8b5cf6', description: 'Extremely fast view accumulation' })
+    } else if (viewsPerHour > 10000) {
+      contributions.push({ factor: 'Trend Spike', value: 18, color: '#a855f7', description: 'High velocity views' })
+    } else if (viewsPerHour > 1000) {
+      contributions.push({ factor: 'Rising Fast', value: 10, color: '#c084fc', description: 'Above average view velocity' })
     }
     
-    if (noiseAnalysis.breakdown.frequency.score > 50) {
-      contributions.push({
-        factor: 'Upload Frequency',
-        value: Math.round(noiseAnalysis.breakdown.frequency.score * 0.20),
-        color: '#8b5cf6'
-      })
+    // Upload frequency (if we have activities)
+    if (activities.length > 0) {
+      const uploadsPerWeek = activities.length / 4 // Approximate (activities are last ~month)
+      if (uploadsPerWeek >= 7) {
+        contributions.push({ factor: 'Daily Poster', value: 15, color: '#06b6d4', description: 'Frequent uploads boost algorithm favor' })
+      } else if (uploadsPerWeek >= 3) {
+        contributions.push({ factor: 'Active Channel', value: 8, color: '#22d3d1', description: 'Regular uploads help visibility' })
+      }
     }
     
-    if (noiseAnalysis.breakdown.recency.score > 50) {
-      contributions.push({
-        factor: 'Recency Boost',
-        value: Math.round(noiseAnalysis.breakdown.recency.score * 0.20),
-        color: '#f97316'
-      })
+    // Recency boost
+    if (videoAgeHours < 24) {
+      contributions.push({ factor: 'Fresh Upload', value: 12, color: '#22c55e', description: 'New videos get temporary boost' })
+    } else if (videoAgeHours < 72) {
+      contributions.push({ factor: 'Recent', value: 6, color: '#4ade80', description: 'Still in newness window' })
     }
     
-    // Sort by value
-    contributions.sort((a, b) => b.value - a.value)
+    // Engagement signals
+    const likeRatio = views > 0 ? parseInt(video.statistics?.likeCount || '0') / views : 0
+    if (likeRatio > 0.05) {
+      contributions.push({ factor: 'High Engagement', value: 10, color: '#f472b6', description: '5%+ like ratio signals quality' })
+    }
     
-    // Generate tags from contributions
+    // Sort by absolute value
+    contributions.sort((a, b) => Math.abs(b.value) - Math.abs(a.value))
+    
+    // Generate tags from top contributions
     const tags = contributions.slice(0, 4).map(c => ({
-      text: `${c.factor} +${c.value}`,
+      text: c.value > 0 ? `${c.factor} +${c.value}` : `${c.factor} ${c.value}`,
       color: c.color,
       key: c.factor.toLowerCase().replace(/\s+/g, '_'),
-      value: c.value
+      value: c.value,
+      description: c.description
     }))
     
     results.push({
@@ -2571,19 +2610,20 @@ async function analyzeHomepageVideos(videoIds, feedContext = {}) {
       confidence,
       scores: {
         aas: noiseAnalysis.totalScore,
-        ms: 0, // Would need thumbnail/title analysis
-        cis: 0  // Would need description analysis
+        channelSize: subs,
+        velocity: Math.round(viewsPerHour),
+        ms: 0,
+        cis: 0
       },
       contributions,
       tags,
       metrics: {
-        views: parseInt(video.statistics?.viewCount || '0'),
-        subs: parseInt(channel?.statistics?.subscriberCount || '0'),
+        views,
+        subs,
         age: getVideoAge(video.snippet?.publishedAt),
-        velocity: noiseAnalysis.rawMetrics?.viewsPerDay > 10000 ? 'high' : 
-                  noiseAnalysis.rawMetrics?.viewsPerDay > 1000 ? 'medium' : 'low',
-        thumbAbuse: 0, // Would need thumbnail analysis
-        sponsorDetected: false // Would need description analysis
+        velocity: viewsPerHour > 10000 ? 'high' : viewsPerHour > 1000 ? 'medium' : 'low',
+        thumbAbuse: 0,
+        sponsorDetected: false
       },
       exposureTier: noiseAnalysis.exposureTier
     })
@@ -2596,6 +2636,16 @@ async function analyzeHomepageVideos(videoIds, feedContext = {}) {
     videos: results,
     feedAnalysis
   }
+}
+
+/**
+ * Get video age in hours
+ */
+function getVideoAgeHours(publishedAt) {
+  if (!publishedAt) return 999999
+  const now = new Date()
+  const published = new Date(publishedAt)
+  return (now - published) / (1000 * 60 * 60)
 }
 
 /**
@@ -2715,49 +2765,133 @@ function calculateFeedAnalysis(videoResults, feedContext = {}) {
 /**
  * Discover silenced videos for a topic
  * Used by Silenced tab
+ * 
+ * FIX: Now uses more specific queries from video titles, not just topic categories
  */
-async function discoverSilencedVideos(topicMap, excludedChannels = [], filters = {}) {
+async function discoverSilencedVideos(topicMap, excludedChannels = [], filters = {}, feedContext = {}) {
   console.log('[BiasLens] Discovering silenced videos for topics:', topicMap)
   
-  // Build search query from topics
-  const topTopics = (topicMap || [])
-    .sort((a, b) => b.weight - a.weight)
-    .slice(0, 3)
-    .map(t => t.name || t)
+  // Build search query - use multiple strategies
+  let query = ''
   
-  if (topTopics.length === 0) {
-    return { videos: [] }
+  // Strategy 1: Use top 3 topic names with keywords
+  const topTopics = (topicMap || [])
+    .sort((a, b) => (b.weight || 0) - (a.weight || 0))
+    .slice(0, 3)
+  
+  if (topTopics.length > 0) {
+    // Use topic keywords for more specific search
+    const keywords = topTopics
+      .flatMap(t => t.keywords || [t.name || t])
+      .slice(0, 5)
+    query = keywords.join(' ')
   }
   
-  const query = topTopics.join(' ')
+  // Strategy 2: Fallback - use feed context titles directly
+  if (!query && feedContext.titles && feedContext.titles.length > 0) {
+    // Extract key words from first few video titles
+    const titleWords = feedContext.titles
+      .slice(0, 3)
+      .join(' ')
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(w => w.length > 3 && !['this', 'that', 'with', 'from', 'have', 'will', 'your', 'what', 'when', 'where', 'which'].includes(w))
+      .slice(0, 6)
+    query = titleWords.join(' ')
+  }
+  
+  // Strategy 3: Ultimate fallback - generic diverse content search
+  if (!query || query.length < 5) {
+    console.warn('[BiasLens] No specific topics found - using diverse content fallback')
+    // Search for educational/informative content from smaller creators
+    query = 'educational tutorial explained documentary independent'
+  }
+  
+  console.log(`[BiasLens] Search query for silenced videos: "${query}"`)
   
   // Use existing noise cancellation engine
   const result = await runNoiseCancellation(query)
   
+  // Check if we got results
+  if (!result || (!result.unmutedVideos && !result.discoveredVideos)) {
+    console.warn('[BiasLens] No silenced videos returned from search')
+    return { videos: [], message: 'No under-represented creators found for this topic' }
+  }
+  
+  const rawVideos = result.unmutedVideos || result.discoveredVideos || []
+  console.log(`[BiasLens] Got ${rawVideos.length} raw silenced videos`)
+  
   // Filter out excluded channels
   const excludedSet = new Set(excludedChannels)
-  const filteredVideos = (result.unmutedVideos || [])
+  const filteredVideos = rawVideos
     .filter(v => !excludedSet.has(v.channelId))
-    .map(v => ({
-      videoId: v.videoId,
-      title: v.title,
-      channel: v.channelTitle,
-      thumbnail: v.thumbnail,
-      qualityScore: Math.round((v.qualityScore || 0.5) * 100),
-      silencedScore: 100 - (v.subscriberCount > 100000 ? 80 : v.subscriberCount > 50000 ? 60 : v.subscriberCount > 10000 ? 40 : 20),
-      exposureGap: Math.round((v.qualityScore || 0.5) * 100) - (v.subscriberCount > 100000 ? 80 : 40),
-      whyGood: v.whySurfaced || ['High quality content', 'Under-represented creator'],
-      whyBuried: [
-        v.subscriberCount < 50000 ? 'Small channel size limits algorithmic reach' : 'Moderate channel size',
-        'Lower velocity than dominant channels'
-      ],
-      views: v.subscriberCount * 10, // Estimate
-      publishedAt: v.publishedAt,
-      duration: 600 // Default 10 min
-    }))
+    .map(v => {
+      const subs = v.subscriberCount || 0
+      
+      // Calculate quality score (heuristic based on engagement proxy)
+      const engagementProxy = v.engagementProxy || 0.5
+      const qualityScore = Math.round(
+        Math.min(100, Math.max(10, 
+          50 + (engagementProxy * 30) + (v.isRisingSignal ? 15 : 0)
+        ))
+      )
+      
+      // Calculate silenced score (how under-exposed)
+      let silencedScore = 80 // Default high
+      if (subs > 500000) silencedScore = 20
+      else if (subs > 100000) silencedScore = 35
+      else if (subs > 50000) silencedScore = 55
+      else if (subs > 10000) silencedScore = 70
+      else silencedScore = 90
+      
+      // Exposure gap = quality - visibility
+      const visibilityScore = 100 - silencedScore
+      const exposureGap = qualityScore - visibilityScore
+      
+      // Build "why good" reasons
+      const whyGood = v.whySurfaced || []
+      if (whyGood.length === 0) {
+        if (engagementProxy > 0.6) whyGood.push('High engagement rate for its reach')
+        if (v.isRisingSignal) whyGood.push('Rising star - growing audience')
+        if (subs < 50000) whyGood.push('Independent creator voice')
+        if (qualityScore > 60) whyGood.push('Quality content signals detected')
+        whyGood.push('Under-represented in algorithmic feeds')
+      }
+      
+      // Build "why buried" reasons
+      const whyBuried = []
+      if (subs < 50000) whyBuried.push('Small channel size limits algorithmic reach')
+      if (subs < 100000) whyBuried.push('Competing against channels with 10-100x more subscribers')
+      whyBuried.push('Lower velocity than dominant channels')
+      whyBuried.push('Algorithm favors proven engagement patterns')
+      
+      return {
+        videoId: v.videoId,
+        title: v.title,
+        channel: v.channelTitle,
+        channelName: v.channelTitle,
+        thumbnail: v.thumbnail || `https://i.ytimg.com/vi/${v.videoId}/mqdefault.jpg`,
+        qualityScore,
+        silencedScore,
+        visibilityScore,
+        exposureGap,
+        whyGood: whyGood.slice(0, 3),
+        whyBuried: whyBuried.slice(0, 2),
+        views: v.viewCount || (subs * 10),
+        subscriberCount: subs,
+        publishedAt: v.publishedAt,
+        duration: v.duration || 600,
+        isRising: v.isRisingSignal || false,
+        exposureTier: v.exposureTier || 'emerging'
+      }
+    })
+  
+  console.log(`[BiasLens] Returning ${filteredVideos.length} filtered silenced videos`)
   
   return {
-    videos: filteredVideos.slice(0, 12)
+    videos: filteredVideos.slice(0, 12),
+    biasSnapshot: result.biasSnapshot,
+    topicConcentration: result.biasSnapshot?.topicConcentration || 0
   }
 }
 
@@ -2775,7 +2909,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   
   // Discover silenced videos
   if (request.action === 'discoverSilenced') {
-    discoverSilencedVideos(request.topicMap, request.excludedChannels, request.filters)
+    discoverSilencedVideos(request.topicMap, request.excludedChannels, request.filters, request.feedContext || {})
       .then(result => sendResponse({ success: true, data: result }))
       .catch(err => sendResponse({ success: false, error: err.message }))
     return true

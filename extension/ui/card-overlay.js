@@ -112,9 +112,22 @@ function createTagsContainer(tags) {
   for (const tag of displayTags) {
     const tagEl = document.createElement('span')
     tagEl.className = 'bias-tag'
-    tagEl.style.setProperty('--tag-color', tag.color || CARD_TAG_COLORS.default)
-    tagEl.textContent = tag.text
-    tagEl.title = tag.description || tag.text
+    
+    // Determine color based on value (negative = green, high positive = red)
+    let color = tag.color || CARD_TAG_COLORS.default
+    if (tag.value !== undefined) {
+      if (tag.value < 0) {
+        color = '#10b981' // Green for under-represented
+      } else if (tag.value > 25) {
+        color = '#ef4444' // Red for high advantage
+      } else if (tag.value > 15) {
+        color = '#f97316' // Orange for medium advantage
+      }
+    }
+    
+    tagEl.style.setProperty('--tag-color', color)
+    tagEl.textContent = tag.text || tag.label || 'Unknown'
+    tagEl.title = tag.description || tag.text || ''
     container.appendChild(tagEl)
   }
   

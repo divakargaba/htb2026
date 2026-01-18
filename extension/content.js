@@ -552,10 +552,16 @@ async function discoverSilencedVideos() {
   try {
     const excludedChannels = feedAnalysisData?.videos?.map(v => v.channelId) || []
     
+    // Get video titles from feed for fallback query building
+    const feedTitles = extractHomepageVideoTitles()
+    
     const response = await chrome.runtime.sendMessage({
       action: 'discoverSilenced',
       topicMap: topicProfile?.topics || [],
       excludedChannels,
+      feedContext: {
+        titles: feedTitles.slice(0, 10) // Pass first 10 titles for query building
+      },
       filters: {
         minViews: 10000,
         minSubs: 1000,
