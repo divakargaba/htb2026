@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Silenced by the Algorithm",
-  "version": "4.0.0",
+  "version": "5.0.0",
   "description": "See what YouTube's algorithm amplifies (Noise) and discover high-quality videos it buries (Silenced). Bias Lens for transparent recommendations.",
   "permissions": [
     "activeTab",
     "storage",
-    "alarms"
+    "alarms",
+    "offscreen"
   ],
   "host_permissions": [
     "https://www.youtube.com/*",
@@ -19,6 +20,10 @@
   "content_scripts": [{
     "matches": ["https://www.youtube.com/*"],
     "js": [
+      "homepage/metrics.js",
+      "homepage/collector.js",
+      "homepage/scorer.js",
+      "homepage/silenced-finder.js",
       "scoring.js",
       "analysis/thumbnail.js",
       "analysis/title.js",
@@ -37,6 +42,13 @@
   }],
   "web_accessible_resources": [{
     "resources": [
+      "homepage/metrics.js",
+      "homepage/collector.js",
+      "homepage/scorer.js",
+      "homepage/silenced-finder.js",
+      "homepage/ytdata-extractor.js",
+      "offscreen/thumbnail-analyzer.html",
+      "offscreen/thumbnail-analyzer.js",
       "scoring.js",
       "analysis/thumbnail.js",
       "analysis/title.js",

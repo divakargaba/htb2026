@@ -656,20 +656,48 @@ function updateAnalysis(analysis) {
   
   feedAnalysis = analysis
   
+  // Handle both old and new data formats
+  const avgBias = analysis.avgBias || analysis.averageBiasScore || 0
+  const totalVideos = analysis.totalVideos || 20
+  
+  // Calculate high bias percentage from biasLevels
+  let highBiasPercent = 0
+  if (analysis.distribution?.high !== undefined) {
+    highBiasPercent = analysis.distribution.high
+  } else if (analysis.biasLevels) {
+    highBiasPercent = Math.round(((analysis.biasLevels.high || 0) / totalVideos) * 100)
+  }
+  
+  // Get channel count
+  const channelCount = analysis.channelConcentration?.topChannels?.length || 
+                       analysis.topChannels?.length || 0
+  
   // Update summary stats
-  updateSummaryStat('avgBias', analysis.avgBias)
-  updateSummaryStat('highBias', `${analysis.distribution?.high || 0}%`)
-  updateSummaryStat('channels', analysis.channelConcentration?.topChannels?.length || 0)
+  updateSummaryStat('avgBias', avgBias)
+  updateSummaryStat('highBias', `${highBiasPercent}%`)
+  updateSummaryStat('channels', channelCount)
   
-  // Update topic bars
-  updateTopicBars(analysis.topicDominance || [])
+  // Update topic bars - handle both formats
+  const topicData = analysis.topicDominance || []
+  updateTopicBars(topicData)
   
-  // Update channel concentration
-  updateChannelChart(analysis.channelConcentration || {})
+  // Update channel concentration - handle new topChannels format
+  const channelData = analysis.channelConcentration || {}
+  if (!channelData.topChannels && analysis.topChannels) {
+    channelData.topChannels = analysis.topChannels.map(c => ({
+      name: c.name,
+      videos: c.count
+    }))
+  }
+  updateChannelChart(channelData)
   
-  // Update quality bars
-  updateQualityBar('manipulation', analysis.manipulationPrevalence || 0)
-  updateQualityBar('commercial', analysis.commercialPrevalence || 0)
+  // Update quality bars - derive from biasLevels if available
+  const manipulationPct = analysis.manipulationPrevalence || 
+    Math.round((analysis.biasLevels?.high || 0) / totalVideos * 100)
+  const commercialPct = analysis.commercialPrevalence || 0
+  
+  updateQualityBar('manipulation', manipulationPct)
+  updateQualityBar('commercial', commercialPct)
   
   // Update recommendations
   updateRecommendations(analysis.recommendations || [])

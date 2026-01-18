@@ -4173,8 +4173,423 @@ async function discoverSilencedVideos(topicMap, excludedChannels = [], filters =
 // ===============================================
 // MESSAGE HANDLING
 // ===============================================
+// ============================================
+// NEW HOMEPAGE PIPELINE - Enricher Functions
+// ============================================
+
+/**
+ * Parse ISO 8601 duration to seconds
+ */
+function parseISO8601DurationBg(duration) {
+  if (!duration) return 0
+  const match = duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/)
+  if (!match) return 0
+  return (parseInt(match[1]) || 0) * 3600 + 
+         (parseInt(match[2]) || 0) * 60 + 
+         (parseInt(match[3]) || 0)
+}
+
+/**
+ * Fetch video details for multiple IDs (batch call)
+ */
+async function fetchVideosDataBatch(videoIds) {
+  if (!videoIds || videoIds.length === 0) return {}
+
+  const url = new URL('https://www.googleapis.com/youtube/v3/videos')
+  url.searchParams.set('part', 'snippet,statistics,contentDetails,topicDetails')
+  url.searchParams.set('id', videoIds.join(','))
+  url.searchParams.set('key', YOUTUBE_API_KEY)
+
+  try {
+    const response = await fetch(url.toString())
+    if (!response.ok) {
+      console.error('[DataEnricher] Videos API error:', response.status)
+      return {}
+    }
+
+    const data = await response.json()
+    const result = {}
+
+    for (const item of (data.items || [])) {
+      result[item.id] = {
+        views: parseInt(item.statistics?.viewCount) || 0,
+        likes: item.statistics?.likeCount ? parseInt(item.statistics.likeCount) : null,
+        comments: item.statistics?.commentCount ? parseInt(item.statistics.commentCount) : null,
+        publishedAt: item.snippet?.publishedAt || '',
+        durationSec: parseISO8601DurationBg(item.contentDetails?.duration),
+        description: item.snippet?.description || '',
+        tags: item.snippet?.tags || [],
+        categoryId: item.snippet?.categoryId || '',
+        topicCategories: item.topicDetails?.topicCategories || [],
+        channelId: item.snippet?.channelId || '',  // Important: Get channelId from API
+        channelTitle: item.snippet?.channelTitle || ''
+      }
+    }
+
+    return result
+  } catch (err) {
+    console.error('[DataEnricher] Videos fetch error:', err)
+    return {}
+  }
+}
+
+/**
+ * Fetch channel details for multiple IDs (batch call)
+ */
+async function fetchChannelsDataBatch(channelIds) {
+  if (!channelIds || channelIds.length === 0) return {}
+
+  const url = new URL('https://www.googleapis.com/youtube/v3/channels')
+  url.searchParams.set('part', 'snippet,statistics')
+  url.searchParams.set('id', channelIds.join(','))
+  url.searchParams.set('key', YOUTUBE_API_KEY)
+
+  try {
+    const response = await fetch(url.toString())
+    if (!response.ok) {
+      console.error('[DataEnricher] Channels API error:', response.status)
+      return {}
+    }
+
+    const data = await response.json()
+    const result = {}
+
+    for (const item of (data.items || [])) {
+      result[item.id] = {
+        subs: parseInt(item.statistics?.subscriberCount) || 0,
+        channelCreatedAt: item.snippet?.publishedAt || '',
+        totalViews: parseInt(item.statistics?.viewCount) || 0,
+        videoCount: parseInt(item.statistics?.videoCount) || 0
+      }
+    }
+
+    return result
+  } catch (err) {
+    console.error('[DataEnricher] Channels fetch error:', err)
+    return {}
+  }
+}
+
+/**
+ * Enrich homepage seeds with YouTube API data
+ */
+async function enrichHomepageSeeds(seeds) {
+  if (!seeds || seeds.length === 0) {
+    console.warn('[DataEnricher] No seeds to enrich')
+    return []
+  }
+
+  console.log(`[DataEnricher] Enriching ${seeds.length} seeds...`)
+  const startTime = Date.now()
+
+  // Extract unique IDs
+  const videoIds = seeds.map(s => s.videoId).filter(Boolean)
+  
+  // First, fetch video data (this also gives us channelId from snippet)
+  const videosData = await fetchVideosDataBatch(videoIds)
+  
+  // #region agent log H7 - Track videos API response
+  fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'background.js:enrichHomepageSeeds:videosData',message:'Videos API response',data:{videoIdsCount:videoIds.length,videosDataCount:Object.keys(videosData).length,sampleEntry:Object.values(videosData)[0]?{views:Object.values(videosData)[0].views,channelId:Object.values(videosData)[0].channelId}:null},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H7'})}).catch(()=>{});
+  // #endregion
+  
+  // Get channelIds from BOTH seeds (if available) and videos API response (more reliable)
+  const channelIdsFromSeeds = seeds.map(s => s.channelId).filter(Boolean)
+  const channelIdsFromApi = Object.values(videosData).map(v => v.channelId).filter(Boolean)
+  const channelIds = [...new Set([...channelIdsFromSeeds, ...channelIdsFromApi])]
+  
+  console.log(`[DataEnricher] Got ${channelIds.length} unique channel IDs (${channelIdsFromSeeds.length} from seeds, ${channelIdsFromApi.length} from API)`)
+  
+  // Then fetch channel data
+  const channelsData = await fetchChannelsDataBatch(channelIds)
+  
+  // #region agent log H7 - Track channels API response
+  fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'background.js:enrichHomepageSeeds:channelsData',message:'Channels API response',data:{channelIdsCount:channelIds.length,channelsDataCount:Object.keys(channelsData).length,sampleEntry:Object.values(channelsData)[0]},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H7'})}).catch(()=>{});
+  // #endregion
+
+  console.log(`[DataEnricher] API calls completed in ${Date.now() - startTime}ms`)
+  console.log(`[DataEnricher] Got ${Object.keys(videosData).length} videos, ${Object.keys(channelsData).length} channels`)
+
+  // Merge data into enriched objects
+  const enrichedVideos = seeds.map(seed => {
+    const videoData = videosData[seed.videoId] || null
+    // Use channelId from seed OR from API response (more reliable)
+    const effectiveChannelId = seed.channelId || videoData?.channelId || ''
+    const channelData = channelsData[effectiveChannelId] || null
+
+    return {
+      // Original seed fields
+      videoId: seed.videoId,
+      title: seed.title || videoData?.channelTitle || '',
+      channelId: effectiveChannelId,  // Use the effective channelId
+      channelName: seed.channelName || videoData?.channelTitle || '',
+      viewCountText: seed.viewCountText,
+      publishedTimeText: seed.publishedTimeText,
+      durationText: seed.durationText,
+      thumbnailUrl: seed.thumbnailUrl,
+      href: seed.href,
+      rank: seed.rank,
+
+      // Enriched stats
+      stats: videoData ? {
+        views: videoData.views,
+        likes: videoData.likes,
+        comments: videoData.comments,
+        publishedAt: videoData.publishedAt,
+        durationSec: videoData.durationSec,
+        description: videoData.description,
+        tags: videoData.tags,
+        categoryId: videoData.categoryId,
+        topicCategories: videoData.topicCategories
+      } : null,
+
+      // Channel data
+      channel: channelData ? {
+        subs: channelData.subs,
+        channelCreatedAt: channelData.channelCreatedAt,
+        totalViews: channelData.totalViews,
+        videoCount: channelData.videoCount
+      } : null
+    }
+  })
+
+  console.log(`[DataEnricher] Enrichment complete in ${Date.now() - startTime}ms`)
+  return enrichedVideos
+}
+
+/**
+ * Find silenced videos for scored homepage videos
+ */
+async function findSilencedForHomepage(scoredVideos) {
+  if (!scoredVideos || scoredVideos.length === 0) return []
+
+  console.log(`[SilencedFinder] Finding silenced for ${Math.min(10, scoredVideos.length)} videos...`)
+  const startTime = Date.now()
+
+  // Constraints
+  const CONSTRAINTS = {
+    subsMin: 1000,
+    subsMax: 100000,
+    viewsMin: 5000,
+    viewsMax: 300000,
+    durationMin: 120
+  }
+
+  // Get top 10 by bias score
+  const top10 = scoredVideos
+    .slice()
+    .sort((a, b) => (b.biasScore || 0) - (a.biasScore || 0))
+    .slice(0, 10)
+
+  // Exclude channels already in feed
+  const excludeChannelIds = scoredVideos.map(v => v.channelId).filter(Boolean)
+
+  // Process in parallel
+  const results = await Promise.all(
+    top10.map(video => findSilencedForSingleVideo(video, CONSTRAINTS, excludeChannelIds))
+  )
+
+  console.log(`[SilencedFinder] Complete in ${Date.now() - startTime}ms`)
+
+  // Filter out failures
+  return results.filter(r => r && r.silencedVideo)
+}
+
+/**
+ * Find silenced counterpart for a single noise video
+ */
+async function findSilencedForSingleVideo(noiseVideo, constraints, excludeChannelIds) {
+  const query = extractQueryKeywordsBg(noiseVideo.title)
+  if (!query) {
+    return { noiseVideoId: noiseVideo.videoId, silencedVideo: null, error: 'No query' }
+  }
+
+  // Search for candidates
+  const url = new URL('https://www.googleapis.com/youtube/v3/search')
+  url.searchParams.set('part', 'snippet')
+  url.searchParams.set('type', 'video')
+  url.searchParams.set('q', query)
+  url.searchParams.set('maxResults', '25')
+  url.searchParams.set('order', 'relevance')
+  url.searchParams.set('key', YOUTUBE_API_KEY)
+
+  try {
+    const response = await fetch(url.toString())
+    if (!response.ok) return { noiseVideoId: noiseVideo.videoId, silencedVideo: null, error: 'Search failed' }
+
+    const data = await response.json()
+    const candidates = (data.items || []).map(item => ({
+      videoId: item.id?.videoId,
+      title: item.snippet?.title || '',
+      channelId: item.snippet?.channelId || '',
+      channelName: item.snippet?.channelTitle || '',
+      thumbnailUrl: item.snippet?.thumbnails?.medium?.url || '',
+      publishedAt: item.snippet?.publishedAt || ''
+    })).filter(v => v.videoId)
+
+    if (candidates.length === 0) {
+      return { noiseVideoId: noiseVideo.videoId, silencedVideo: null, error: 'No candidates' }
+    }
+
+    // Enrich candidates
+    const videoIds = candidates.map(c => c.videoId)
+    const channelIds = [...new Set(candidates.map(c => c.channelId).filter(Boolean))]
+
+    const [videosData, channelsData] = await Promise.all([
+      fetchVideosDataBatch(videoIds),
+      fetchChannelsDataBatch(channelIds)
+    ])
+
+    const enriched = candidates.map(c => ({
+      ...c,
+      stats: videosData[c.videoId] || null,
+      channel: channelsData[c.channelId] || null
+    }))
+
+    // Filter by constraints
+    const filtered = enriched.filter(c => {
+      if (!c.stats || !c.channel) return false
+      if (excludeChannelIds.includes(c.channelId)) return false
+      if (c.channel.subs < constraints.subsMin || c.channel.subs > constraints.subsMax) return false
+      if (c.stats.views < constraints.viewsMin || c.stats.views > constraints.viewsMax) return false
+      if (c.stats.durationSec < constraints.durationMin) return false
+      if (c.title.toLowerCase().includes('#shorts')) return false
+      return true
+    })
+
+    if (filtered.length === 0) {
+      return { noiseVideoId: noiseVideo.videoId, silencedVideo: null, error: 'All filtered' }
+    }
+
+    // Score and pick best
+    const scored = filtered.map(c => ({
+      ...c,
+      qualityScore: computeQualityScoreBg(c)
+    })).sort((a, b) => b.qualityScore - a.qualityScore)
+
+    const best = scored[0]
+
+    return {
+      noiseVideoId: noiseVideo.videoId,
+      silencedVideo: best,
+      whySilenced: {
+        subs: best.channel?.subs,
+        views: best.stats?.views,
+        likeRate: best.stats?.likes && best.stats?.views 
+          ? Math.round((best.stats.likes / best.stats.views) * 10000) / 100 
+          : null
+      },
+      qualityScore: best.qualityScore,
+      query
+    }
+  } catch (err) {
+    console.error('[SilencedFinder] Error:', err)
+    return { noiseVideoId: noiseVideo.videoId, silencedVideo: null, error: err.message }
+  }
+}
+
+/**
+ * Extract keywords from title for search query
+ */
+function extractQueryKeywordsBg(title) {
+  if (!title) return ''
+  const stopWords = new Set([
+    'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+    'of', 'with', 'by', 'from', 'is', 'it', 'this', 'that', 'be', 'are',
+    'was', 'were', 'been', 'have', 'has', 'had', 'do', 'does', 'did',
+    'will', 'would', 'could', 'should', 'may', 'might', 'must', 'can'
+  ])
+  const cleaned = title.toLowerCase().replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim()
+  const words = cleaned.split(' ').filter(w => w.length > 2 && !stopWords.has(w))
+  return words.slice(0, 4).join(' ') || title.slice(0, 30)
+}
+
+/**
+ * Compute quality score for a candidate video
+ */
+function computeQualityScoreBg(candidate) {
+  if (!candidate.stats || !candidate.channel) return 0
+
+  const views = candidate.stats.views
+  const likes = candidate.stats.likes
+  const comments = candidate.stats.comments
+  const subs = candidate.channel.subs
+  const durationSec = candidate.stats.durationSec
+
+  const likeRate = likes !== null && views > 0 ? likes / views : 0.03
+  const likeScore = Math.min(1, likeRate / 0.05) * 30
+
+  const commentRate = comments !== null && views > 0 ? comments / views : 0.001
+  const commentScore = Math.min(1, commentRate / 0.005) * 15
+
+  const viewsPerSub = subs > 0 ? views / subs : 0
+  const viralScore = Math.min(1, viewsPerSub / 2) * 20
+
+  const durationMin = durationSec / 60
+  let durationScore = 0
+  if (durationMin >= 6 && durationMin <= 20) {
+    durationScore = 15
+  } else if (durationMin >= 2) {
+    durationScore = Math.max(0, 15 - Math.abs(durationMin - 13) / 2)
+  }
+
+  const smallChannelBonus = subs < 50000 ? 10 : (subs < 100000 ? 5 : 0)
+
+  return Math.max(0, Math.min(100, likeScore + commentScore + viralScore + durationScore + smallChannelBonus))
+}
+
+// Offscreen document management
+let offscreenCreated = false
+
+async function ensureOffscreenDocument() {
+  if (offscreenCreated) return
+
+  try {
+    await chrome.offscreen.createDocument({
+      url: 'offscreen/thumbnail-analyzer.html',
+      reasons: ['DOM_PARSER'],
+      justification: 'Analyze thumbnail images for clickbait signals'
+    })
+    offscreenCreated = true
+    console.log('[Background] Offscreen document created')
+  } catch (err) {
+    if (err.message.includes('already exists')) {
+      offscreenCreated = true
+    } else {
+      console.error('[Background] Failed to create offscreen document:', err)
+    }
+  }
+}
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  // Homepage analysis
+  // NEW PIPELINE: Homepage seeds enrichment
+  if (request.type === 'HOMEPAGE_SEEDS') {
+    enrichHomepageSeeds(request.seeds)
+      .then(enrichedVideos => sendResponse({ success: true, enrichedVideos }))
+      .catch(err => sendResponse({ success: false, error: err.message }))
+    return true
+  }
+
+  // NEW PIPELINE: Thumbnail analysis via offscreen
+  if (request.type === 'ANALYZE_THUMBNAILS') {
+    ensureOffscreenDocument()
+      .then(() => chrome.runtime.sendMessage({
+        type: 'ANALYZE_THUMBNAILS',
+        thumbnails: request.thumbnails
+      }))
+      .then(response => sendResponse(response))
+      .catch(err => sendResponse({ success: false, error: err.message }))
+    return true
+  }
+
+  // NEW PIPELINE: Find silenced videos
+  if (request.type === 'FIND_SILENCED') {
+    findSilencedForHomepage(request.scoredVideos)
+      .then(pairs => sendResponse({ success: true, pairs }))
+      .catch(err => sendResponse({ success: false, error: err.message }))
+    return true
+  }
+
+  // Homepage analysis (legacy - kept for compatibility)
   if (request.action === 'analyzeHomepage') {
     analyzeHomepageVideos(request.videoIds, request.feedContext)
       .then(result => sendResponse({ success: true, data: result }))

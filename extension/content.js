@@ -349,6 +349,11 @@ function showNoiseView() {
     window.BiasCardOverlay.processAllCards()
   }
   
+  // DON'T re-analyze - use cached data if available
+  if (feedAnalysisData && window.BiasCardOverlay) {
+    updateBiasLensUIWithAnalysis(feedAnalysisData)
+  }
+  
   if (window.BiasTabBar) {
     window.BiasTabBar.updateHint('Showing YouTube\'s recommendations with bias analysis')
   }
@@ -364,9 +369,16 @@ function showSilencedView() {
   if (window.SilencedGrid) {
     window.SilencedGrid.show()
     
-    if (silencedVideosData) {
-      window.SilencedGrid.updateVideos(silencedVideosData)
+    // Use silencedPairs from the new pipeline OR silencedVideosData from legacy
+    const silencedToShow = silencedPairs?.length > 0 
+      ? silencedPairs.map(p => p.silencedVideo).filter(Boolean)
+      : silencedVideosData;
+    
+    if (silencedToShow && silencedToShow.length > 0) {
+      console.log(`[BiasLens] Showing ${silencedToShow.length} cached silenced videos`)
+      window.SilencedGrid.updateVideos(silencedToShow)
     } else {
+      // Only discover if we have NO cached data at all
       window.SilencedGrid.showLoading()
       discoverSilencedVideos()
     }
@@ -378,9 +390,24 @@ function showSilencedView() {
 }
 
 // ============================================
-// HOMEPAGE BIAS LENS - Analysis
+// HOMEPAGE BIAS LENS - Analysis (NEW PIPELINE)
 // ============================================
 
+// Stored analysis data
+let homepageSeeds = []
+let enrichedVideos = []
+let scoredVideos = []
+let silencedPairs = []
+let thumbnailFeatures = {}
+
+/**
+ * New homepage analysis pipeline:
+ * 1. Collect 20 seeds from ytInitialData (fast)
+ * 2. Send to background for enrichment (parallel API calls)
+ * 3. Analyze thumbnails in offscreen (parallel)
+ * 4. Score videos with BiasScorer
+ * 5. Find silenced counterparts (parallel)
+ */
 async function analyzeHomepageFeed() {
   if (isAnalyzing) {
     console.log('[BiasLens] Analysis already in progress')
@@ -388,45 +415,143 @@ async function analyzeHomepageFeed() {
   }
   
   isAnalyzing = true
-  console.log('[BiasLens] Starting homepage analysis...')
+  console.log('[BiasLens] 🚀 Starting new homepage analysis pipeline...')
+  const startTime = Date.now()
   
   if (window.BiasTabBar) {
-    window.BiasTabBar.updateHint('Analyzing feed...')
+    window.BiasTabBar.updateHint('Collecting videos...')
   }
   
   try {
-    feedVideoIds = extractHomepageVideoIds()
-    console.log(`[BiasLens] Found ${feedVideoIds.length} videos on page`)
-    
-    if (feedVideoIds.length === 0) {
-      console.warn('[BiasLens] No videos found on page')
+    // Step 1: Collect seeds from ytInitialData (not DOM)
+    if (!window.HomepageCollector) {
+      console.error('[BiasLens] HomepageCollector not loaded')
       isAnalyzing = false
       return
     }
+
+    const { seeds, error: collectError } = await window.HomepageCollector.collect()
     
-    const videoTitles = extractHomepageVideoTitles()
-    if (window.TopicAnalyzer) {
-      topicProfile = window.TopicAnalyzer.buildTopicProfile(
-        videoTitles.map((title, i) => ({ title, videoId: feedVideoIds[i] }))
-      )
-    }
+    // #region agent log H2
+    fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'content.js:analyzeHomepageFeed',message:'Collection result',data:{seedCount:seeds?.length,error:collectError},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H2'})}).catch(()=>{});
+    // #endregion
     
-    const response = await safeSendMessage({
-      action: 'analyzeHomepage',
-      videoIds: feedVideoIds,
-      feedContext: {
-        topics: topicProfile?.topics || []
+    if (collectError || !seeds || seeds.length === 0) {
+      console.error('[BiasLens] Failed to collect seeds:', collectError)
+      // Fallback to DOM scraping
+      // #region agent log H2
+      fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'content.js:fallback',message:'Using DOM fallback',data:{},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H2'})}).catch(()=>{});
+      // #endregion
+      const fallbackIds = extractHomepageVideoIdsFallback()
+      // #region agent log H2
+      fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'content.js:fallbackResult',message:'DOM fallback result',data:{fallbackCount:fallbackIds.length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H2'})}).catch(()=>{});
+      // #endregion
+      if (fallbackIds.length > 0) {
+        console.log('[BiasLens] Using DOM fallback, got', fallbackIds.length, 'IDs')
+        homepageSeeds = fallbackIds.map((id, i) => ({ videoId: id, rank: i + 1 }))
+      } else {
+        isAnalyzing = false
+        return
       }
-    })
-    
-    if (response && response.success) {
-      feedAnalysisData = response.data
-      updateBiasLensUIWithAnalysis(response.data)
-      console.log('[BiasLens] Homepage analysis complete')
-    } else if (response) {
-      console.error('[BiasLens] Analysis failed:', response.error)
     } else {
-      console.warn('[BiasLens] No response from background - extension may need reload')
+      homepageSeeds = seeds
+    }
+
+    console.log(`[BiasLens] Collected ${homepageSeeds.length} seeds in ${Date.now() - startTime}ms`)
+    feedVideoIds = homepageSeeds.map(s => s.videoId)
+
+    if (window.BiasTabBar) {
+      window.BiasTabBar.updateHint('Enriching data...')
+    }
+
+    // Step 2: Send to background for enrichment
+    const enrichResponse = await safeSendMessage({
+      type: 'HOMEPAGE_SEEDS',
+      seeds: homepageSeeds
+    })
+
+    if (!enrichResponse?.success) {
+      console.error('[BiasLens] Enrichment failed:', enrichResponse?.error)
+      isAnalyzing = false
+      return
+    }
+
+    enrichedVideos = enrichResponse.enrichedVideos || []
+    console.log(`[BiasLens] Enriched ${enrichedVideos.length} videos in ${Date.now() - startTime}ms`)
+
+    // Step 3: Request thumbnail analysis (parallel with scoring)
+    const thumbnailUrls = homepageSeeds
+      .filter(s => s.thumbnailUrl)
+      .map(s => ({ videoId: s.videoId, url: s.thumbnailUrl }))
+
+    const thumbnailPromise = safeSendMessage({
+      type: 'ANALYZE_THUMBNAILS',
+      thumbnails: thumbnailUrls
+    }).catch(err => {
+      console.warn('[BiasLens] Thumbnail analysis failed:', err)
+      return { success: false }
+    })
+
+    if (window.BiasTabBar) {
+      window.BiasTabBar.updateHint('Computing bias scores...')
+    }
+
+    // Step 4: Score videos with BiasScorer (don't wait for thumbnails yet)
+    if (window.BiasScorer) {
+      // #region agent log H8 - Before scoring
+      const sampleEnriched = enrichedVideos[0];
+      fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'content.js:beforeScoring',message:'Sample enriched video before scoring',data:{hasStats:!!sampleEnriched?.stats,hasChannel:!!sampleEnriched?.channel,statsViews:sampleEnriched?.stats?.views,statsLikes:sampleEnriched?.stats?.likes,channelSubs:sampleEnriched?.channel?.subs,title:sampleEnriched?.title?.slice(0,30)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H8'})}).catch(()=>{});
+      // #endregion
+      
+      // First pass without thumbnails for speed
+      scoredVideos = window.BiasScorer.score(enrichedVideos, {})
+      
+      // #region agent log H8 - After scoring
+      const sampleScored = scoredVideos[0];
+      fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'content.js:afterScoring',message:'Sample scored video after scoring',data:{biasScore:sampleScored?.biasScore,confidence:sampleScored?.confidence,breakdown:sampleScored?.breakdown,metrics:sampleScored?.metrics?{views:sampleScored.metrics.views,subs:sampleScored.metrics.subs,ageHours:Math.round(sampleScored.metrics.ageHours),viewsPerHour:Math.round(sampleScored.metrics.viewsPerHour)}:null},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H8'})}).catch(()=>{});
+      // #endregion
+      
+      // Update UI immediately with initial scores
+      feedAnalysisData = buildAnalysisData(scoredVideos)
+      updateBiasLensUIWithAnalysis(feedAnalysisData)
+      console.log(`[BiasLens] Initial scores computed in ${Date.now() - startTime}ms`)
+    }
+
+    // Wait for thumbnail analysis to complete
+    const thumbResponse = await thumbnailPromise
+    if (thumbResponse?.success && thumbResponse?.results) {
+      thumbnailFeatures = thumbResponse.results
+      // Re-score with thumbnail data for more accurate CM scores
+      scoredVideos = window.BiasScorer.score(enrichedVideos, thumbnailFeatures)
+      feedAnalysisData = buildAnalysisData(scoredVideos)
+      updateBiasLensUIWithAnalysis(feedAnalysisData)
+      console.log(`[BiasLens] Re-scored with thumbnails in ${Date.now() - startTime}ms`)
+    }
+
+    if (window.BiasTabBar) {
+      window.BiasTabBar.updateHint('Finding silenced voices...')
+    }
+
+    // Step 5: Find silenced counterparts (parallel)
+    const silencedResponse = await safeSendMessage({
+      type: 'FIND_SILENCED',
+      scoredVideos: scoredVideos.slice(0, 10)
+    })
+
+    if (silencedResponse?.success && silencedResponse?.pairs) {
+      silencedPairs = silencedResponse.pairs
+      console.log(`[BiasLens] Found ${silencedPairs.length} silenced pairs in ${Date.now() - startTime}ms`)
+      
+      // Update silenced grid
+      if (window.SilencedGrid) {
+        window.SilencedGrid.updateVideos(silencedPairs.map(p => p.silencedVideo).filter(Boolean))
+      }
+    }
+
+    console.log(`[BiasLens] ✅ Full analysis complete in ${Date.now() - startTime}ms`)
+    
+    if (window.BiasTabBar) {
+      window.BiasTabBar.updateHint('')
     }
     
   } catch (error) {
@@ -436,7 +561,46 @@ async function analyzeHomepageFeed() {
   isAnalyzing = false
 }
 
-function extractHomepageVideoIds() {
+/**
+ * Build analysis data from scored videos
+ */
+function buildAnalysisData(scored) {
+  if (!scored || scored.length === 0) return null
+
+  const avgBias = Math.round(scored.reduce((sum, v) => sum + (v.biasScore || 0), 0) / scored.length)
+  
+  // Count channels
+  const channelCounts = {}
+  for (const v of scored) {
+    channelCounts[v.channelName] = (channelCounts[v.channelName] || 0) + 1
+  }
+  const topChannels = Object.entries(channelCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([name, count]) => ({ name, count }))
+
+  // Get bias level distribution
+  const biasLevels = { high: 0, moderate: 0, low: 0, minimal: 0 }
+  for (const v of scored) {
+    const level = window.BiasScorer?.getBiasLevel(v.biasScore) || 'moderate'
+    biasLevels[level.toLowerCase()]++
+  }
+
+  return {
+    videos: scored,
+    summary: {
+      averageBiasScore: avgBias,
+      topChannels,
+      biasLevels,
+      totalVideos: scored.length
+    }
+  }
+}
+
+/**
+ * Fallback DOM extraction (only if ytInitialData fails)
+ */
+function extractHomepageVideoIdsFallback() {
   const videoIds = []
   const seen = new Set()
   
@@ -453,7 +617,7 @@ function extractHomepageVideoIds() {
       const href = link.href || ''
       const match = href.match(/[?&]v=([^&]+)/)
       
-      if (match && !seen.has(match[1])) {
+      if (match && !seen.has(match[1]) && videoIds.length < 20) {
         seen.add(match[1])
         videoIds.push(match[1])
       }
@@ -463,77 +627,169 @@ function extractHomepageVideoIds() {
   return videoIds
 }
 
-function extractHomepageVideoTitles() {
-  const titles = []
+/**
+ * Trigger a fresh analysis (for refresh button)
+ */
+async function refreshHomepageAnalysis() {
+  // Clear cached data
+  homepageSeeds = []
+  enrichedVideos = []
+  scoredVideos = []
+  silencedPairs = []
+  thumbnailFeatures = {}
+  feedAnalysisData = null
   
-  const titleElements = document.querySelectorAll('#video-title, .ytd-rich-grid-media #video-title')
-  
-  for (const el of titleElements) {
-    const title = el.textContent?.trim()
-    if (title) {
-      titles.push(title)
-    }
-  }
-  
-  return titles
+  // Re-analyze
+  await analyzeHomepageFeed()
 }
 
 function updateBiasLensUIWithAnalysis(data) {
+  if (!data) return
+  
   if (window.BiasCardOverlay && data.videos) {
     const scores = {}
     for (const video of data.videos) {
+      // Convert breakdown to tags
+      const tags = breakdownToTags(video.breakdown)
+      
       scores[video.videoId] = {
-        biasScore: video.biasScore,
-        confidence: video.confidence,
-        tags: video.tags,
-        scores: video.scores,
-        contributions: video.contributions,
+        biasScore: video.biasScore || 0,
+        confidence: (video.confidence || 70) / 100, // normalize to 0-1
+        tags,
+        breakdown: video.breakdown,
         metrics: video.metrics
       }
     }
+    
+    // #region agent log H9 - What's being sent to card overlay
+    const sampleVideoId = Object.keys(scores)[0];
+    const sampleScore = scores[sampleVideoId];
+    fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'content.js:updateBiasLensUIWithAnalysis',message:'Sending scores to card overlay',data:{totalScores:Object.keys(scores).length,sampleVideoId,sampleScore:sampleScore?{biasScore:sampleScore.biasScore,confidence:sampleScore.confidence,hasTags:sampleScore.tags?.length,hasBreakdown:!!sampleScore.breakdown,hasMetrics:!!sampleScore.metrics,metricsViews:sampleScore.metrics?.views,metricsSubs:sampleScore.metrics?.subs}:null},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H9'})}).catch(()=>{});
+    // #endregion
+    
     window.BiasCardOverlay.setScores(scores)
   }
   
-  if (window.BiasPanel && data.feedAnalysis) {
-    const recommendations = generateBiasLensRecommendations(data.feedAnalysis)
+  if (window.BiasPanel && data.summary) {
+    const recommendations = generateBiasLensRecommendations(data.summary)
     
     window.BiasPanel.updateAnalysis({
-      ...data.feedAnalysis,
+      ...data.summary,
       recommendations
     })
   }
   
   if (window.BiasTabBar) {
-    const highBiasCount = data.videos?.filter(v => v.biasScore >= 70).length || 0
-    window.BiasTabBar.updateCounts(data.videos?.length || 0, '?')
-    window.BiasTabBar.updateHint(`${highBiasCount} high-bias videos in your feed`)
+    const highBiasCount = data.videos?.filter(v => (v.biasScore || 0) >= 70).length || 0
+    const silencedCount = silencedPairs?.length || 0
+    window.BiasTabBar.updateCounts(data.videos?.length || 0, silencedCount)
+    window.BiasTabBar.updateHint(`${highBiasCount} high-bias videos detected`)
   }
 }
 
-function generateBiasLensRecommendations(analysis) {
+/**
+ * Convert bias breakdown to displayable tags
+ */
+function breakdownToTags(breakdown) {
+  if (!breakdown) return []
+  
+  const tags = []
+  const thresholds = { high: 60, medium: 40 }
+  
+  // Map breakdown codes to human-readable labels and colors
+  const labelMap = {
+    EA: { label: 'High Exposure', description: 'Significant algorithmic advantage', color: '#ef4444' },
+    CM: { label: 'Click Magnet', description: 'High clickbait signals', color: '#f97316' },
+    RP: { label: 'Retention Bait', description: 'Optimized for retention', color: '#8b5cf6' },
+    EN: { label: 'Engagement Push', description: 'High engagement signals', color: '#3b82f6' },
+    TR: { label: 'Topic Cluster', description: 'Part of topic reinforcement', color: '#06b6d4' },
+    CI: { label: 'Commercial', description: 'Commercial influence detected', color: '#65a30d' }
+  }
+  
+  // Sort by value, descending
+  const sorted = Object.entries(breakdown)
+    .filter(([key]) => labelMap[key])
+    .sort((a, b) => b[1] - a[1])
+  
+  // Add tags for high scores
+  for (const [key, value] of sorted) {
+    if (value >= thresholds.high && tags.length < 3) {
+      const info = labelMap[key]
+      tags.push({
+        label: info.label,
+        description: `${info.description} (${value}%)`,
+        color: info.color,
+        value
+      })
+    }
+  }
+  
+  // If no high scores, show the top one as medium
+  if (tags.length === 0 && sorted.length > 0) {
+    const [key, value] = sorted[0]
+    if (value >= thresholds.medium) {
+      const info = labelMap[key]
+      tags.push({
+        label: info.label,
+        description: `${info.description} (${value}%)`,
+        color: info.color,
+        value
+      })
+    }
+  }
+  
+  return tags
+}
+
+function generateBiasLensRecommendations(summary) {
   const recommendations = []
   
-  if (analysis.distribution?.high > 60) {
+  if (!summary) return recommendations
+  
+  // Check bias level distribution
+  const biasLevels = summary.biasLevels || {}
+  const totalVideos = summary.totalVideos || 1
+  const highBiasPercent = Math.round(((biasLevels.high || 0) / totalVideos) * 100)
+  
+  if (highBiasPercent > 50) {
     recommendations.push({
       type: 'high_bias',
-      message: `${analysis.distribution.high}% of your feed has high algorithmic advantage scores`,
+      message: `${highBiasPercent}% of your feed has high algorithmic advantage scores`,
       severity: 'high'
     })
   }
   
-  if (analysis.channelConcentration?.top5Share > 50) {
-    recommendations.push({
-      type: 'channel_concentration',
-      message: `Top 5 channels make up ${analysis.channelConcentration.top5Share}% of your feed`,
-      severity: 'medium'
-    })
+  // Check channel concentration
+  const topChannels = summary.topChannels || []
+  if (topChannels.length > 0) {
+    const top5Videos = topChannels.slice(0, 5).reduce((sum, c) => sum + c.count, 0)
+    const top5Share = Math.round((top5Videos / totalVideos) * 100)
+    
+    if (top5Share > 50) {
+      recommendations.push({
+        type: 'channel_concentration',
+        message: `Top 5 channels make up ${top5Share}% of your feed`,
+        severity: 'medium'
+      })
+    }
   }
   
-  if (analysis.avgBias > 60) {
+  // Check average bias
+  const avgBias = summary.averageBiasScore || 0
+  if (avgBias > 60) {
     recommendations.push({
       type: 'avg_bias',
       message: 'Your feed is dominated by algorithmically advantaged content',
       severity: 'medium'
+    })
+  }
+  
+  // Add silenced discovery recommendation
+  if (silencedPairs && silencedPairs.length > 0) {
+    recommendations.push({
+      type: 'silenced_found',
+      message: `Found ${silencedPairs.length} high-quality videos being silenced`,
+      severity: 'info'
     })
   }
   

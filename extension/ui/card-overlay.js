@@ -440,26 +440,11 @@ function addOverlayToCard(card, scoreData) {
   }
   
   if (!scoreData) {
-    // Generate mock score for testing UI (hash-based for consistency)
-    const hash = videoData.videoId.split('').reduce((a, b) => ((a << 5) - a) + b.charCodeAt(0), 0)
-    const mockScore = Math.abs(hash % 100)
-    
-    // Generate mock tags based on score
-    const mockTags = []
-    if (mockScore > 70) mockTags.push({ label: 'High Exposure', color: '#ef4444' })
-    if (mockScore > 50) mockTags.push({ label: 'Trending', color: '#f97316' })
-    if (mockScore < 30) mockTags.push({ label: 'Under-exposed', color: '#10b981' })
-    if (Math.abs(hash) % 3 === 0) mockTags.push({ label: 'Click Magnet', color: '#8b5cf6' })
-    if (Math.abs(hash) % 4 === 0) mockTags.push({ label: 'High Authority', color: '#3b82f6' })
-    
-    scoreData = {
-      biasScore: mockScore,
-      confidence: 0.7,
-      tags: mockTags.slice(0, 3)
-    }
-    
-    // Cache the mock score
-    videoScores.set(videoData.videoId, scoreData)
+    // NO MOCK DATA - only show overlays for videos with real computed scores
+    // If no score data, don't inject overlay at all
+    // The card will get processed when real scores arrive via setScores()
+    card.removeAttribute(PROCESSED_ATTR) // Allow re-processing when scores arrive
+    return
   }
   
   // Find injection point

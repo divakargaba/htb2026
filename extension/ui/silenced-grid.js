@@ -93,49 +93,97 @@ function createGridElement() {
 
 /**
  * Create a video card element
+ * Handles both legacy format and new SilencedFinder format
  */
 function createVideoCard(video) {
   const card = document.createElement('div')
   card.className = 'silenced-card'
-  card.dataset.videoId = video.videoId
   
-  // Calculate gap display
-  const gap = video.exposureGap || (video.qualityScore - video.visibilityScore)
-  const gapSign = gap >= 0 ? '+' : ''
+  // Extract data - support both old and new formats
+  const videoId = video.videoId || video.silencedVideo?.videoId
+  const title = video.title || video.silencedVideo?.title || 'Unknown'
+  const channelName = video.channel || video.channelName || video.silencedVideo?.channelName || 'Unknown Channel'
+  const thumbnail = video.thumbnail || video.thumbnailUrl || video.silencedVideo?.thumbnailUrl || 
+                   (videoId ? `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg` : '')
+  
+  // Get stats from either format
+  const stats = video.stats || video.silencedVideo?.stats || {}
+  const channel = video.channel || video.silencedVideo?.channel || {}
+  const views = stats.views || video.views || 0
+  const durationSec = stats.durationSec || video.duration || 0
+  const publishedAt = stats.publishedAt || video.publishedAt || video.silencedVideo?.publishedAt || ''
+  const subs = channel.subs || video.subs || 0
+  
+  // Quality score
+  const qualityScore = video.qualityScore || 0
+  
+  // Why silenced data
+  const whySilenced = video.whySilenced || {}
+  
+  // Generate "why good" and "why buried" from data
+  const whyGood = []
+  const whyBuried = []
+  
+  // Generate reasons from metrics
+  if (whySilenced.likeRate && whySilenced.likeRate > 3) {
+    whyGood.push(`${whySilenced.likeRate}% like rate`)
+  } else if (stats.likes && views > 0) {
+    const likeRate = Math.round((stats.likes / views) * 1000) / 10
+    if (likeRate > 3) whyGood.push(`${likeRate}% like rate`)
+  }
+  
+  if (subs > 0 && subs < 50000) {
+    whyGood.push('Small creator')
+  } else if (subs > 0 && subs < 100000) {
+    whyGood.push('Growing channel')
+  }
+  
+  if (durationSec > 600) {
+    whyGood.push('In-depth content')
+  }
+  
+  // Why buried
+  if (subs < 100000) {
+    whyBuried.push(`Only ${formatViews(subs)} subscribers`)
+  }
+  if (views < 100000 && qualityScore > 50) {
+    whyBuried.push('High quality, low reach')
+  } else {
+    whyBuried.push('Lower algorithmic advantage')
+  }
+  
+  card.dataset.videoId = videoId
   
   card.innerHTML = `
-    <a href="https://www.youtube.com/watch?v=${video.videoId}" class="card-link" target="_blank">
+    <a href="https://www.youtube.com/watch?v=${videoId}" class="card-link" target="_blank">
       <div class="card-thumbnail">
-        <img src="${video.thumbnail || `https://i.ytimg.com/vi/${video.videoId}/mqdefault.jpg`}" alt="" loading="lazy">
-        <span class="card-duration">${formatDuration(video.duration)}</span>
+        <img src="${thumbnail}" alt="" loading="lazy" onerror="this.src='https://i.ytimg.com/vi/${videoId}/mqdefault.jpg'">
+        <span class="card-duration">${formatDuration(durationSec)}</span>
       </div>
       <div class="card-details">
-        <div class="card-title">${escapeHtml(video.title)}</div>
-        <div class="card-channel">${escapeHtml(video.channel || video.channelName)}</div>
+        <div class="card-title">${escapeHtml(title)}</div>
+        <div class="card-channel">${escapeHtml(channelName)}</div>
         <div class="card-meta">
-          ${formatViews(video.views)} views · ${formatAge(video.publishedAt)}
+          ${formatViews(views)} views · ${formatAge(publishedAt)} · ${formatViews(subs)} subs
         </div>
       </div>
     </a>
     <div class="silenced-scores">
-      <span class="quality-pill" title="Quality Score: How good the content is">
-        Quality ${video.qualityScore || '--'}
+      <span class="quality-pill" title="Quality Score: How good the content is based on engagement and metrics">
+        Quality ${qualityScore}
       </span>
-      <span class="silenced-pill" title="Silenced Score: How under-exposed it is">
-        Silenced ${video.silencedScore || '--'}
-      </span>
-      <span class="gap-pill ${gap >= 0 ? 'positive' : 'negative'}" title="Exposure Gap: Quality minus Visibility">
-        Gap ${gapSign}${gap || 0}
+      <span class="subs-pill" title="Subscriber count: Under 100K = silenced threshold">
+        ${formatViews(subs)} subs
       </span>
     </div>
     <div class="silenced-tags">
-      ${(video.whyGood || []).slice(0, 2).map(reason => 
+      ${whyGood.slice(0, 3).map(reason => 
         `<span class="silenced-tag positive">${escapeHtml(reason)}</span>`
       ).join('')}
     </div>
     <div class="silenced-reason">
       <span class="reason-label">Why buried:</span>
-      <span class="reason-text">${escapeHtml((video.whyBuried || [])[0] || 'Lower algorithmic advantage signals')}</span>
+      <span class="reason-text">${escapeHtml(whyBuried[0] || 'Lower algorithmic advantage signals')}</span>
     </div>
   `
   
@@ -446,6 +494,11 @@ function getGridStyles() {
       color: #8b5cf6;
     }
     
+    .subs-pill {
+      background: rgba(59, 130, 246, 0.2);
+      color: #3b82f6;
+    }
+    
     .gap-pill {
       background: rgba(255, 255, 255, 0.1);
       color: #888;
@@ -747,6 +800,13 @@ function updateVideos(videos) {
   if (silencedVideos.length === 0) {
     // Show empty state
     if (emptyEl) emptyEl.style.display = 'flex'
+    // Reset stats to show 0
+    const totalEl = gridElement.querySelector('#silenced-total')
+    const avgQualityEl = gridElement.querySelector('#silenced-avg-quality')
+    const avgGapEl = gridElement.querySelector('#silenced-avg-gap')
+    if (totalEl) totalEl.textContent = '0'
+    if (avgQualityEl) avgQualityEl.textContent = '--'
+    if (avgGapEl) avgGapEl.textContent = '+0'
     return
   }
   
