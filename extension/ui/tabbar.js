@@ -49,7 +49,9 @@ function createTabBarElement() {
           </svg>
         </span>
         <span class="bias-tab-label">Noise</span>
-        <span class="bias-tab-count" id="noise-count"></span>
+        <span class="bias-tab-count loading" id="noise-count">
+          <span class="count-spinner"></span>
+        </span>
       </button>
       <button class="bias-tab" data-tab="${TABS.SILENCED}">
         <span class="bias-tab-icon">
@@ -60,7 +62,9 @@ function createTabBarElement() {
           </svg>
         </span>
         <span class="bias-tab-label">Silenced</span>
-        <span class="bias-tab-count" id="silenced-count"></span>
+        <span class="bias-tab-count loading" id="silenced-count">
+          <span class="count-spinner"></span>
+        </span>
       </button>
       <div class="bias-tabs-info">
         <span class="bias-tabs-hint" id="tabs-hint">Analyzing feed...</span>
@@ -161,6 +165,27 @@ function getTabBarStyles() {
       background: rgba(255, 255, 255, 0.1);
       min-width: 20px;
       text-align: center;
+      transition: all 0.3s ease;
+    }
+    
+    .bias-tab-count.loading {
+      min-width: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    
+    .count-spinner {
+      width: 10px;
+      height: 10px;
+      border: 2px solid rgba(255, 255, 255, 0.2);
+      border-top-color: currentColor;
+      border-radius: 50%;
+      animation: countSpin 0.8s linear infinite;
+    }
+    
+    @keyframes countSpin {
+      to { transform: rotate(360deg); }
     }
     
     .bias-tab[data-tab="noise"].active .bias-tab-count {
@@ -169,6 +194,17 @@ function getTabBarStyles() {
     
     .bias-tab[data-tab="silenced"].active .bias-tab-count {
       background: rgba(16, 185, 129, 0.3);
+    }
+    
+    /* Count animation */
+    @keyframes countPop {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.2); }
+      100% { transform: scale(1); }
+    }
+    
+    .bias-tab-count.updated {
+      animation: countPop 0.3s ease;
     }
     
     .bias-tabs-info {
@@ -403,21 +439,61 @@ function updateTabUI() {
 }
 
 /**
- * Update tab counts
+ * Update tab counts with animation
  */
-function updateCounts(noiseCounts, silencedCount) {
+function updateCounts(noiseCount, silencedCount) {
   if (!tabBarElement) return
   
   const noiseCountEl = tabBarElement.querySelector('#noise-count')
   const silencedCountEl = tabBarElement.querySelector('#silenced-count')
   
-  if (noiseCountEl && noiseCounts !== undefined) {
-    noiseCountEl.textContent = noiseCounts
+  if (noiseCountEl && noiseCount !== undefined) {
+    animateCount(noiseCountEl, noiseCount)
   }
   
   if (silencedCountEl && silencedCount !== undefined) {
-    silencedCountEl.textContent = silencedCount
+    animateCount(silencedCountEl, silencedCount)
   }
+}
+
+/**
+ * Animate a count element from 0 (or current) to target
+ */
+function animateCount(element, targetCount) {
+  // Remove loading state
+  element.classList.remove('loading')
+  
+  // Get current count (0 if was loading)
+  const currentText = element.textContent.trim()
+  const currentCount = parseInt(currentText) || 0
+  
+  // If same count, no animation needed
+  if (currentCount === targetCount) {
+    element.textContent = targetCount
+    return
+  }
+  
+  // Quick animation for count-up effect
+  const duration = 400 // ms
+  const steps = Math.min(targetCount - currentCount, 20)
+  const stepDuration = duration / steps
+  
+  let current = currentCount
+  const increment = Math.ceil((targetCount - currentCount) / steps)
+  
+  const interval = setInterval(() => {
+    current = Math.min(current + increment, targetCount)
+    element.textContent = current
+    
+    if (current >= targetCount) {
+      clearInterval(interval)
+      element.textContent = targetCount
+      
+      // Add pop animation
+      element.classList.add('updated')
+      setTimeout(() => element.classList.remove('updated'), 300)
+    }
+  }, stepDuration)
 }
 
 /**

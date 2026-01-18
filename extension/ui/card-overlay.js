@@ -735,11 +735,6 @@ function _doProcessAllCards() {
   // Only process first 20 visible cards to avoid slowness
   const visibleCards = cards.slice(0, 20)
   
-  // #region agent log H3
-  const foundIds = visibleCards.slice(0,5).map(c => extractVideoId(c)).filter(Boolean);
-  fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'card-overlay.js:_doProcessAllCards',message:'Processing cards',data:{totalCards:cards.length,visibleCards:visibleCards.length,first5Ids:foundIds,scoresMapSize:videoScores.size},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H3'})}).catch(()=>{});
-  // #endregion
-  
   for (const card of visibleCards) {
     addOverlayToCard(card)
   }

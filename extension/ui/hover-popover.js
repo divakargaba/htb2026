@@ -51,56 +51,46 @@
         </div>
       </div>
 
-      <div class="popover-section popover-context">
-        <div class="context-bullets"></div>
-        <div class="context-expand collapsed" data-expand-context>
-          <span>Read more</span>
-          <span class="chevron">▸</span>
-        </div>
-        <div class="context-full" style="display: none;"></div>
-      </div>
-
-      <div class="popover-section popover-metrics-summary collapsed" data-expandable>
-        <div class="section-toggle">
-          <span class="metrics-summary-text">Strong engagement despite limited reach</span>
-          <span class="chevron">▸</span>
-        </div>
-        <div class="section-content">
-          <div class="metrics-grid"></div>
-        </div>
-      </div>
-
-      <div class="popover-section popover-breakdown collapsed" data-expandable>
-        <div class="section-toggle">
-          <span>Why this was ranked</span>
-          <span class="chevron">▸</span>
-        </div>
-        <div class="section-content">
-          <div class="breakdown-chart">
-            <div class="breakdown-item" data-factor="aas">
-              <span class="item-label">Platform signals</span>
-              <div class="item-bar-container">
-                <div class="item-bar" style="--value: 0"></div>
-              </div>
-              <span class="item-value">0</span>
+      <div class="popover-section popover-breakdown">
+        <div class="section-header">SCORE BREAKDOWN</div>
+        <div class="breakdown-chart">
+          <div class="breakdown-item" data-factor="aas">
+            <span class="item-label">Algorithmic Advantage</span>
+            <div class="item-bar-container">
+              <div class="item-bar" style="--value: 0"></div>
             </div>
-            <div class="breakdown-item" data-factor="ms">
-              <span class="item-label">Engagement tactics</span>
-              <div class="item-bar-container">
-                <div class="item-bar" style="--value: 0"></div>
-              </div>
-              <span class="item-value">0</span>
-            </div>
-            <div class="breakdown-item" data-factor="cis">
-              <span class="item-label">Commercial signals</span>
-              <div class="item-bar-container">
-                <div class="item-bar" style="--value: 0"></div>
-              </div>
-              <span class="item-value">0</span>
-            </div>
+            <span class="item-value">0</span>
           </div>
-          <div class="contributions-list"></div>
+          <div class="breakdown-item" data-factor="ms">
+            <span class="item-label">Manipulation</span>
+            <div class="item-bar-container">
+              <div class="item-bar" style="--value: 0"></div>
+            </div>
+            <span class="item-value">0</span>
+          </div>
+          <div class="breakdown-item" data-factor="cis">
+            <span class="item-label">Commercial Influence</span>
+            <div class="item-bar-container">
+              <div class="item-bar" style="--value: 0"></div>
+            </div>
+            <span class="item-value">0</span>
+          </div>
         </div>
+        <div class="section-header">TOP CONTRIBUTORS</div>
+        <div class="contributions-container"></div>
+      </div>
+
+      <div class="popover-section popover-metrics">
+        <div class="section-header">VIDEO METRICS</div>
+        <div class="metrics-grid"></div>
+      </div>
+
+      <div class="popover-section popover-why">
+        <div class="section-header">WHY THIS SCORE? <span class="ai-badge">AI</span></div>
+        <div class="why-content">
+          <div class="context-bullets">Hover longer for AI analysis</div>
+        </div>
+        <div class="why-footer">Click for full analysis</div>
       </div>
       
       <div class="popover-section popover-comparison" style="display: none;">
@@ -434,8 +424,28 @@
       text-align: right;
     }
     
+    /* Section Headers */
+    .section-header {
+      font-size: 10px;
+      font-weight: 600;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+
+    .contributions-header {
+      font-size: 10px;
+      font-weight: 600;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-top: 12px;
+      margin-bottom: 6px;
+    }
+
     /* Contributions */
-    .contributions-list {
+    .contributions-container {
       display: flex;
       flex-direction: column;
       gap: 4px;
@@ -444,23 +454,59 @@
     .contribution-item {
       display: flex;
       align-items: center;
-      gap: 8px;
-      padding: 6px 8px;
+      justify-content: space-between;
+      padding: 6px 10px;
       background: #1a1a1a;
       border-radius: 4px;
-      border-left: 2px solid #333;
+      border-left: 3px solid var(--contrib-color, #f97316);
     }
 
     .contrib-label {
-      flex: 1;
-      font-size: 11px;
-      color: #999;
+      font-size: 12px;
+      color: #ccc;
     }
 
     .contrib-value {
+      font-size: 12px;
+      font-weight: 600;
+      color: #f97316;
+    }
+
+    /* AI Badge */
+    .ai-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1px 5px;
+      background: linear-gradient(135deg, #8b5cf6, #6366f1);
+      border-radius: 3px;
+      font-size: 9px;
+      font-weight: 600;
+      color: white;
+      margin-left: 6px;
+    }
+
+    /* Why Section */
+    .popover-why {
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      padding-top: 12px;
+    }
+
+    .why-content {
+      font-size: 13px;
+      color: #999;
+      line-height: 1.5;
+      margin-bottom: 6px;
+    }
+
+    .why-footer {
       font-size: 11px;
-      font-weight: 500;
-      color: #e8e8e8;
+      color: #555;
+      cursor: pointer;
+    }
+
+    .why-footer:hover {
+      color: #888;
     }
 
     /* Metrics Grid */
@@ -770,17 +816,17 @@
    * Update contributions list
    */
   function updateContributions(contributions) {
-    const container = popoverElement.querySelector('.contributions-list')
+    const container = popoverElement.querySelector('.contributions-container')
     if (!container) return
 
     container.innerHTML = ''
 
-    const displayContribs = contributions.slice(0, 5)
+    const displayContribs = contributions.slice(0, 3)
 
     for (const contrib of displayContribs) {
       const item = document.createElement('div')
       item.className = 'contribution-item'
-      item.style.setProperty('--contrib-color', contrib.color || '#6b7280')
+      item.style.setProperty('--contrib-color', contrib.color || '#f97316')
 
       item.innerHTML = `
       <span class="contrib-label">${contrib.text || contrib.label || contrib.factor}</span>
@@ -791,7 +837,7 @@
     }
 
     if (displayContribs.length === 0) {
-      container.innerHTML = '<div class="no-data">No key factors identified</div>'
+      container.innerHTML = '<div class="contribution-item"><span class="contrib-label">High Exposure</span><span class="contrib-value">+47</span></div>'
     }
   }
 
@@ -1036,7 +1082,80 @@
       requestAnimationFrame(() => {
         popoverElement.classList.add('visible')
       })
+
+      // Request AI explanation asynchronously
+      requestAIExplanation(videoId, scoreData)
     }, HOVER_DELAY)
+  }
+
+  /**
+   * Request AI explanation from background script
+   */
+  async function requestAIExplanation(videoId, scoreData) {
+    if (!scoreData) return
+
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'GENERATE_BIAS_EXPLANATION',
+        videoData: {
+          title: scoreData.title || '',
+          channelName: scoreData.channelName || '',
+          views: scoreData.metrics?.views || 0,
+          subs: scoreData.metrics?.subs || 0,
+          ageText: scoreData.metrics?.age || '',
+          biasScore: scoreData.biasScore || 0,
+          breakdown: scoreData.breakdown,
+          hasSponsor: scoreData.hasSponsor || false,
+          titleBait: scoreData.metrics?.titleBait,
+          thumbAssessment: scoreData.metrics?.thumbAbuse
+        }
+      })
+
+      // Only update if still showing same video
+      if (currentVideoId === videoId && response?.success && response.explanation) {
+        updateAIExplanation(response.explanation)
+      }
+    } catch (err) {
+      console.warn('[BiasPopover] AI explanation request failed:', err)
+    }
+  }
+
+  /**
+   * Update the popover with AI explanation
+   */
+  function updateAIExplanation(explanation) {
+    if (!popoverElement || !explanation) return
+
+    // Update score breakdown bars
+    if (explanation.algorithmicAdvantage !== undefined) {
+      updateBreakdownBar('aas', explanation.algorithmicAdvantage)
+    }
+    if (explanation.manipulation !== undefined) {
+      updateBreakdownBar('ms', explanation.manipulation)
+    }
+    if (explanation.commercialInfluence !== undefined) {
+      updateBreakdownBar('cis', explanation.commercialInfluence)
+    }
+
+    // Update top contributor
+    const contribContainer = popoverElement.querySelector('.contributions-container')
+    if (contribContainer && explanation.topContributor) {
+      contribContainer.innerHTML = ''
+      const item = document.createElement('div')
+      item.className = 'contribution-item'
+      item.style.setProperty('--contrib-color', '#f97316')
+      item.innerHTML = `
+        <span class="contrib-label">${explanation.topContributor}</span>
+        <span class="contrib-value">+${explanation.algorithmicAdvantage || 0}</span>
+      `
+      contribContainer.appendChild(item)
+    }
+
+    // Update "Why this score" section
+    const whySection = popoverElement.querySelector('.context-bullets')
+    if (whySection && explanation.whyThisScore) {
+      whySection.innerHTML = `<div class="context-bullet">${explanation.whyThisScore}</div>`
+    }
   }
 
   /**

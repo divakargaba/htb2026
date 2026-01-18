@@ -33,7 +33,6 @@
       "ui/tabbar.js",
       "ui/card-overlay.js",
       "ui/hover-popover.js",
-      "ui/bias-panel.js",
       "ui/silenced-grid.js",
       "content.js"
     ],
@@ -58,7 +57,6 @@
       "ui/tabbar.js",
       "ui/card-overlay.js",
       "ui/hover-popover.js",
-      "ui/bias-panel.js",
       "ui/silenced-grid.js"
     ],
     "matches": ["https://www.youtube.com/*"]

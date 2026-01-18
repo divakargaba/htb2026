@@ -95,7 +95,7 @@ function safeSendMessage(message, callback) {
           }
           console.warn('[Silenced] Runtime error:', lastError.message)
         }
-
+        
         if (callback) callback(response)
         resolve(response)
       })
@@ -187,10 +187,6 @@ function initializeBiasLensComponents() {
 
     if (window.BiasPopover) {
       window.BiasPopover.init()
-    }
-
-    if (window.BiasPanel) {
-      window.BiasPanel.init()
     }
 
     if (window.SilencedGrid) {
@@ -300,10 +296,6 @@ function activateBiasLens() {
     window.BiasTabBar.setActiveTab(activeTab)
   }
 
-  if (window.BiasPanel) {
-    window.BiasPanel.show()
-  }
-
   if (window.BiasCardOverlay) {
     window.BiasCardOverlay.enable()
   }
@@ -324,10 +316,6 @@ function deactivateBiasLens() {
     window.BiasTabBar.hide()
   }
 
-  if (window.BiasPanel) {
-    window.BiasPanel.hide()
-  }
-
   if (window.BiasCardOverlay) {
     window.BiasCardOverlay.disable()
     window.BiasCardOverlay.removeAll()
@@ -345,10 +333,6 @@ function deactivateBiasLens() {
 function showNoiseView() {
   console.log('[BiasLens] Showing Noise view')
 
-  // #region agent log H1
-  fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'content.js:showNoiseView:entry',message:'Tab switch to Noise',data:{scoredVideosCount:scoredVideos?.length||0,feedAnalysisExists:!!feedAnalysisData,homepageAnalysisComplete:homepageAnalysisComplete,firstScoredId:scoredVideos?.[0]?.videoId||'none'},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
-  // #endregion
-
   if (window.SilencedGrid) {
     window.SilencedGrid.hide()
   }
@@ -360,9 +344,6 @@ function showNoiseView() {
   
   // DON'T re-analyze - use cached data if available
   if (feedAnalysisData && window.BiasCardOverlay) {
-    // #region agent log H2
-    fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'content.js:showNoiseView:updateUI',message:'Updating UI with cached data',data:{videosCount:feedAnalysisData?.videos?.length||0,firstVideoId:feedAnalysisData?.videos?.[0]?.videoId||'none'},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H2'})}).catch(()=>{});
-    // #endregion
     updateBiasLensUIWithAnalysis(feedAnalysisData)
   }
   
@@ -373,10 +354,6 @@ function showNoiseView() {
 
 function showSilencedView() {
   console.log('[BiasLens] Showing Silenced view')
-
-  // #region agent log H2
-  fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'content.js:showSilencedView',message:'Tab switch to Silenced',data:{silencedPairsCount:silencedPairs?.length||0,silencedVideosDataCount:silencedVideosData?.length||0,gridExists:!!window.SilencedGrid},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H2'})}).catch(()=>{});
-  // #endregion
 
   if (window.BiasCardOverlay) {
     window.BiasCardOverlay.disable()
@@ -408,27 +385,15 @@ function showSilencedView() {
           qualityScore: p.qualityScore,
           engagementScore: p.engagementScore
         }))
-      // #region agent log H1
-      fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'content.js:showSilencedView:pairs',message:'Using silencedPairs',data:{count:silencedToShow.length,firstVideo:silencedToShow[0]?.title||'none',hasAI:!!silencedToShow[0]?.aiExplanation},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
-      // #endregion
     } else {
       silencedToShow = silencedVideosData
-      // #region agent log H1
-      fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'content.js:showSilencedView:legacy',message:'Using legacy silencedVideosData',data:{count:silencedToShow?.length||0},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
-      // #endregion
     }
     
     if (silencedToShow && silencedToShow.length > 0) {
       console.log(`[BiasLens] Showing ${silencedToShow.length} cached silenced videos`)
-      // #region agent log H3
-      fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'content.js:showSilencedView:update',message:'Calling updateVideos',data:{count:silencedToShow.length,sample:silencedToShow[0]},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H3'})}).catch(()=>{});
-      // #endregion
       window.SilencedGrid.updateVideos(silencedToShow)
     } else {
       // Only discover if we have NO cached data at all
-      // #region agent log H1
-      fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'content.js:showSilencedView:discover',message:'No cached data, discovering',data:{},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
-      // #endregion
       window.SilencedGrid.showLoading()
       discoverSilencedVideos()
     }
@@ -585,17 +550,10 @@ async function analyzeHomepageFeed() {
     }
 
     // Step 5: Find silenced counterparts (parallel)
-    // #region agent log H1
-    fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'content.js:analyzeHomepageFeed:findSilenced',message:'Requesting silenced pairs',data:{scoredVideosCount:scoredVideos.length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
-    // #endregion
     const silencedResponse = await safeSendMessage({
       type: 'FIND_SILENCED',
       scoredVideos: scoredVideos.slice(0, 10)
     })
-
-    // #region agent log H1
-    fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'content.js:analyzeHomepageFeed:silencedResponse',message:'Silenced response received',data:{success:silencedResponse?.success,pairsCount:silencedResponse?.pairs?.length||0,error:silencedResponse?.error||null},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
-    // #endregion
 
     if (silencedResponse?.success && silencedResponse?.pairs) {
       silencedPairs = silencedResponse.pairs
@@ -622,9 +580,6 @@ async function analyzeHomepageFeed() {
             qualityScore: p.qualityScore,
             engagementScore: p.engagementScore
           }))
-        // #region agent log H5
-        fetch('http://127.0.0.1:7242/ingest/070f4023-0b8b-470b-9892-fdda3f3c5039',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'content.js:analyzeHomepageFeed:updateGrid',message:'Updating silenced grid after fetch',data:{count:silencedWithContext.length,hasVideos:silencedWithContext.filter(v=>v.videoId).length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H5'})}).catch(()=>{});
-        // #endregion
         window.SilencedGrid.updateVideos(silencedWithContext)
       }
     }
@@ -774,28 +729,44 @@ function updateBiasLensUIWithAnalysis(data) {
       // Convert breakdown to tags
       const tags = breakdownToTags(video.breakdown)
       
+      // Build scores data structure for popover
+      const description = video.stats?.description || '';
+      const hasSponsor = /sponsored by|use code|promo code|affiliate/i.test(description);
+      
+      // Build top contributors list
+      const allContribs = [
+        { text: 'High Exposure', value: video.breakdown?.EA || 0, color: '#ef4444' },
+        { text: 'Clickbait Signals', value: video.breakdown?.CM || 0, color: '#f97316' },
+        { text: 'Retention Tactics', value: video.breakdown?.RP || 0, color: '#8b5cf6' },
+        { text: 'Engagement Push', value: video.breakdown?.EN || 0, color: '#3b82f6' },
+        { text: 'Topic Clustering', value: video.breakdown?.TR || 0, color: '#06b6d4' },
+        { text: 'Commercial Content', value: video.breakdown?.CI || 0, color: '#65a30d' }
+      ].filter(c => c.value > 25).sort((a, b) => b.value - a.value).slice(0, 3);
+      
       scores[video.videoId] = {
         biasScore: video.biasScore || 0,
-        confidence: (video.confidence || 70) / 100, // normalize to 0-1
+        confidence: (video.confidence || 70) / 100,
         tags,
         breakdown: video.breakdown,
-        metrics: video.metrics
+        metrics: video.metrics,
+        // Additional data for AI explanation
+        title: video.title,
+        channelName: video.channelName,
+        hasSponsor,
+        // Score breakdown for popover (maps to AAS, MS, CIS)
+        scores: {
+          aas: video.breakdown?.EA || 0,  // Algorithmic Advantage Score
+          ms: video.breakdown?.CM || 0,   // Manipulation Score  
+          cis: video.breakdown?.CI || 0   // Commercial Influence Score
+        },
+        // Top contributors for popover
+        contributions: allContribs
       }
     }
     
     window.BiasCardOverlay.setScores(scores)
   }
   
-  if (window.BiasPanel && (data.summary || data.feedAnalysis)) {
-    const analysisData = data.summary || data.feedAnalysis
-    const recommendations = generateBiasLensRecommendations(analysisData)
-    
-    window.BiasPanel.updateAnalysis({
-      ...data.summary,
-      recommendations
-    })
-  }
-
   if (window.BiasTabBar) {
     const highBiasCount = data.videos?.filter(v => (v.biasScore || 0) >= 70).length || 0
     const silencedCount = silencedPairs?.length || 0
@@ -1036,7 +1007,7 @@ async function discoverSilencedVideos() {
 
 function injectBiasReceiptStyles() {
   if (document.getElementById('silenced-bias-receipt-styles')) return
-
+  
   const style = document.createElement('style')
   style.id = 'silenced-bias-receipt-styles'
   style.textContent = `
@@ -1175,7 +1146,7 @@ function injectBiasReceiptStyles() {
 
 function injectThumbnailStyles() {
   if (document.getElementById('silenced-thumbnail-styles')) return
-
+  
   const style = document.createElement('style')
   style.id = 'silenced-thumbnail-styles'
   style.textContent = `
@@ -1277,10 +1248,10 @@ async function getChannelSubs(channelHandle) {
   if (channelSubCache.has(channelHandle)) {
     return channelSubCache.get(channelHandle)
   }
-
-  return safeSendMessage({
-    action: 'getChannelByHandle',
-    handle: channelHandle
+  
+  return safeSendMessage({ 
+    action: 'getChannelByHandle', 
+    handle: channelHandle 
   }).then(response => {
     const subs = response?.subscriberCount || 0
     channelSubCache.set(channelHandle, subs)
@@ -1290,27 +1261,27 @@ async function getChannelSubs(channelHandle) {
 
 async function labelVideoThumbnails() {
   if (!noiseCancellationActive) return
-
+  
   const videoCards = document.querySelectorAll(`
     ytd-rich-item-renderer,
     ytd-video-renderer,
     ytd-compact-video-renderer,
     ytd-grid-video-renderer
   `)
-
+  
   for (const card of videoCards) {
     const videoId = card.querySelector('a#thumbnail')?.href?.match(/[?&]v=([^&]+)/)?.[1]
     if (!videoId || processedThumbnails.has(videoId)) continue
     processedThumbnails.add(videoId)
-
+    
     const channelLink = card.querySelector('a.yt-formatted-string[href^="/@"], ytd-channel-name a, a[href^="/@"]')
     const channelHandle = channelLink?.getAttribute('href')?.replace('/@', '') || ''
-
+    
     let subs = 0
     if (channelHandle) {
       subs = await getChannelSubs(channelHandle)
     }
-
+    
     let noiseLevel = 'unknown'
     let badgeText = ''
 
@@ -1327,17 +1298,17 @@ async function labelVideoThumbnails() {
       noiseLevel = 'silenced'
       badgeText = 'SILENCED'
     }
-
+    
     const thumbnail = card.querySelector('#thumbnail, ytd-thumbnail')
     if (thumbnail && badgeText) {
       thumbnail.style.position = 'relative'
       thumbnail.querySelector('.silenced-badge')?.remove()
-
+      
       const badge = document.createElement('div')
       badge.className = `silenced-badge ${noiseLevel}`
       badge.textContent = badgeText
       thumbnail.appendChild(badge)
-
+      
       if (noiseLevel === 'noise' || noiseLevel === 'amplified') {
         card.classList.add('silenced-dimmed')
       } else if (noiseLevel === 'silenced') {
@@ -1371,9 +1342,9 @@ async function saveNoiseCancellationState(enabled) {
 async function updateStats(voicesUnmuted = 0, noiseMuted = 0) {
   stats.voicesUnmuted += voicesUnmuted
   stats.noiseMuted += noiseMuted
-  await chrome.storage.local.set({
+  await chrome.storage.local.set({ 
     discoveredCount: stats.voicesUnmuted,
-    hiddenCount: stats.noiseMuted
+    hiddenCount: stats.noiseMuted 
   })
 }
 
@@ -1385,21 +1356,21 @@ function createShadowContainer(id, hostElement) {
   const host = document.createElement('div')
   host.id = id
   host.setAttribute('data-silenced', 'true')
-
+  
   const shadow = host.attachShadow({ mode: 'open' })
-
+  
   const style = document.createElement('style')
   style.textContent = getShadowStyles()
   shadow.appendChild(style)
-
+  
   const container = document.createElement('div')
   container.className = 'silenced-container'
   shadow.appendChild(container)
-
+  
   if (hostElement) {
     hostElement.insertBefore(host, hostElement.firstChild)
   }
-
+  
   return { host, shadow, container }
 }
 
@@ -1668,7 +1639,7 @@ function getShadowStyles() {
       font-size: 11px;
       color: #6b7280;
     }
-    
+
     /* Hidden Gems Styles */
     .header-subtitle {
       font-size: 11px;
@@ -1945,7 +1916,7 @@ function getShadowStyles() {
     .metrics-table td:first-child {
       color: #6b7280;
     }
-    
+
     .metrics-table td:last-child {
       text-align: right;
       color: #d1d5db;
@@ -2005,69 +1976,69 @@ function createDashboard(data) {
   const explainHtml = explainReasons.length > 0
     ? `<ul class="explain-list">${explainReasons.map(r => `<li>${esc(r)}</li>`).join('')}</ul>`
     : `<p>${isAdvantaged ? 'This channel has significant platform advantage.' : 'This creator has limited algorithmic visibility.'}</p>`
-
+  
   return `
     <div class="silenced-panel">
       <div class="panel-header">
         <div class="header-brand">
           <span class="brand-name">silenced</span>
-        </div>
+          </div>
         <div class="header-tier ${tierClass}">${tier.label}</div>
       </div>
-        
-      <div class="score-section">
+      
+          <div class="score-section">
         <div class="score-row">
           ${channel?.thumbnail
-      ? `<img class="channel-avatar" src="${channel.thumbnail}" alt="">`
-      : '<div class="channel-avatar"></div>'}
+            ? `<img class="channel-avatar" src="${channel.thumbnail}" alt="">`
+            : '<div class="channel-avatar"></div>'}
           <div class="channel-info">
             <div class="channel-name">${esc(video?.channel || 'Unknown')}</div>
             <div class="channel-meta">${fmt(subs)} subscribers</div>
-          </div>
+            </div>
           <div class="score-badge">
             <div class="score-value ${scoreClass}">${score}</div>
             <div class="score-label">Advantage</div>
           </div>
-        </div>
-      </div>
+            </div>
+                  </div>
 
       <div class="explain-section ${isAdvantaged ? 'advantaged' : 'underrepresented'}">
         ${explainHtml}
-      </div>
+          </div>
           
       <div class="action-toggle ${noiseCancellationActive ? 'active' : ''}" id="noise-cancel-toggle">
         <div class="toggle-left">
           <div class="toggle-text">
             <div class="toggle-title">${noiseCancellationActive ? 'Limited reach content shown' : 'Show limited reach content'}</div>
             <div class="toggle-desc">${noiseCancellationActive ? 'Alternatives listed below' : 'Find content with less visibility'}</div>
-          </div>
-        </div>
+            </div>
+                  </div>
         <div class="toggle-switch ${noiseCancellationActive ? 'on' : ''}">
           <div class="toggle-knob"></div>
-        </div>
-      </div>
-        
+                  </div>
+                </div>
+          
       <div class="panel-footer">
         <span>Hack the Bias '26</span>
         <a id="refresh-btn">Refresh</a>
-      </div>
-    </div>
+            </div>
+            </div>
   `
 }
 
 function injectDashboard(data) {
   const sidebar = document.querySelector('#secondary-inner') || document.querySelector('#secondary')
   if (!sidebar) return false
-
+  
   currentAnalysisData = data
-
+  
   document.querySelector('#silenced-shadow-host')?.remove()
-
+  
   const { host, shadow, container } = createShadowContainer('silenced-shadow-host', sidebar)
   shadowHost = host
-
+  
   container.innerHTML = createDashboard(data)
-
+  
   const noiseCancelToggle = shadow.getElementById('noise-cancel-toggle')
   const refreshBtn = shadow.getElementById('refresh-btn')
 
@@ -2076,19 +2047,19 @@ function injectDashboard(data) {
     const switchEl = noiseCancelToggle.querySelector('.toggle-switch')
     switchEl?.classList.toggle('on', noiseCancellationActive)
     noiseCancelToggle.classList.toggle('active', noiseCancellationActive)
-
+    
     const title = noiseCancelToggle.querySelector('.toggle-title')
     const desc = noiseCancelToggle.querySelector('.toggle-desc')
     if (title) title.textContent = noiseCancellationActive ? 'Limited reach content shown' : 'Show limited reach content'
     if (desc) desc.textContent = noiseCancellationActive ? 'Alternatives listed below' : 'Find content with less visibility'
   })
-
+  
   refreshBtn?.addEventListener('click', () => {
     currentVideoId = null
     panelInjected = false
     runWatchPage()
   })
-
+  
   panelInjected = true
   return true
 }
@@ -2101,9 +2072,9 @@ async function runNoiseCancellation(query) {
   if (!query) {
     query = extractCurrentQuery()
   }
-
+  
   console.log('[Silenced] 🎚 Activating noise cancellation for:', query)
-
+  
   const response = await safeSendMessage({ action: 'cancelNoise', query })
   if (response?.success) {
     discoveryCache = response.data
@@ -2119,7 +2090,7 @@ function extractCurrentQuery() {
   if (isSearchPage()) {
     return new URLSearchParams(window.location.search).get('search_query') || ''
   }
-
+  
   if (isWatchPage()) {
     const titleSelectors = [
       'h1.ytd-video-primary-info-renderer',
@@ -2155,20 +2126,20 @@ function extractCurrentQuery() {
       return query
     }
   }
-
+  
   return 'sustainability climate environment'
 }
 
 window.silencedToggleNoiseCancellation = async function () {
   noiseCancellationActive = !noiseCancellationActive
   await saveNoiseCancellationState(noiseCancellationActive)
-
+  
   if (shadowHost) {
     const toggle = shadowHost.shadowRoot?.querySelector('#noise-cancel-toggle')
     const switchEl = toggle?.querySelector('.toggle-switch')
     switchEl?.classList.toggle('on', noiseCancellationActive)
     toggle?.classList.toggle('active', noiseCancellationActive)
-
+    
     const title = toggle?.querySelector('.toggle-title')
     const desc = toggle?.querySelector('.toggle-desc')
     if (title) title.textContent = noiseCancellationActive ? 'Limited reach content shown' : 'Show limited reach content'
@@ -2181,20 +2152,20 @@ window.silencedToggleNoiseCancellation = async function () {
     const statusEl = floatingToggle.querySelector('.toggle-status')
     if (statusEl) statusEl.textContent = noiseCancellationActive ? 'ACTIVE' : 'OFF'
   }
-
+  
   if (noiseCancellationActive) {
     const query = extractCurrentQuery()
     await runNoiseCancellation(query)
-
+    
     muteNoisyVideos()
     injectUnmutedVoices()
     setupNoiseCancellationObserver()
-
+    
     if (!isWatchPage()) {
       injectThumbnailStyles()
       labelVideoThumbnails()
     }
-
+    
     if (discoveryCache) {
       await updateStats(discoveryCache.unmutedVideos?.length || 0, discoveryCache.channelsToMute?.length || 0)
     }
@@ -2203,34 +2174,34 @@ window.silencedToggleNoiseCancellation = async function () {
       el.style.display = ''
       el.removeAttribute('data-silenced-muted')
     })
-
+    
     document.querySelectorAll('.silenced-unmuted-container').forEach(el => el.remove())
     clearThumbnailLabels()
-
+    
     if (discoveryObserver) {
       discoveryObserver.disconnect()
       discoveryObserver = null
     }
   }
-
+  
   console.log('[Silenced] 🎚 Noise Cancellation:', noiseCancellationActive ? 'ACTIVE' : 'OFF')
 }
 
 window.silencedToggleDiscovery = window.silencedToggleNoiseCancellation
-
+  
 function muteNoisyVideos() {
   const noisyIds = new Set(discoveryCache?.noisyChannelIds || discoveryCache?.monopolyChannelIds || [])
   if (noisyIds.size === 0) return
-
+  
   const sidebarVideos = document.querySelectorAll('ytd-compact-video-renderer, ytd-watch-next-secondary-results-renderer ytd-item-section-renderer')
-
+  
   let mutedCount = 0
   sidebarVideos.forEach(video => {
     const channelLink = video.querySelector('a.ytd-channel-name, a[href^="/@"], a[href^="/channel/"]')
     if (channelLink) {
       const href = channelLink.getAttribute('href') || ''
       const channelId = href.match(/\/channel\/([^/]+)/)?.[1]
-
+      
       if (channelId && noisyIds.has(channelId)) {
         video.style.display = 'none'
         video.setAttribute('data-silenced-muted', 'noisy')
@@ -2238,7 +2209,7 @@ function muteNoisyVideos() {
       }
     }
   })
-
+  
   const topSidebar = document.querySelectorAll('#secondary ytd-compact-video-renderer')
   topSidebar.forEach((video, i) => {
     if (i < 3 && !video.hasAttribute('data-silenced-muted')) {
@@ -2247,7 +2218,7 @@ function muteNoisyVideos() {
       mutedCount++
     }
   })
-
+  
   console.log(`[Silenced] 🔇 Muted ${mutedCount} noisy videos`)
 }
 
@@ -2286,10 +2257,10 @@ function injectUnmutedVoices() {
 
   if (videos.length === 0) {
     document.querySelectorAll('.silenced-unmuted-container').forEach(el => el.remove())
-
+    
     const sidebar = document.querySelector('#secondary ytd-watch-next-secondary-results-renderer, #secondary-inner')
     if (!sidebar) return
-
+    
     const emptyContainer = document.createElement('div')
     emptyContainer.className = 'silenced-unmuted-container'
     emptyContainer.style.cssText = `
@@ -2308,7 +2279,7 @@ function injectUnmutedVoices() {
         <span style="font-size: 10px; color: #6b7280;">This topic may be dominated by large channels.</span>
       </div>
     `
-
+    
     const shadowHost = document.querySelector('#silenced-shadow-host')
     if (shadowHost) {
       shadowHost.after(emptyContainer)
@@ -2320,7 +2291,7 @@ function injectUnmutedVoices() {
 
   injectBiasReceiptStyles()
   document.querySelectorAll('.silenced-unmuted-container, .silenced-equity-container').forEach(el => el.remove())
-
+  
   const sidebar = document.querySelector('#secondary ytd-watch-next-secondary-results-renderer, #secondary-inner')
   if (!sidebar) return
 
@@ -2346,10 +2317,10 @@ function injectUnmutedVoices() {
     `
     const concentrationClass = biasSnapshot.topicConcentration > 70 ? 'color: #f59e0b;' : 'color: #10b981;'
     const snapshotTitle = auditModeActive ? 'Platform Context' : 'Topic Bias Snapshot'
-    const subtitleHtml = auditModeActive
-      ? '<div style="font-size: 8px; color: #4b5563; margin-bottom: 6px;">Baseline distribution for this topic</div>'
+    const subtitleHtml = auditModeActive 
+      ? '<div style="font-size: 8px; color: #4b5563; margin-bottom: 6px;">Baseline distribution for this topic</div>' 
       : ''
-
+    
     snapshot.innerHTML = `
       <div style="font-size: 9px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: ${auditModeActive ? '2px' : '8px'};">${snapshotTitle}</div>
       ${subtitleHtml}
@@ -2397,8 +2368,8 @@ function injectUnmutedVoices() {
       // Confidence dots
       const confidenceDots = ['low', 'medium', 'high'].map((level, i) => {
         const filled = (confidence === 'low' && i === 0) ||
-          (confidence === 'medium' && i <= 1) ||
-          (confidence === 'high')
+                       (confidence === 'medium' && i <= 1) ||
+                       (confidence === 'high')
         return `<span class="silenced-confidence-dot ${filled ? `filled ${confidence}` : ''}"></span>`
       }).join('')
 
@@ -2436,7 +2407,7 @@ function injectUnmutedVoices() {
         </div>
       `
     }
-
+    
     // Build audit info line (shows subs, surfaced via, and content description)
     const surfaceMethod = video.surfaceMethod || 'engagement_ranking'
     const methodDisplay = formatDiversityMethod(surfaceMethod)
@@ -2455,7 +2426,7 @@ function injectUnmutedVoices() {
       <div style="padding: 8px 10px; border-top: 1px solid rgba(255,255,255,0.06);">
         <div style="font-size: 11px; color: #666; margin-bottom: 6px;">
           ${fmt(video.subscriberCount)} subscribers · ${methodDisplay}${transcriptBadge}
-        </div>
+      </div>
         ${contentDescription ? `
           <div style="font-size: 13px; color: #999; line-height: 1.45; font-family: -apple-system, sans-serif;">
             ${esc(contentDescription)}
@@ -2463,15 +2434,15 @@ function injectUnmutedVoices() {
         ` : ''}
       </div>
     `
-
+    
     card.innerHTML = `
       <a href="/watch?v=${video.videoId}" class="video-link" style="display: block; padding: 10px; text-decoration: none;">
         <div style="display: flex; gap: 10px;">
           <img src="${video.thumbnail}" style="width: 100px; height: 56px; border-radius: 4px; object-fit: cover; flex-shrink: 0; background: #262626;" alt="">
-          <div style="flex: 1; min-width: 0;">
+        <div style="flex: 1; min-width: 0;">
             <div style="font-size: 12px; font-weight: 500; color: #e5e5e5; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
-              ${esc(video.title)}
-            </div>
+            ${esc(video.title)}
+          </div>
             <div style="font-size: 10px; color: #9ca3af; margin-top: 3px;">${esc(video.channelTitle)} · ${fmt(video.subscriberCount)} subs</div>
           </div>
         </div>
@@ -2479,7 +2450,7 @@ function injectUnmutedVoices() {
       ${auditInfoHtml}
       ${biasReceipt ? `<div style="padding: 0 10px 10px;">${biasReceiptHtml}</div>` : ''}
     `
-
+    
     // Add hover effects
     card.addEventListener('mouseenter', () => {
       card.style.background = '#222222'
@@ -2506,13 +2477,13 @@ function injectUnmutedVoices() {
 
   // Footer with muted count
   const mutedChannels = discoveryCache?.channelsToMute || []
-  const footer = document.createElement('div')
+    const footer = document.createElement('div')
   footer.style.cssText = 'font-size: 10px; color: #6b7280; margin-top: 10px; padding-top: 8px; border-top: 1px solid #262626; display: flex; justify-content: space-between; align-items: center;'
   footer.innerHTML = `
     <span>${mutedChannels.length > 0 ? `${mutedChannels.length} dominant channels adjusted` : 'Showing limited reach content'}</span>
     <span style="font-size: 8px; color: #4b5563;">Hack the Bias '26</span>
   `
-  container.appendChild(footer)
+    container.appendChild(footer)
 
   const shadowHostEl = document.querySelector('#silenced-shadow-host')
   if (shadowHostEl && shadowHostEl.nextSibling) {
@@ -2530,10 +2501,10 @@ function setupNoiseCancellationObserver() {
   if (discoveryObserver) {
     discoveryObserver.disconnect()
   }
-
+  
   discoveryObserver = new MutationObserver((mutations) => {
     if (!noiseCancellationActive) return
-
+    
     for (const mutation of mutations) {
       for (const node of mutation.addedNodes) {
         if (node.nodeType === Node.ELEMENT_NODE) {
@@ -2544,7 +2515,7 @@ function setupNoiseCancellationObserver() {
       }
     }
   })
-
+  
   discoveryObserver.observe(document.body, { childList: true, subtree: true })
 }
 
@@ -2560,9 +2531,9 @@ function createFloatingToggle() {
     if (statusEl) statusEl.textContent = noiseCancellationActive ? 'ACTIVE' : 'OFF'
     return
   }
-
+  
   document.getElementById('silenced-discovery-toggle')?.remove()
-
+  
   const toggle = document.createElement('div')
   toggle.id = 'silenced-noise-toggle'
   toggle.className = noiseCancellationActive ? 'active' : ''
@@ -2570,7 +2541,7 @@ function createFloatingToggle() {
   toggle.setAttribute('aria-checked', noiseCancellationActive)
   toggle.setAttribute('aria-label', 'Toggle to show limited reach content')
   toggle.setAttribute('tabindex', '0')
-
+  
   toggle.innerHTML = `
     <div class="toggle-inner">
       <div class="toggle-icon">◉</div>
@@ -2580,7 +2551,7 @@ function createFloatingToggle() {
       </div>
     </div>
   `
-
+  
   toggle.addEventListener('click', () => window.silencedToggleNoiseCancellation())
   toggle.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') {
@@ -2588,7 +2559,7 @@ function createFloatingToggle() {
       window.silencedToggleNoiseCancellation()
     }
   })
-
+  
   document.body.appendChild(toggle)
 }
 
@@ -2599,24 +2570,24 @@ function createFloatingToggle() {
 async function runWatchPage() {
   const videoId = getVideoId()
   if (!videoId || (videoId === currentVideoId && panelInjected)) return
-
+  
   currentVideoId = videoId
   panelInjected = false
   breakdownOpen = false
   silenceReportOpen = false
-
+  
   for (let i = 0; i < 15; i++) {
     if (document.querySelector('#secondary')) break
     await new Promise(r => setTimeout(r, 1000))
   }
-
+  
   const sidebar = document.querySelector('#secondary-inner') || document.querySelector('#secondary')
   if (!sidebar) return
-
+  
   document.querySelector('#silenced-shadow-host')?.remove()
   const { host, shadow, container } = createShadowContainer('silenced-shadow-host', sidebar)
   shadowHost = host
-
+  
   container.innerHTML = `
     <div class="silenced-panel">
       <div class="panel-header">
@@ -2624,20 +2595,20 @@ async function runWatchPage() {
           <span class="brand-name">Bias Lens</span>
         </div>
       </div>
-      <div class="loading-state">
-        <div class="spinner"></div>
+        <div class="loading-state">
+          <div class="spinner"></div>
         <div class="loading-text">Finding hidden gems...</div>
       </div>
     </div>
   `
-
+  
   // Get current video title for query building
   const videoTitle = extractCurrentQuery()
-
+  
   // Fetch current video's channel ID (we need it to exclude from gems)
   const analyzeResponse = await safeSendMessage({
-    action: 'analyze',
-    videoId,
+    action: 'analyze', 
+    videoId, 
     transcript: ''
   })
 
@@ -2662,11 +2633,11 @@ async function runWatchPage() {
             <span class="brand-name">Bias Lens</span>
           </div>
         </div>
-        <div style="padding: 24px; text-align: center; color: #888;">
+          <div style="padding: 24px; text-align: center; color: #888;">
           <div style="margin-bottom: 12px;">${gemsResponse?.error || 'Could not find hidden gems'}</div>
           <button onclick="window.silencedRetry()" style="background: #10b981; color: #000; border: none; padding: 8px 16px; border-radius: 8px; font-weight: 600; cursor: pointer;">
-            Try Again
-          </button>
+              Try Again
+            </button>
         </div>
       </div>
     `
@@ -2988,19 +2959,19 @@ new MutationObserver(() => {
     currentVideoId = null
     panelInjected = false
     processedVideoCards.clear()
-
+    
     document.querySelector('#silenced-shadow-host')?.remove()
     document.querySelectorAll('.silenced-unmuted-container, .silenced-equity-container').forEach(el => el.remove())
-
+    
     // Route to appropriate handler
     if (isWatchPage()) {
       setTimeout(runWatchPage, 1500)
     } else if (isHomepage()) {
       setTimeout(initHomepageBiasLens, 500)
     }
-
+    
     createFloatingToggle()
-
+    
     if (noiseCancellationActive) {
       setTimeout(async () => {
         const query = extractCurrentQuery()
@@ -3026,7 +2997,6 @@ window.addEventListener('yt-navigate-finish', () => {
   
   if (navigatedAway || !isHomepage()) {
     // Hide all bias lens components when leaving homepage
-    if (window.BiasPanel) window.BiasPanel.hide()
     if (window.BiasTabBar) window.BiasTabBar.hide()
     if (window.SilencedGrid) window.SilencedGrid.hide()
     if (window.BiasCardOverlay) {
@@ -3055,13 +3025,13 @@ window.addEventListener('yt-navigate-finish', () => {
   }
 
   createFloatingToggle()
-
+  
   if (noiseCancellationActive && !isWatchPage()) {
     injectThumbnailStyles()
     setTimeout(() => labelVideoThumbnails(), 2000)
     setTimeout(() => labelVideoThumbnails(), 4000)
   }
-
+  
   if (noiseCancellationActive) {
     setTimeout(async () => {
       const query = extractCurrentQuery()
@@ -3083,15 +3053,15 @@ async function init() {
 
   // Load noise cancellation state
   await loadNoiseCancellationState()
-
+  
   // Load session stats
   const stored = await chrome.storage.local.get(['discoveredCount', 'hiddenCount'])
   stats.voicesUnmuted = stored.discoveredCount || 0
   stats.noiseMuted = stored.hiddenCount || 0
-
+  
   // Create floating toggle
   setTimeout(createFloatingToggle, 2000)
-
+  
   // Route to appropriate handler based on current page
   if (isWatchPage()) {
     setTimeout(runWatchPage, 2000)
@@ -3118,13 +3088,13 @@ async function init() {
       }
     }
   }, 500)
-
+  
   // Label thumbnails on homepage/search if noise cancellation is active
   if (noiseCancellationActive && !isWatchPage()) {
     injectThumbnailStyles()
     setTimeout(() => labelVideoThumbnails(), 2500)
   }
-
+  
   // Auto-enable noise cancellation if it was on
   if (noiseCancellationActive) {
     setTimeout(async () => {

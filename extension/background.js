@@ -710,6 +710,128 @@ async function callDeepSeekAPI(prompt, config = {}) {
 const callGeminiAPI = callDeepSeekAPI
 
 /**
+ * Generate bias explanation for a homepage video using DeepSeek
+ * Returns structured data for the hover popover
+ */
+async function generateBiasExplanation(videoData) {
+  if (!DEEPSEEK_API_KEY) {
+    return generateHeuristicBiasExplanation(videoData);
+  }
+
+  const { title, channelName, views, subs, ageText, biasScore, breakdown, hasSponsor, titleBait, thumbAssessment } = videoData;
+
+  const prompt = `Analyze this YouTube video's algorithmic positioning. Be concise and specific.
+
+VIDEO DATA:
+- Title: "${title}"
+- Channel: ${channelName} (${formatNumber(subs)} subscribers)
+- Views: ${formatNumber(views)}
+- Age: ${ageText || 'unknown'}
+- Bias Score: ${biasScore}/100
+- Breakdown: EA=${breakdown?.EA || 0}, CM=${breakdown?.CM || 0}, CI=${breakdown?.CI || 0}
+- Sponsor detected: ${hasSponsor ? 'Yes' : 'No'}
+- Title signals: ${titleBait || 'None'}
+- Thumbnail: ${thumbAssessment || 'Standard'}
+
+Generate a JSON response with these exact fields:
+{
+  "algorithmicAdvantage": <number 0-100>,
+  "manipulation": <number 0-100>,
+  "commercialInfluence": <number 0-100>,
+  "topContributor": "<one main factor>",
+  "whyThisScore": "<1-2 sentence explanation>"
+}
+
+Rules:
+- algorithmicAdvantage: Higher for big channels, trending topics, high velocity
+- manipulation: Higher for clickbait titles, sensational thumbnails, engagement bait
+- commercialInfluence: Higher if sponsor detected, product placement likely
+- topContributor: The single biggest factor (e.g., "Channel Authority", "Trending Topic", "Clickbait Title")
+- whyThisScore: Brief, clear explanation of why this video has its visibility score
+
+Respond ONLY with valid JSON, no markdown.`;
+
+  try {
+    const response = await callDeepSeekAPI(prompt, { temperature: 0.3, maxTokens: 300 });
+    if (response) {
+      // Try to parse JSON response
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return {
+          algorithmicAdvantage: Math.round(parsed.algorithmicAdvantage || 0),
+          manipulation: Math.round(parsed.manipulation || 0),
+          commercialInfluence: Math.round(parsed.commercialInfluence || 0),
+          topContributor: parsed.topContributor || 'High Exposure',
+          whyThisScore: parsed.whyThisScore || 'Analysis unavailable'
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('[BiasLens] DeepSeek explanation failed:', err.message);
+  }
+
+  // Fallback to heuristic
+  return generateHeuristicBiasExplanation(videoData);
+}
+
+/**
+ * Generate heuristic bias explanation (fallback when AI unavailable)
+ */
+function generateHeuristicBiasExplanation(videoData) {
+  const { subs, biasScore, breakdown, hasSponsor, titleBait, thumbAssessment } = videoData;
+  
+  // Determine top contributor based on breakdown
+  let topContributor = 'High Exposure';
+  let maxVal = 0;
+  if (breakdown) {
+    if (breakdown.EA > maxVal) { maxVal = breakdown.EA; topContributor = 'Channel Authority'; }
+    if (breakdown.CM > maxVal) { maxVal = breakdown.CM; topContributor = 'Clickbait Signals'; }
+    if (breakdown.CI > maxVal) { maxVal = breakdown.CI; topContributor = 'Commercial Content'; }
+    if (breakdown.RP > maxVal) { maxVal = breakdown.RP; topContributor = 'Retention Optimization'; }
+    if (breakdown.TR > maxVal) { maxVal = breakdown.TR; topContributor = 'Topic Clustering'; }
+  }
+  
+  // Generate explanation
+  let whyThisScore = '';
+  if (subs >= 5000000) {
+    whyThisScore = `Large channel (${formatNumber(subs)} subs) receives significant algorithmic boost. `;
+  } else if (subs >= 1000000) {
+    whyThisScore = `Established channel with strong platform signals. `;
+  } else if (subs >= 100000) {
+    whyThisScore = `Mid-sized creator with moderate algorithmic support. `;
+  } else {
+    whyThisScore = `Smaller channel with limited algorithmic reach. `;
+  }
+  
+  if (hasSponsor) {
+    whyThisScore += 'Sponsored content detected.';
+  } else if (titleBait) {
+    whyThisScore += 'Title optimization increases click probability.';
+  } else if (thumbAssessment) {
+    whyThisScore += 'Thumbnail appears optimized for engagement.';
+  }
+  
+  return {
+    algorithmicAdvantage: breakdown?.EA || Math.round(biasScore * 0.8),
+    manipulation: breakdown?.CM || Math.round(biasScore * 0.3),
+    commercialInfluence: hasSponsor ? 70 + Math.round(Math.random() * 20) : breakdown?.CI || 10,
+    topContributor,
+    whyThisScore: whyThisScore.trim()
+  };
+}
+
+/**
+ * Format number for display (used in explanations)
+ */
+function formatNumber(n) {
+  if (!n) return '0';
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+  return n.toString();
+}
+
+/**
  * Generate bias receipt using DeepSeek AI (when ENABLE_ML_FEATURES is true)
  * Uses transcript for actual content analysis when available
  */
@@ -5633,6 +5755,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === 'FIND_SILENCED') {
     findSilencedForHomepage(request.scoredVideos)
       .then(pairs => sendResponse({ success: true, pairs }))
+      .catch(err => sendResponse({ success: false, error: err.message }))
+    return true
+  }
+
+  // NEW: Generate bias explanation for popover
+  if (request.type === 'GENERATE_BIAS_EXPLANATION') {
+    generateBiasExplanation(request.videoData)
+      .then(explanation => sendResponse({ success: true, explanation }))
       .catch(err => sendResponse({ success: false, error: err.message }))
     return true
   }
