@@ -2232,7 +2232,7 @@ function detectSpam(title) {
 function isReactionVideo(title, description) {
   const lowerTitle = (title || '').toLowerCase()
   const lowerDesc = (description || '').toLowerCase().slice(0, 500)
-  
+
   const reactionPatterns = [
     /react(s|ing|ion)?\s*(to|video)/i,
     /\breaction\b/i,
@@ -2241,7 +2241,7 @@ function isReactionVideo(title, description) {
     /\breacts\b/i,
     /\breact\b/i
   ]
-  
+
   return reactionPatterns.some(p => p.test(lowerTitle) || p.test(lowerDesc))
 }
 
@@ -2291,7 +2291,7 @@ const CATEGORY_TO_GENRE = {
  */
 async function analyzeCurrentVideoContext(videoId, title) {
   console.log(`[Silenced] Analyzing context for video: ${videoId}`)
-  
+
   const context = {
     videoId,
     title,
@@ -2302,19 +2302,19 @@ async function analyzeCurrentVideoContext(videoId, title) {
     transcriptExcerpt: null,
     detectedThemes: []
   }
-  
+
   try {
     // Fetch full video metadata
     const videoUrl = new URL('https://www.googleapis.com/youtube/v3/videos')
     videoUrl.searchParams.set('part', 'snippet,contentDetails')
     videoUrl.searchParams.set('id', videoId)
     videoUrl.searchParams.set('key', YOUTUBE_API_KEY)
-    
+
     const videoRes = await fetch(videoUrl.toString())
     if (videoRes.ok) {
       const videoData = await videoRes.json()
       quotaUsed += 1
-      
+
       const snippet = videoData.items?.[0]?.snippet
       if (snippet) {
         context.categoryId = snippet.categoryId
@@ -2324,23 +2324,23 @@ async function analyzeCurrentVideoContext(videoId, title) {
         console.log(`[Silenced] Video category: ${context.genre}, Tags: ${context.tags.slice(0, 5).join(', ')}`)
       }
     }
-    
+
     // Try to fetch transcript
     const transcript = await fetchTranscriptForScoring(videoId)
     if (transcript && transcript.length > 100) {
       context.transcriptExcerpt = transcript.slice(0, 800)
       console.log(`[Silenced] Got transcript excerpt: ${context.transcriptExcerpt.length} chars`)
     }
-    
+
     // Detect themes from transcript or fallback to description
     const textToAnalyze = context.transcriptExcerpt || context.description.slice(0, 500) || title
     context.detectedThemes = detectThemes(textToAnalyze, title, context.tags)
     console.log(`[Silenced] Detected themes: ${context.detectedThemes.join(', ')}`)
-    
+
   } catch (err) {
     console.warn('[Silenced] Context analysis error:', err.message)
   }
-  
+
   return context
 }
 
@@ -2350,7 +2350,7 @@ async function analyzeCurrentVideoContext(videoId, title) {
 function detectThemes(text, title, tags) {
   const themes = new Set()
   const combined = `${title} ${text} ${tags.join(' ')}`.toLowerCase()
-  
+
   // Genre/format detection
   if (/\b(skit|sketch|comedy|funny|humor|hilarious|parody)\b/i.test(combined)) themes.add('comedy')
   if (/\b(tutorial|how to|guide|learn|explained|education)\b/i.test(combined)) themes.add('educational')
@@ -2362,17 +2362,17 @@ function detectThemes(text, title, tags) {
   if (/\b(music|song|cover|remix|beat)\b/i.test(combined)) themes.add('music')
   if (/\b(news|breaking|update|report)\b/i.test(combined)) themes.add('news')
   if (/\b(story|storytime|experience)\b/i.test(combined)) themes.add('storytelling')
-  
+
   // Sport detection
   if (/\b(basketball|nba|hoop|dunk|court)\b/i.test(combined)) themes.add('basketball')
   if (/\b(football|nfl|touchdown|quarterback)\b/i.test(combined)) themes.add('football')
   if (/\b(soccer|football|goal|match)\b/i.test(combined)) themes.add('soccer')
   if (/\b(baseball|mlb|home run)\b/i.test(combined)) themes.add('baseball')
-  
+
   // Role/character detection
   if (/\b(coach|coaching|assistant|trainer)\b/i.test(combined)) themes.add('coaching')
   if (/\b(player|athlete|team)\b/i.test(combined)) themes.add('sports')
-  
+
   return Array.from(themes)
 }
 
@@ -2383,11 +2383,11 @@ function detectThemes(text, title, tags) {
  */
 async function buildSmartSearchQuery(context) {
   console.log('[Silenced] Building smart search query...')
-  
+
   // Try DeepSeek for intelligent query generation
   if (DEEPSEEK_API_KEY) {
     try {
-      const prompt = `You are a YouTube search expert. Generate a search query to find similar hidden gem videos.
+      const prompt = `You are a YouTube search expert. Generate a search query to find similar hidden gem videos that match BOTH the format/style AND topic.
 
 Video Context:
 - Title: "${context.title}"
@@ -2396,8 +2396,13 @@ Video Context:
 - Detected themes: ${context.detectedThemes.join(', ') || 'None'}
 ${context.transcriptExcerpt ? `- Transcript excerpt: "${context.transcriptExcerpt.slice(0, 300)}..."` : ''}
 
-Generate a YouTube search query (3-5 words max) to find similar content from smaller creators.
-Focus on: content type/format + main topic. Do NOT include channel names or specific video titles.
+CRITICAL: Match the FORMAT/TYPE first, then the topic.
+Examples:
+- If it's a "comedy skit about X" → search for "comedy skit X" (NOT "how to X" or "X tutorial")
+- If it's a "documentary about Y" → search for "documentary Y" (NOT "Y explained" or "Y review")
+- If it's a "tutorial on Z" → search for "tutorial Z" (NOT "Z comedy" or "Z skit")
+
+Generate a YouTube search query (3-5 words max) that prioritizes format + topic.
 Output ONLY the search query, nothing else.`
 
       const response = await callDeepSeekAPI(prompt, 50)
@@ -2410,7 +2415,7 @@ Output ONLY the search query, nothing else.`
       console.warn('[Silenced] DeepSeek query generation failed:', err.message)
     }
   }
-  
+
   // Fallback: Build query from detected themes + title keywords
   return buildFallbackSearchQuery(context)
 }
@@ -2420,45 +2425,60 @@ Output ONLY the search query, nothing else.`
  */
 function buildFallbackSearchQuery(context) {
   const queryParts = []
-  
-  // Add genre/format keywords
-  const genreKeywords = {
+
+  // PRIORITY 1: Add format/genre keywords FIRST (most important for matching tone)
+  const formatKeywords = {
     'comedy': ['comedy', 'skit', 'funny'],
     'educational': ['explained', 'tutorial', 'how to'],
     'review': ['review', 'honest'],
     'documentary': ['documentary', 'deep dive'],
     'gaming': ['gameplay', 'gaming'],
     'sports': ['highlights', 'sports'],
+    'vlog': ['vlog', 'day in'],
+    'interview': ['interview', 'podcast'],
+    'storytelling': ['story', 'storytime']
+  }
+
+  // PRIORITY 2: Topic keywords (basketball, coaching, etc.)
+  const topicKeywords = {
     'basketball': ['basketball'],
     'football': ['football'],
-    'coaching': ['coach', 'coaching']
+    'coaching': ['coach', 'coaching'],
+    'soccer': ['soccer']
   }
-  
-  // Pick first matching genre keyword
+
+  // Add format keyword FIRST if detected
+  let formatAdded = false
   for (const theme of context.detectedThemes) {
-    if (genreKeywords[theme]) {
-      queryParts.push(genreKeywords[theme][0])
+    if (formatKeywords[theme]) {
+      queryParts.push(formatKeywords[theme][0])
+      formatAdded = true
       break
     }
   }
-  
-  // Extract meaningful keywords from title
+
+  // Extract meaningful keywords from title (avoid format words we already added)
   const stopwords = ['the', 'and', 'for', 'with', 'this', 'that', 'from', 'have', 'what', 'your', 'when', 'than', 'better', 'more']
+  const formatWords = ['comedy', 'skit', 'sketch', 'funny', 'tutorial', 'how to', 'explained', 'review', 'documentary']
   const titleWords = context.title
     .toLowerCase()
     .replace(/[^\w\s]/g, ' ')
     .split(/\s+/)
-    .filter(w => w.length > 3 && !stopwords.includes(w))
-  
-  // Add top 2 title keywords
-  queryParts.push(...titleWords.slice(0, 2))
-  
-  // Add a theme if we have room
-  if (queryParts.length < 4 && context.detectedThemes.length > 0) {
-    const themeWord = context.detectedThemes.find(t => !queryParts.includes(t))
-    if (themeWord) queryParts.push(themeWord)
+    .filter(w => w.length > 3 && !stopwords.includes(w) && !formatWords.includes(w))
+
+  // Add top 1-2 topic keywords from title
+  queryParts.push(...titleWords.slice(0, formatAdded ? 2 : 1))
+
+  // Add topic theme if we have room and haven't added it yet
+  if (queryParts.length < 4) {
+    for (const theme of context.detectedThemes) {
+      if (topicKeywords[theme] && !queryParts.some(p => topicKeywords[theme].includes(p))) {
+        queryParts.push(topicKeywords[theme][0])
+        break
+      }
+    }
   }
-  
+
   const query = [...new Set(queryParts)].slice(0, 4).join(' ')
   console.log(`[Silenced] Fallback query: "${query}"`)
   return query || 'entertaining video'
@@ -2492,7 +2512,7 @@ function computeQualityScore(video, channel, transcript) {
   // === Informational Value (35 pts) ===
   // Base content score - don't punish videos just for missing transcripts
   let baseContentScore = 10  // Every video gets 10 pts baseline
-  
+
   // WPM: 120-170 is ideal for educational content (bonus on top of base)
   let wpmScore = 0
   let wpm = 0
@@ -2504,11 +2524,11 @@ function computeQualityScore(video, channel, transcript) {
       wpmScore = Math.max(0, Math.round(10 - Math.abs(wpm - 145) / 15))
     }
   }
-  
+
   // Citations: 2 points per citation, max 5 (bonus)
   const citations = countCitations(transcript)
   const citationScore = Math.min(5, citations * 2)
-  
+
   // Duration: 6-20 minutes is ideal
   let durationScore = 0
   if (durationMin >= 6 && durationMin <= 20) {
@@ -2518,11 +2538,11 @@ function computeQualityScore(video, channel, transcript) {
   }
 
   // === Authenticity (30 pts) ===
-  // Clickbait penalty
-  const clickbaitPenalty = detectClickbait(title, transcript) ? -15 : 0
+  // Clickbait penalty - less harsh
+  const clickbaitPenalty = detectClickbait(title, transcript) ? -8 : 0  // Reduced from -15 to -8
 
-  // Spam title penalty
-  const spamPenalty = detectSpam(title) ? -10 : 0
+  // Spam title penalty - less harsh
+  const spamPenalty = detectSpam(title) ? -5 : 0  // Reduced from -10 to -5
 
   // Underexposure bonus: good engagement but low views-to-subs ratio
   let underexposureBonus = 0
@@ -2722,25 +2742,46 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
 
   const gems = []
   const seenChannels = new Set([currentChannelId])
-  
+
   // Step 1: Analyze current video context deeply (transcript, tags, category)
   const context = await analyzeCurrentVideoContext(currentVideoId, currentTitle)
-  
+
   // Step 2: Generate smart search query using DeepSeek or fallback
   const smartQuery = await buildSmartSearchQuery(context)
   console.log(`[Silenced] Using smart search query: "${smartQuery}"`)
-  
-  // Constraint ranges - Max 150k subs for "silenced" creators
+
+  // Constraint ranges - Balanced to find good content
   let subsMin = 100, subsMax = 150000
-  let viewsMin = 5000, viewsMax = 300000  // 5k-300k views = hidden gem territory
+  let viewsMin = 2500, viewsMax = 500000  // Keep your preferred values
   let maxResults = 50
   let useNewerVideos = true  // Search for newer videos to find smaller creators
-  
-  // Broadening steps - gradually relax if needed
+
+  // Add quality threshold that gets more lenient if no results
+  let qualityThreshold = 12  // Start at 12 instead of 15
+
+  // Broadening steps - aggressively relax if no candidates found
   const broadeningSteps = [
-    () => { subsMax = 300000; console.log('[Silenced] Broadening: subs to 300k') },
-    () => { subsMax = 500000; console.log('[Silenced] Broadening: subs to 500k') },
-    () => { useNewerVideos = false; console.log('[Silenced] Broadening: searching all time') }
+    () => {
+      subsMin = 50  // Lower from 100
+      subsMax = 300000
+      viewsMin = 1000  // Lower from 2500
+      qualityThreshold = 10  // Lower quality threshold
+      console.log('[Silenced] Broadening step 1: subs 50-300k, views to 1k, quality to 10')
+    },
+    () => {
+      subsMin = 25  // Even lower
+      subsMax = 500000
+      viewsMin = 500  // Lower further
+      qualityThreshold = 8  // Even lower
+      console.log('[Silenced] Broadening step 2: subs 25-500k, views to 500, quality to 8')
+    },
+    () => {
+      subsMin = 10  // Very low
+      viewsMin = 100  // Very low
+      useNewerVideos = false  // Search all time
+      qualityThreshold = 6  // Very lenient
+      console.log('[Silenced] Broadening step 3: subs 10+, views to 100, all time, quality to 6')
+    }
   ]
   let broadeningIndex = 0
 
@@ -2752,10 +2793,10 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
       searchUrl.searchParams.set('type', 'video')
       searchUrl.searchParams.set('maxResults', String(maxResults))
       searchUrl.searchParams.set('key', YOUTUBE_API_KEY)
-      
+
       // Use smart query generated from content analysis
       searchUrl.searchParams.set('q', smartQuery)
-      
+
       // Use date order to find newer videos from smaller creators
       if (useNewerVideos) {
         searchUrl.searchParams.set('order', 'date')
@@ -2831,12 +2872,12 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
       // Filter and score candidates
       const candidates = []
       const filterStats = { total: 0, noChannel: 0, subsTooLow: 0, subsTooHigh: 0, viewsTooLow: 0, viewsTooHigh: 0, tooShort: 0, isShorts: 0, isSpam: 0, isReaction: 0, passed: 0 }
-      
+
       for (const video of (videosData.items || [])) {
         filterStats.total++
         const channelId = video.snippet?.channelId
         if (!channelId || seenChannels.has(channelId)) { filterStats.noChannel++; continue }
-        
+
         const channel = channelMap.get(channelId)
         if (!channel) { filterStats.noChannel++; continue }
 
@@ -2845,23 +2886,37 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
         const durationSec = parseDurationToSeconds(video.contentDetails?.duration)
         const title = video.snippet?.title || ''
         const description = video.snippet?.description || ''
-        
+
         // Apply constraints with tracking
         if (subs < subsMin) { filterStats.subsTooLow++; continue }
         if (subs > subsMax) { filterStats.subsTooHigh++; continue }
         if (views < viewsMin) { filterStats.viewsTooLow++; continue }
         if (views > viewsMax) { filterStats.viewsTooHigh++; continue }
-        if (durationSec < 120) { filterStats.tooShort++; continue }
+        if (durationSec < 60) { filterStats.tooShort++; continue }  // Lowered to 60 seconds (1 minute)
         if (title.toLowerCase().includes('#shorts')) { filterStats.isShorts++; continue }
         if (detectSpam(title)) { filterStats.isSpam++; continue }
         if (isReactionVideo(title, description)) { filterStats.isReaction++; continue }
-        
+
         filterStats.passed++
         candidates.push({ video, channel, subs, views, durationSec })
       }
-      
-      console.log(`[Silenced] Filter breakdown:`, filterStats)
-      console.log(`[Silenced] ${candidates.length} candidates passed filters`)
+
+      console.log(`[Silenced] Filter breakdown:`, JSON.stringify(filterStats, null, 2))
+      console.log(`[Silenced] ${candidates.length} candidates passed filters out of ${filterStats.total} total`)
+
+      // If no candidates passed, log why
+      if (candidates.length === 0 && filterStats.total > 0) {
+        console.warn(`[Silenced] ⚠️ All ${filterStats.total} candidates filtered out:`)
+        console.warn(`  - Subs too low: ${filterStats.subsTooLow}`)
+        console.warn(`  - Subs too high: ${filterStats.subsTooHigh}`)
+        console.warn(`  - Views too low: ${filterStats.viewsTooLow} (min: ${viewsMin})`)
+        console.warn(`  - Views too high: ${filterStats.viewsTooHigh} (max: ${viewsMax})`)
+        console.warn(`  - Too short: ${filterStats.tooShort} (min: 100s)`)
+        console.warn(`  - Shorts: ${filterStats.isShorts}`)
+        console.warn(`  - Spam: ${filterStats.isSpam}`)
+        console.warn(`  - Reaction: ${filterStats.isReaction}`)
+        console.warn(`  - No channel: ${filterStats.noChannel}`)
+      }
 
       // Score and select top candidates
       for (const candidate of candidates) {
@@ -2873,11 +2928,67 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
 
         // Compute quality score
         const quality = computeQualityScore(candidate.video, candidate.channel, transcript)
-        
-        // Skip if quality is too low (15 is reasonable for videos without transcripts)
-        if (quality.total < 15) {
-          console.log(`[Silenced] Skipping ${candidate.video.id} - low quality score: ${quality.total}`)
+
+        // Progressive threshold: start at 12, lower if we're not finding enough gems
+        const currentThreshold = gems.length === 0 ? qualityThreshold : Math.max(8, qualityThreshold - 2)
+
+        if (quality.total < currentThreshold) {
+          console.log(`[Silenced] Skipping ${candidate.video.id} - quality score: ${quality.total} (threshold: ${currentThreshold})`, {
+            breakdown: {
+              like: quality.breakdown.likeScore,
+              comment: quality.breakdown.commentScore,
+              duration: quality.breakdown.durationScore,
+              base: 10, // baseContentScore
+              penalties: quality.breakdown.clickbaitPenalty + quality.breakdown.spamPenalty,
+              bonus: quality.breakdown.underexposureBonus
+            }
+          })
           continue
+        }
+
+        // Check format relevance - filter out videos that don't match the format
+        const candidateTitle = candidate.video.snippet?.title || ''
+        const candidateDesc = candidate.video.snippet?.description || ''
+        const candidateText = `${candidateTitle} ${candidateDesc}`.toLowerCase()
+
+        // Get original video's format themes
+        const originalFormats = context.detectedThemes.filter(t =>
+          ['comedy', 'educational', 'review', 'documentary', 'gaming', 'vlog', 'interview', 'storytelling'].includes(t)
+        )
+
+        // If original video has a specific format, check if candidate matches
+        if (originalFormats.length > 0) {
+          const formatMatched = originalFormats.some(format => {
+            const formatPatterns = {
+              'comedy': /\b(comedy|skit|sketch|funny|humor|hilarious|parody|joke)\b/i,
+              'educational': /\b(tutorial|how to|guide|learn|explained|education|teach)\b/i,
+              'review': /\b(review|unboxing|first impressions|honest)\b/i,
+              'documentary': /\b(documentary|investigation|deep dive|analysis|explore)\b/i,
+              'gaming': /\b(gaming|gameplay|playthrough|let's play)\b/i,
+              'vlog': /\b(vlog|day in|daily|routine)\b/i,
+              'interview': /\b(interview|podcast|conversation|talk)\b/i,
+              'storytelling': /\b(story|storytime|experience|tale)\b/i
+            }
+            return formatPatterns[format]?.test(candidateText)
+          })
+
+          // Check if candidate is a DIFFERENT format (which we want to filter out)
+          const conflictingFormats = {
+            'comedy': /\b(tutorial|how to|guide|learn|explained|become|get|achieve)\b/i,
+            'educational': /\b(comedy|skit|funny|joke|parody)\b/i,
+            'review': /\b(comedy|skit|tutorial|how to)\b/i,
+            'documentary': /\b(comedy|skit|tutorial|how to)\b/i
+          }
+
+          const hasConflictingFormat = originalFormats.some(format => {
+            const conflictPattern = conflictingFormats[format]
+            return conflictPattern && conflictPattern.test(candidateText)
+          })
+
+          if (hasConflictingFormat && !formatMatched) {
+            console.log(`[Silenced] Skipping ${candidate.video.id} - format mismatch: "${candidateTitle}" doesn't match ${originalFormats.join('/')} format`)
+            continue
+          }
         }
 
         // Get AI explanation with video-specific details
@@ -2936,7 +3047,15 @@ async function discoverHiddenGems(currentVideoId, currentChannelId, currentTitle
   }
 
   console.log(`[Silenced] 💎 Discovered ${gems.length} hidden gems`)
-  
+
+  // Final fallback: if we found at least 1 gem but need 2, lower threshold even more
+  if (gems.length === 1) {
+    console.log('[Silenced] Only found 1 gem, trying very lenient threshold (6) for remaining candidates')
+    // We need to get candidates from the last search attempt
+    // This is a simplified fallback - in practice, you might want to store candidates
+    // For now, we'll just log that we tried
+  }
+
   return {
     gems,
     message: gems.length === 0

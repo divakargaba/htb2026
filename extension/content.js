@@ -850,9 +850,9 @@ async function discoverSilencedVideos() {
       
       // Check for AI offline indicator in response
       if (response.data.aiOffline) {
-        console.log('[BiasLens] AI scoring is offline')
+        console.log('[BiasLens] Quality scoring is offline')
         if (window.SilencedGrid) {
-          window.SilencedGrid.showAIOffline('AI quality verification is temporarily unavailable. Results may be less accurate.')
+          window.SilencedGrid.showAIOffline('Quality verification is temporarily unavailable. Results may be less accurate.')
         }
         return
       }
@@ -1667,80 +1667,162 @@ function getShadowStyles() {
       margin-top: 2px;
     }
     
-    .gem-scores {
+    /* Gem Summary - Always visible */
+    .gem-summary {
+      padding: 8px 10px;
+    }
+
+    .gem-badges {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+
+    .gem-badges .badge {
+      font-size: 11px;
+      font-weight: 500;
+      padding: 3px 8px;
+      border-radius: 3px;
+    }
+
+    .gem-badges .badge.strength {
+      background: rgba(34, 197, 94, 0.1);
+      color: #22c55e;
+    }
+
+    .gem-badges .badge.reach {
+      background: #1a1a1a;
+      color: #22c55e;
+    }
+
+    .gem-summary-line {
+      font-size: 13px;
+      color: #999;
+      line-height: 1.4;
+    }
+
+    /* Context Preview - Always visible */
+    .gem-context-preview {
+      padding: 0 10px 6px;
+    }
+
+    .gem-context-preview .context-bullet {
+      font-size: 13px;
+      color: #888;
+      line-height: 1.4;
+    }
+
+    /* Expand Toggle */
+    .gem-expand-toggle {
       display: flex;
       align-items: center;
-      gap: 6px;
-      padding: 0 10px 10px;
-      flex-wrap: wrap;
-    }
-    
-    .score-chip {
-      font-size: 10px;
-      font-weight: 600;
-      padding: 3px 8px;
-      border-radius: 4px;
-    }
-    
-    .score-chip.quality {
-      background: #10b981;
-      color: #000;
-    }
-    
-    .score-chip.underexposed {
-      background: #f59e0b;
-      color: #000;
-    }
-    
-    .why-button {
-      background: transparent;
-      border: 1px solid #404040;
-      color: #9ca3af;
-      font-size: 10px;
-      padding: 3px 8px;
-      border-radius: 4px;
+      justify-content: space-between;
+      padding: 8px 10px;
       cursor: pointer;
-      transition: all 0.15s ease;
-      margin-left: auto;
+      font-size: 11px;
+      color: #666;
+      transition: background 0.1s ease-out;
     }
-    
-    .why-button:hover {
-      background: #333;
-      color: #fff;
+
+    .gem-expand-toggle:hover {
+      background: #1a1a1a;
+      color: #999;
     }
-    
+
+    .gem-expand-toggle .chevron {
+      font-size: 10px;
+    }
+
+    /* Breakdown - Hidden by default */
     .gem-breakdown {
-      display: none;
-      padding: 12px;
-      background: #141414;
-      border-top: 1px solid #262626;
+      padding: 10px;
+      background: #0f0f0f;
     }
-    
-    .gem-breakdown.open {
-      display: block;
-    }
-    
+
     .breakdown-section {
-      margin-bottom: 12px;
+      margin-bottom: 10px;
     }
-    
+
     .breakdown-section:last-child {
       margin-bottom: 0;
     }
-    
+
     .breakdown-title {
-      font-size: 10px;
-      font-weight: 600;
-      color: #6b7280;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin-bottom: 6px;
-    }
-    
-    .metrics-table {
-      width: 100%;
       font-size: 11px;
-      border-collapse: collapse;
+      font-weight: 500;
+      color: #555;
+      margin-bottom: 4px;
+    }
+
+    /* Metrics with labels */
+    .metrics-grid-labeled {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .metric-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 4px 0;
+    }
+
+    .metric-row .metric-label {
+      font-size: 12px;
+      color: #666;
+    }
+
+    .metric-row .metric-value {
+      font-size: 13px;
+      color: #e8e8e8;
+      font-weight: 500;
+    }
+
+    .breakdown-bullets {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .bullet-item {
+      font-size: 13px;
+      color: #888;
+      line-height: 1.4;
+      padding-left: 8px;
+      border-left: 2px solid #333;
+    }
+
+    /* Structured context sections */
+    .gem-explanation-structured {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .context-section {
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    }
+
+    .context-section:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+
+    .context-section-label {
+      font-size: 11px;
+      font-weight: 500;
+      color: #22c55e;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    .context-section-content {
+      font-size: 13px;
+      color: #999;
+      line-height: 1.55;
     }
     
     .metrics-table td {
@@ -1844,8 +1926,8 @@ function createDashboard(data) {
       <div class="action-toggle ${noiseCancellationActive ? 'active' : ''}" id="noise-cancel-toggle">
         <div class="toggle-left">
           <div class="toggle-text">
-            <div class="toggle-title">${noiseCancellationActive ? 'Showing Silenced Voices' : 'Surface Under-represented Creators'}</div>
-            <div class="toggle-desc">${noiseCancellationActive ? 'Alternatives shown below' : 'Find creators the algorithm misses'}</div>
+            <div class="toggle-title">${noiseCancellationActive ? 'Limited reach content shown' : 'Show limited reach content'}</div>
+            <div class="toggle-desc">${noiseCancellationActive ? 'Alternatives listed below' : 'Find content with less visibility'}</div>
           </div>
         </div>
         <div class="toggle-switch ${noiseCancellationActive ? 'on' : ''}">
@@ -1885,8 +1967,8 @@ function injectDashboard(data) {
 
     const title = noiseCancelToggle.querySelector('.toggle-title')
     const desc = noiseCancelToggle.querySelector('.toggle-desc')
-    if (title) title.textContent = noiseCancellationActive ? 'Noise Cancellation ON' : 'Unmute the Silenced'
-    if (desc) desc.textContent = noiseCancellationActive ? 'Showing hidden voices below ↓' : 'Reveal smaller creators on this topic'
+    if (title) title.textContent = noiseCancellationActive ? 'Limited reach content shown' : 'Show limited reach content'
+    if (desc) desc.textContent = noiseCancellationActive ? 'Alternatives listed below' : 'Find content with less visibility'
   })
 
   refreshBtn?.addEventListener('click', () => {
@@ -1977,8 +2059,8 @@ window.silencedToggleNoiseCancellation = async function () {
 
     const title = toggle?.querySelector('.toggle-title')
     const desc = toggle?.querySelector('.toggle-desc')
-    if (title) title.textContent = noiseCancellationActive ? 'Noise Cancellation ON' : 'Unmute the Silenced'
-    if (desc) desc.textContent = noiseCancellationActive ? 'Showing hidden voices below ↓' : 'Reveal smaller creators on this topic'
+    if (title) title.textContent = noiseCancellationActive ? 'Limited reach content shown' : 'Show limited reach content'
+    if (desc) desc.textContent = noiseCancellationActive ? 'Alternatives listed below' : 'Find content with less visibility'
   }
 
   const floatingToggle = document.getElementById('silenced-noise-toggle')
@@ -2060,30 +2142,30 @@ function muteNoisyVideos() {
 // Format surfacing method for display
 function formatDiversityMethod(method) {
   if (!method || method === 'unknown') {
-    return 'exposure-adjusted ranking'
+    return 'reach-adjusted ranking'
   }
 
   const methodLower = method.toLowerCase()
 
   if (methodLower.includes('transcript_analyzed_gemini')) {
-    return '🎯 AI transcript analysis + exposure ranking'
+    return 'transcript verified + reach ranking'
   }
   if (methodLower.includes('transcript_analyzed_heuristic') || methodLower.includes('heuristic-transcript')) {
-    return '🎯 transcript verified + exposure ranking'
+    return 'transcript verified + reach ranking'
   }
   if (methodLower.includes('quality_filtered_gemini') || methodLower.includes('gemini')) {
-    return 'AI quality filter + exposure ranking'
+    return 'quality verified + reach ranking'
   }
   if (methodLower.includes('quality_filtered_heuristic') || methodLower.includes('quality_filtered')) {
-    return 'quality filter + exposure ranking'
+    return 'quality filter + reach ranking'
   }
   if (methodLower.includes('greedy_cosine') || methodLower.includes('cosine') || methodLower.includes('embedding')) {
-    return 'exposure-adjusted ranking + ML diversification'
+    return 'reach-adjusted + diversified'
   }
   if (methodLower.includes('fallback') || methodLower.includes('heuristic')) {
-    return 'exposure-adjusted ranking (fallback)'
+    return 'reach-adjusted ranking'
   }
-  return 'exposure-adjusted ranking'
+  return 'reach-adjusted ranking'
 }
 
 function injectUnmutedVoices() {
@@ -2253,19 +2335,17 @@ function injectUnmutedVoices() {
       ? '<span style="background: #065f46; color: #10b981; padding: 1px 4px; border-radius: 3px; font-size: 8px; margin-left: 4px;">VERIFIED</span>'
       : ''
 
-    // Use AI content summary if available, otherwise fall back to diversityNote/qualityReason
+    // Use content summary if available, otherwise fall back to diversityNote/qualityReason
     const contentDescription = biasReceipt?.contentSummary || video.diversityNote || video.qualityReason || ''
-    const isAIGenerated = biasReceipt?.contentSummary && biasReceipt?.method === 'gemini'
 
     // Always show the audit info with subs, surfaced via, and description
     const auditInfoHtml = `
-      <div style="padding: 8px 10px; border-top: 1px solid #262626;">
-        <div style="font-size: 10px; color: #6b7280; font-family: 'SF Mono', Monaco, monospace; margin-bottom: 6px;">
-          Subs: ${fmt(video.subscriberCount)} · Surfaced via: ${methodDisplay}${transcriptBadge}
+      <div style="padding: 8px 10px; border-top: 1px solid rgba(255,255,255,0.06);">
+        <div style="font-size: 11px; color: #666; margin-bottom: 6px;">
+          ${fmt(video.subscriberCount)} subscribers · ${methodDisplay}${transcriptBadge}
         </div>
         ${contentDescription ? `
-          <div style="font-size: 11px; color: #d1d5db; line-height: 1.5; font-family: -apple-system, sans-serif;">
-            ${isAIGenerated ? '<span style="background: #1e3a5f; color: #60a5fa; padding: 1px 4px; border-radius: 3px; font-size: 8px; margin-right: 4px;">AI</span>' : ''}
+          <div style="font-size: 13px; color: #999; line-height: 1.45; font-family: -apple-system, sans-serif;">
             ${esc(contentDescription)}
           </div>
         ` : ''}
@@ -2317,7 +2397,7 @@ function injectUnmutedVoices() {
   const footer = document.createElement('div')
   footer.style.cssText = 'font-size: 10px; color: #6b7280; margin-top: 10px; padding-top: 8px; border-top: 1px solid #262626; display: flex; justify-content: space-between; align-items: center;'
   footer.innerHTML = `
-    <span>${mutedChannels.length > 0 ? `${mutedChannels.length} dominant channels de-prioritized` : 'Surfacing under-represented voices'}</span>
+    <span>${mutedChannels.length > 0 ? `${mutedChannels.length} dominant channels adjusted` : 'Showing limited reach content'}</span>
     <span style="font-size: 8px; color: #4b5563;">Hack the Bias '26</span>
   `
   container.appendChild(footer)
@@ -2376,15 +2456,15 @@ function createFloatingToggle() {
   toggle.className = noiseCancellationActive ? 'active' : ''
   toggle.setAttribute('role', 'switch')
   toggle.setAttribute('aria-checked', noiseCancellationActive)
-  toggle.setAttribute('aria-label', 'Toggle Noise Cancellation to unmute silenced voices')
+  toggle.setAttribute('aria-label', 'Toggle to show limited reach content')
   toggle.setAttribute('tabindex', '0')
 
   toggle.innerHTML = `
     <div class="toggle-inner">
       <div class="toggle-icon">◉</div>
       <div class="toggle-label">
-        <span class="toggle-title">Surface Silenced</span>
-        <span class="toggle-status">${noiseCancellationActive ? 'ACTIVE' : 'OFF'}</span>
+        <span class="toggle-title">Limited Reach</span>
+        <span class="toggle-status">${noiseCancellationActive ? 'ON' : 'OFF'}</span>
       </div>
     </div>
   `
@@ -2520,16 +2600,18 @@ function injectHiddenGemsPanel(shadow, container, gemsData, analysisData) {
   gems.forEach((gem, idx) => {
     const card = shadow.querySelector(`#gem-card-${idx}`)
     if (!card) return
-    
-    const whyBtn = card.querySelector('.why-button')
+
+    const expandToggle = card.querySelector('.gem-expand-toggle')
     const breakdown = card.querySelector('.gem-breakdown')
-    
-    if (whyBtn && breakdown) {
-      whyBtn.addEventListener('click', (e) => {
+
+    if (expandToggle && breakdown) {
+      expandToggle.addEventListener('click', (e) => {
         e.preventDefault()
         e.stopPropagation()
-        breakdown.classList.toggle('open')
-        whyBtn.textContent = breakdown.classList.contains('open') ? 'Hide ▲' : 'Why? ▼'
+        const isHidden = breakdown.style.display === 'none'
+        breakdown.style.display = isHidden ? 'block' : 'none'
+        expandToggle.querySelector('span:first-child').textContent = isHidden ? 'Hide details' : 'Show details'
+        expandToggle.querySelector('.chevron').textContent = isHidden ? '▾' : '▸'
       })
     }
   })
@@ -2555,23 +2637,17 @@ function createGemCard(gem, index) {
   const ageStr = formatAge(gem.publishedAt)
   
   // Build metrics table rows
-  const metricsRows = `
-    <tr><td>Views/Day</td><td>${gem.metrics?.viewsPerDay || '-'}</td></tr>
-    <tr><td>Like Rate</td><td>${gem.metrics?.likeRate || '-'}%</td></tr>
-    <tr><td>Comment Rate</td><td>${gem.metrics?.commentRate || '-'}%</td></tr>
-    <tr><td>Duration</td><td>${gem.metrics?.durationMin || '-'} min</td></tr>
-  `
-  
-  // Build breakdown rows
-  const breakdownRows = gem.breakdown ? `
-    <div class="breakdown-item ${gem.breakdown.likeScore > 0 ? 'positive' : ''}">Like Score: +${gem.breakdown.likeScore}</div>
-    <div class="breakdown-item ${gem.breakdown.commentScore > 0 ? 'positive' : ''}">Comment Score: +${gem.breakdown.commentScore}</div>
-    <div class="breakdown-item ${gem.breakdown.durationScore > 0 ? 'positive' : ''}">Duration Score: +${gem.breakdown.durationScore}</div>
-    ${gem.breakdown.clickbaitPenalty < 0 ? `<div class="breakdown-item negative">Clickbait: ${gem.breakdown.clickbaitPenalty}</div>` : ''}
-    ${gem.breakdown.spamPenalty < 0 ? `<div class="breakdown-item negative">Spam: ${gem.breakdown.spamPenalty}</div>` : ''}
-    ${gem.breakdown.underexposureBonus > 0 ? `<div class="breakdown-item positive">Underexposure Bonus: +${gem.breakdown.underexposureBonus}</div>` : ''}
-  ` : ''
-  
+  // Generate summary based on scores
+  const gap = gem.qualityScore - (100 - gem.underexposureScore)
+  const summaryLine = gap >= 10
+    ? 'Strong engagement despite limited distribution'
+    : 'Good content with visibility gap'
+
+  // Short context bullet from explanation
+  const contextBullet = gem.explanation
+    ? gem.explanation.split('.')[0].slice(0, 70) + (gem.explanation.length > 70 ? '...' : '')
+    : 'Lower platform-favored signals'
+
   return `
     <div class="gem-card" id="gem-card-${index}">
       <a href="/watch?v=${gem.videoId}" class="gem-link">
@@ -2585,31 +2661,121 @@ function createGemCard(gem, index) {
           <div class="gem-meta">${viewsStr} views · ${subsStr} subs · ${ageStr}</div>
         </div>
       </a>
-      <div class="gem-scores">
-        <span class="score-chip quality">Quality ${gem.qualityScore}</span>
-        <span class="score-chip underexposed">Underexposed ${gem.underexposureScore}</span>
-        <button class="why-button">Why? ▼</button>
+      <div class="gem-summary">
+        <div class="gem-badges">
+          <span class="badge strength">Strength ${gem.qualityScore}</span>
+          <span class="badge reach">+${gem.underexposureScore} reach gap</span>
+        </div>
+        <div class="gem-summary-line">${summaryLine}</div>
       </div>
-      <div class="gem-breakdown">
+      <div class="gem-context-preview">
+        <span class="context-bullet">• ${contextBullet}</span>
+      </div>
+      <div class="gem-expand-toggle" data-gem-expand="${index}">
+        <span>Show details</span>
+        <span class="chevron">▸</span>
+      </div>
+      <div class="gem-breakdown" style="display: none;">
         <div class="breakdown-section">
           <div class="breakdown-title">Metrics</div>
-          <table class="metrics-table">
-            ${metricsRows}
-          </table>
-        </div>
-        <div class="breakdown-section">
-          <div class="breakdown-title">Score Breakdown</div>
-          <div class="breakdown-items">
-            ${breakdownRows}
+          <div class="metrics-grid-labeled">
+            <div class="metric-row">
+              <span class="metric-label">Views/day</span>
+              <span class="metric-value">${gem.metrics?.viewsPerDay || '-'}</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-label">Like rate</span>
+              <span class="metric-value">${gem.metrics?.likeRate || '-'}%</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-label">Duration</span>
+              <span class="metric-value">${gem.metrics?.durationMin || '-'} min</span>
+            </div>
           </div>
         </div>
         <div class="breakdown-section">
-          <div class="breakdown-title">AI Analysis</div>
-          <div class="gem-explanation">${gem.explanation || 'No AI analysis available'}</div>
+          <div class="breakdown-title">Why this was ranked</div>
+          <div class="breakdown-bullets">
+            ${gem.breakdown?.likeScore > 0 ? `<div class="bullet-item">Like engagement: +${gem.breakdown.likeScore}</div>` : ''}
+            ${gem.breakdown?.commentScore > 0 ? `<div class="bullet-item">Comment activity: +${gem.breakdown.commentScore}</div>` : ''}
+            ${gem.breakdown?.underexposureBonus > 0 ? `<div class="bullet-item">Reach gap bonus: +${gem.breakdown.underexposureBonus}</div>` : ''}
+          </div>
         </div>
+        ${gem.explanation ? `
+          <div class="breakdown-section">
+            <div class="breakdown-title">Full context</div>
+            <div class="gem-explanation-structured">${formatExplanationSections(gem.explanation)}</div>
+          </div>
+        ` : ''}
       </div>
     </div>
   `
+}
+
+/**
+ * Format explanation text into structured numbered sections
+ */
+function formatExplanationSections(text) {
+  if (!text) return ''
+
+  // Remove any emojis
+  text = text.replace(/[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/gu, '')
+
+  // Define section headers and their clean labels
+  const sectionLabels = {
+    '1)': 'Why this content is limited',
+    '2)': 'Who is affected',
+    '3)': 'Why this content matters',
+    '4)': 'Counterfactual insight'
+  }
+
+  // Split by numbered sections
+  const sections = text.split(/(\d+\))/).filter(s => s.trim())
+
+  let html = ''
+  let currentNumber = null
+
+  for (let i = 0; i < sections.length; i++) {
+    const section = sections[i].trim()
+
+    // Check if this is a section number
+    if (section.match(/^\d+\)$/)) {
+      currentNumber = section
+      continue
+    }
+
+    // This is section content
+    if (currentNumber && section) {
+      // Clean up the content - remove the original header if present
+      let content = section
+        .replace(/WHY THIS CONTENT IS SILENCED\s*\*?/i, '')
+        .replace(/WHO IS AFFECTED\s*\*?/i, '')
+        .replace(/WHY THIS CONTENT STILL MATTERS\s*\*?/i, '')
+        .replace(/COUNTERFACTUAL INSIGHT\s*\*?/i, '')
+        .replace(/^\s*\*\s*/, '')
+        .trim()
+
+      const label = sectionLabels[currentNumber] || 'Context'
+
+      html += `
+        <div class="context-section">
+          <div class="context-section-label">${label}</div>
+          <div class="context-section-content">${esc(content)}</div>
+        </div>
+      `
+      currentNumber = null
+    } else if (!currentNumber && section) {
+      // No number prefix, just add as plain text
+      html += `<div class="context-section-content">${esc(section)}</div>`
+    }
+  }
+
+  // If no sections were parsed, return original text cleaned up
+  if (!html) {
+    return `<div class="context-section-content">${esc(text)}</div>`
+  }
+
+  return html
 }
 
 /**
