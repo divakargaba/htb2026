@@ -476,20 +476,51 @@ function generateHeuristicWhySurfaced(params) {
 }
 
 /**
- * Generate a content summary by analyzing the video description (heuristic fallback)
- * Extracts actual topics, themes, and key points from the description
+ * Generate a content summary by analyzing the video transcript/description (heuristic fallback)
+ * Extracts actual topics, themes, and key points from the content
  */
 function generateHeuristicContentSummary(params) {
-  const { videoTitle, videoDescription = '', channelTitle } = params
+  const { videoTitle, videoDescription = '', channelTitle, transcript = '' } = params
 
   if (!videoTitle) return null
 
-  const desc = (videoDescription || '').slice(0, 1000)
+  // Prefer transcript over description - it has actual spoken content
+  const hasTranscript = transcript && transcript.length > 200
+  const contentSource = hasTranscript ? transcript.slice(0, 2000) : (videoDescription || '').slice(0, 1000)
 
-  // If no description, we can't generate meaningful content summary
-  if (!desc || desc.length < 20) {
+  // If no content source, we can't generate meaningful content summary
+  if (!contentSource || contentSource.length < 50) {
     return null // Return null so UI shows nothing rather than generic text
   }
+
+  // If we have a transcript, extract key talking points
+  if (hasTranscript) {
+    // Find sentences that seem like main points (contain explanatory language)
+    const sentences = contentSource
+      .split(/[.!?]/)
+      .map(s => s.trim())
+      .filter(s => s.length > 30 && s.length < 200)
+      .filter(s => !/^(hey|hi|hello|what's up|subscribe|like|comment|click)/i.test(s))
+
+    // Find informative sentences
+    const informativeSentences = sentences.filter(s =>
+      /\b(is|are|means|because|therefore|explains|shows|demonstrates|important|key|main|first|second|basically|essentially|actually)\b/i.test(s)
+    )
+
+    if (informativeSentences.length >= 2) {
+      // Take first 2 informative sentences as summary
+      const summary = informativeSentences.slice(0, 2).join('. ')
+      return summary.charAt(0).toUpperCase() + summary.slice(1) + '.'
+    }
+
+    // Fallback: take first 2 decent sentences
+    if (sentences.length >= 2) {
+      const summary = sentences.slice(0, 2).join('. ')
+      return summary.charAt(0).toUpperCase() + summary.slice(1) + '.'
+    }
+  }
+
+  const desc = contentSource
 
   // Extract meaningful sentences from description (skip links, timestamps, social media)
   const sentences = desc
@@ -663,7 +694,7 @@ async function callGeminiAPI(prompt, config = {}) {
 
 /**
  * Generate bias receipt using Gemini AI (when ENABLE_ML_FEATURES is true)
- * Now includes content analysis for richer descriptions
+ * Uses transcript for actual content analysis when available
  */
 async function generateBiasReceiptWithGemini(params) {
   if (!GEMINI_API_KEY) return null
@@ -677,47 +708,49 @@ async function generateBiasReceiptWithGemini(params) {
     videoTitle,
     videoDescription = '',
     channelTitle,
-    isRisingSignal
+    isRisingSignal,
+    transcript = ''
   } = params
 
-  // Truncate description if too long
-  const descSnippet = videoDescription.slice(0, 500)
+  // Use transcript if available (much better for content analysis), otherwise use description
+  const hasTranscript = transcript && transcript.length > 200
+  const contentSource = hasTranscript
+    ? `TRANSCRIPT (first 3000 chars):\n"${transcript.slice(0, 3000)}"`
+    : `DESCRIPTION:\n"${videoDescription.slice(0, 800)}"`
 
-  const prompt = `You are analyzing a YouTube video that was algorithmically suppressed but surfaced by our bias-correction system.
+  console.log(`[Silenced] Gemini analysis using ${hasTranscript ? 'TRANSCRIPT' : 'DESCRIPTION'} (${hasTranscript ? transcript.length : videoDescription.length} chars)`)
+
+  const prompt = `You are analyzing a YouTube video that was algorithmically suppressed. Your job is to explain what this video is ACTUALLY ABOUT based on its content.
 
 VIDEO INFO:
 Title: "${videoTitle}"
 Channel: ${channelTitle}
-Description: "${descSnippet}"
 Subscribers: ${fmt(subscriberCount)}
-Rising creator: ${isRisingSignal ? 'Yes' : 'No'}
-Topic concentration by top 10 channels: ${topicConcentration}%
+${contentSource}
 
-TASK: Generate a detailed bias receipt explaining why this video deserves more visibility.
+TASK: Analyze this video's ACTUAL CONTENT and generate a detailed bias receipt.
 
 Return JSON with this EXACT structure:
 {
-  "contentSummary": "A 1-2 sentence summary of what this video appears to cover based on the title and description. Be specific about the topic and angle.",
+  "contentSummary": "A 2-3 sentence summary explaining WHAT THIS VIDEO TEACHES OR DISCUSSES. Be specific about the actual topics, arguments, or information presented. NOT generic - describe the real content.",
   "whyNotShown": [
-    "Specific reason 1 why algorithm likely suppressed this (15-25 words)",
-    "Specific reason 2 about algorithmic disadvantage (15-25 words)",
-    "Specific reason 3 if applicable (15-25 words)"
+    "Specific algorithmic reason 1 (15-25 words)",
+    "Specific algorithmic reason 2 (15-25 words)"
   ],
   "whySurfaced": [
-    "Specific value this video offers viewers (15-25 words)",
-    "What perspective or insight this creator brings (15-25 words)",
-    "Why this voice matters in this topic space (15-25 words)"
+    "What specific value/insight this content provides (20-30 words, reference actual topics from the video)",
+    "What unique perspective this creator brings on this specific topic (20-30 words)",
+    "Why this particular content deserves more visibility (20-30 words)"
   ],
-  "confidence": "low" | "medium" | "high"
+  "confidence": "high"
 }
 
-GUIDELINES:
-- contentSummary: Be specific about the video's topic, not generic. Example: "This video explores 11 different types of faith and belief systems, comparing their core principles and how they shape worldviews."
-- whyNotShown: Focus on algorithmic mechanics (subscriber count disadvantage, watch time bias, upload frequency, etc.)
-- whySurfaced: Focus on content VALUE - what unique perspective, expertise, or insight this creator offers
-- Be descriptive and specific, not generic
-- Reference the actual video topic in your bullets
-- Use confident but qualified language`
+CRITICAL RULES:
+- contentSummary MUST describe the actual video content, NOT just repeat the title
+- Example good summary: "This video examines the psychological and social factors behind different types of religious faith, exploring how childhood upbringing, personal experiences, and cultural environment shape belief systems. The creator discusses 11 distinct faith categories including blind faith, intellectual faith, and experiential faith."
+- Example BAD summary: "This video explores types of faith from an alternative perspective." (too generic!)
+- whySurfaced bullets MUST reference specific topics/insights from the video content
+- If you have transcript, analyze what the creator actually SAYS and ARGUES`
 
   try {
     const text = await callGeminiAPI(prompt, {
@@ -2620,6 +2653,20 @@ async function runNoiseCancellation(query) {
   const top5VideoIds = unmutedVideosRaw.slice(0, 5).map(v => v.videoId)
   const fullVideoDetails = await fetchFullVideoDetails(top5VideoIds)
 
+  // Fetch transcripts for top 5 videos in parallel (for AI content analysis)
+  console.log(`[Silenced] Fetching transcripts for ${top5VideoIds.length} videos...`)
+  const transcriptPromises = top5VideoIds.map(async (videoId) => {
+    try {
+      const transcript = await fetchVideoTranscript(videoId)
+      return { videoId, transcript }
+    } catch (err) {
+      console.warn(`[Silenced] Transcript fetch failed for ${videoId}:`, err.message)
+      return { videoId, transcript: null }
+    }
+  })
+  const transcriptResults = await Promise.all(transcriptPromises)
+  const transcriptMap = Object.fromEntries(transcriptResults.map(r => [r.videoId, r.transcript]))
+
   // Return videos immediately (fast path) - generate bias receipts in background
   // This allows the UI to show videos quickly while receipts load asynchronously
   // Generate bias receipts for top 5 videos (awaited so they're ready for display)
@@ -2627,7 +2674,7 @@ async function runNoiseCancellation(query) {
     unmutedVideosRaw.slice(0, 10).map(async (video, index) => {
       const { _receiptParams, ...cleanVideo } = video
 
-      // Generate bias receipt for top 5 videos with full description
+      // Generate bias receipt for top 5 videos with full description AND transcript
       if (index < 5 && _receiptParams) {
         try {
           // Use full description from Videos API if available
@@ -2635,6 +2682,13 @@ async function runNoiseCancellation(query) {
           if (fullDetails?.description) {
             _receiptParams.videoDescription = fullDetails.description
             cleanVideo.description = fullDetails.description // Update video object too
+          }
+
+          // Add transcript for AI content analysis
+          const transcript = transcriptMap[video.videoId]
+          if (transcript) {
+            _receiptParams.transcript = transcript
+            console.log(`[Silenced] Including transcript (${transcript.length} chars) for ${video.videoId}`)
           }
 
           const biasReceipt = await generateBiasReceipt(_receiptParams)
